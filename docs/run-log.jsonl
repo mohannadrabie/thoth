@@ -1,0 +1,2 @@
+{"at":"2026-08-30T04:19:32.869Z","event":"tier-ratified","scope":"S1","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"internal tooling/instruments (PRINCIPLES rule 20c); sensitive-area review (CI workflow, secret-scan) required regardless of tier"}
+{"at":"2026-08-30T06:29:50.929Z","event":"stage","scope":"S1","stage":"review","outcome":"round1=REWORK(app-security HIGH)+APPROVE-WITH-CONDITIONS(cross-domain MED); round2=APPROVE+APPROVE-WITH-CONDITIONS(1 LOW backlogged) after fix 366c54d; reviewRoundsSinceClean reset to 0"}

@@ -1,6 +1,6 @@
 {
   "adrCatalog": {
-    "version": "30ac82c7e79eafec605918dd70b3f9d0f775ec03",
+    "version": "be365e410fc028d4f371b206470e36b622bd361d",
     "location": "adr/devops, adr/software-engineering",
     "roots": [
       {
@@ -9,7 +9,7 @@
       },
       {
         "dir": "adr/software-engineering",
-        "n": 22
+        "n": 23
       }
     ],
     "adrs": [
@@ -572,7 +572,7 @@
       {
         "id": "ADR-0017",
         "title": "Wrap architecture — thoth owns the verdict, AGT plugs in behind five interfaces",
-        "status": "accepted",
+        "status": "accepted (pending supersession by ADR-0021)",
         "path": "adr\\software-engineering\\0017-wrap-architecture-thoth-owns-the-verdict.md",
         "applicableTo": [
           "architecture",
@@ -639,6 +639,31 @@
           "No maat-legacy file is pulled into this repository before this ADR is Accepted by human action.",
           "The mutation gate that must be green before the M1.5 build story is reviewable (not merely before it ships — CLAUDE.md's named compensating control for running this port at STANDARD tier) is: mutation-check.mjs's ported HARNESS MECHANISM (shadow-copy build, apply-mutant, rerun-suite, kill/survive scoring — QA-06's own general mechanism), run against a NEW, narrowly-scoped mutant set authored fresh against the functions actually ported from guard.mjs (the SUR-06–09 detection/target-extraction logic). mutation-check.mjs's own pinned mutant set (11 mutants targeting reportScopeCoversFile()'s brace-expansion logic — report-gate.mjs's own EVD-01/EVD-03 scope-matching capability, M4-deferred per docs/REQUIREMENTS.md §13 line 647, not §1.3 row 1) does not apply to M1.5's real scope and must never be claimed as covering it.",
           "This ADR does not edit .governance.json; the M1.5 build story confirms or extends protected-path coverage for the landing zone under its own fresh security review before any ported file lands outside the existing `(^|/)(src/(kernel|gates|policy)|hooks|bin)/` pattern."
+        ]
+      },
+      {
+        "id": "ADR-0021",
+        "title": "Thoth-native architecture — kernel, Action record, normalizer registry, gate surfaces, evidence trail, environment model; AGT evaluated per shape against verified 2026-08-30 facts, reused for none of the six",
+        "status": "proposed",
+        "path": "adr\\software-engineering\\0021-thoth-native-architecture.md",
+        "applicableTo": [
+          "architecture",
+          "security",
+          "code",
+          "data"
+        ],
+        "rules": [
+          "The policy kernel MUST be pure: no filesystem, network, or process access; every world fact it decides against is passed in as an argument, never fetched (POL-11).",
+          "Every governed tool call MUST be normalized into exactly one canonical Action record — fields `source`, `verbs`, `targets`, `environment`, `identity`, `deferred`, `unresolved` — before it reaches the kernel (REQUIREMENTS.md §3.1, POL-04). This is a floor: a story MAY carry additional non-kernel-branching fields (e.g. audit metadata); the kernel itself MUST NOT branch on a field outside these seven.",
+          "Per-tool-type normalizers MUST be registered on the normalizer registry by declaration; adding a tool type MUST NOT require editing a shared dispatch chain or the kernel itself (POL-12).",
+          "The startup gate, the in-session hook gate, and the pipeline gate MUST all invoke the same single kernel build artifact and MUST return identical verdicts on identical input (POL-03, REQUIREMENTS.md §0.4 property 3).",
+          "The kernel MUST evaluate the Action record's `deferred` field as execution, not as a lesser class of action (SUR-09).",
+          "No filesystem, network, process-spawning, timer, or vendor-SDK import MAY appear anywhere under the kernel's own module boundary; the layer boundary is enforced by a lint rule or structural test, not by convention alone (POL-11, SE ADR-0002).",
+          "The kernel MUST deny a mutating action whose Action record has `source: opaque` or a non-empty `unresolved` array (POL-05).",
+          "The in-session hook gate MUST be implemented only through Claude Code's documented `PreToolUse`, `UserPromptSubmit`, `SessionStart`, and `SubagentStop` primitives; it MUST NOT assume `SessionStart` alone can halt a session — the halt point is `UserPromptSubmit` (gap G5).",
+          "No control named in thoth's posture output may rest on an unverified third party's claim about its own behavior; where thoth can verify a third party's gate directly, it MUST do so and record its own independent verdict (INT-07).",
+          "Introducing `@microsoft/agent-governance-sdk`, `@microsoft/agent-governance-claude-code`, or an equivalent third-party governance-decision dependency into the kernel, the canonical Action record, the normalizer/extractor registry, any gate surface, the evidence trail, or the environment/assurance model MUST NOT happen without a new recorded decision reopening that question. This ADR's own per-shape reuse-vs-build assessment (2026-08-30) evaluated `PolicyEngine`, `FacetRegistry`, `RingEnforcer`, and `AuditLogger`/the claude-code plugin's audit writer against these six shapes on their currently confirmed behavior, and none cleared the bar — see the Decision section's table and the Open verification items list.",
+          "The audit log MUST be hash-chained from a genesis hash, append-only (no full-array rewrite on append), MUST NOT truncate at any entry count, MUST be verified with a timing-safe comparison, and MUST be written atomically (temp file plus rename) at a location outside the governed session's write reach (INT-05, REL-02)."
         ]
       },
       {
