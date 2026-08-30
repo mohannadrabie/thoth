@@ -1,0 +1,52 @@
+# maat receipt check — OPT-IN, REPORT-ONLY.
+#
+# This file is scaffolded by /maat:init as an EXAMPLE and is deliberately NOT placed in
+# .github/workflows/. Copy it there yourself when you want it. Nothing in maat activates it, and
+# nothing in maat needs it: the plugin carries the delivery loop, not an enforcement layer.
+#
+# What it does: reruns the same mechanical reopen-trigger checks the Manager runs at stage 5, on
+# the PR head, and posts the table to the job log. It is a second pair of eyes on the arithmetic,
+# not a gate.
+#
+# It never fails the build. `continue-on-error: true` plus the script's own exit-0-always contract
+# mean a REOPEN row is information, not a rejection — a reviewer decides what a REOPEN means, the
+# same division of labour /maat:audit already uses. If you want it to block, that is a policy
+# decision for your repo (make it a required check in branch protection), taken with your eyes
+# open and owned by you, not something this plugin does on your behalf.
+
+name: maat receipt check
+
+on:
+  pull_request:
+
+jobs:
+  receipts:
+    name: Review receipts (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script compares each report's `HEAD:` line against the current commit to spot a
+          # review of an older tree, so it needs real history rather than a shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Receipt check
+        env:
+          # The script cross-references [HIGH]/[MED] findings against filed bug Issues by default.
+          # Pass --no-issues below if your project has not adopted that convention; without a token
+          # the check reports UNKNOWN rather than passing.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f docs/receipt-check.mjs ]; then
+            node docs/receipt-check.mjs
+          else
+            echo "docs/receipt-check.mjs not present — run /maat:init to scaffold it."
+          fi

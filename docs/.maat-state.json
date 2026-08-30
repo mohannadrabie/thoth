@@ -1,0 +1,654 @@
+{
+  "adrCatalog": {
+    "version": "30ac82c7e79eafec605918dd70b3f9d0f775ec03",
+    "location": "adr/devops, adr/software-engineering",
+    "roots": [
+      {
+        "dir": "adr/devops",
+        "n": 12
+      },
+      {
+        "dir": "adr/software-engineering",
+        "n": 22
+      }
+    ],
+    "adrs": [
+      {
+        "id": "ADR-0000",
+        "title": "ADR-NNNN: <Short imperative title>",
+        "status": "Proposed",
+        "path": "adr\\devops\\0000-template.md",
+        "applicableTo": [
+          "<iac | cdk | cost | security | pipeline | operations | ...>"
+        ],
+        "rules": [
+          "MUST ...",
+          "MUST NOT ...",
+          "SHOULD ..."
+        ]
+      },
+      {
+        "id": "ADR-0001",
+        "title": "Record infrastructure and DevOps decisions",
+        "status": "Accepted",
+        "path": "adr\\devops\\0001-record-infrastructure-decisions.md",
+        "applicableTo": [
+          "process",
+          "iac"
+        ],
+        "rules": [
+          "MUST read all `Accepted` ADRs in this directory before generating or reviewing infrastructure, pipelines, or IaC, and obey every `Rules for agents` section.",
+          "MUST also honor the relevant `software-engineering/` ADRs (idempotency SE-0004, blast radius SE-0006, tagging SE-0007, cost SE-0008, observability SE-0009); this set specializes them for AWS CDK.",
+          "MUST reference governing ADR numbers in PR descriptions (e.g. `Complies with ADR-0002, ADR-0006, SE-0007`).",
+          "MUST NOT modify the Decision section of an `Accepted` ADR; write a superseding ADR and set the old status to `Superseded by ADR-NNNN`.",
+          "MUST propose a new ADR (status `Proposed`) for a significant infra decision not covered here, and flag it for human approval; agents MUST NOT self-accept ADRs."
+        ]
+      },
+      {
+        "id": "ADR-0002",
+        "title": "AWS CDK as the infrastructure-as-code standard",
+        "status": "Accepted",
+        "path": "adr\\devops\\0002-aws-cdk-as-iac-standard.md",
+        "applicableTo": [
+          "iac",
+          "cdk"
+        ],
+        "rules": [
+          "MUST author all new AWS infrastructure as AWS CDK (v2) in TypeScript; MUST NOT hand-write CloudFormation/SAM YAML except a documented, human-approved exception.",
+          "MUST use a single pinned CDK library version per repo (`aws-cdk-lib`), and keep the CLI and library versions in lockstep.",
+          "MUST commit `cdk.json`, source, and tests; MUST NOT commit synthesized `cdk.out` templates as the source of truth (they are build artifacts).",
+          "MUST make deploys reproducible from source: `cdk synth` on a clean checkout MUST be deterministic (no `Date.now()`, random suffixes, or environment lookups outside declared context/props).",
+          "MUST review `cdk diff` (and the change set for replacements) before any prod deploy (SE-0006).",
+          "SHOULD NOT drop to L1/raw CfnResource when an L2 construct exists (ADR-0003); escape hatches are a documented exception."
+        ]
+      },
+      {
+        "id": "ADR-0003",
+        "title": "CDK construct layering (L1/L2/L3)",
+        "status": "Accepted",
+        "path": "adr\\devops\\0003-cdk-construct-layering.md",
+        "applicableTo": [
+          "iac",
+          "cdk",
+          "architecture"
+        ],
+        "rules": [
+          "MUST prefer the highest appropriate layer: use an existing L3 pattern first, then compose L2 constructs; MUST NOT use an L1 `Cfn*` resource when an L2 exists for it.",
+          "MUST promote any construct wiring that appears in two or more stacks into a reusable in-house L3 construct in the shared library (ADR-0005) rather than copy-pasting.",
+          "MUST expose every in-house construct's configuration through a typed `props` interface (ADR-0004); MUST NOT read process env or global state inside a construct.",
+          "MUST bake org defaults into in-house constructs: tags (ADR-0006), least-privilege roles (ADR-0009), log retention and lifecycle (SE-0008), and prod `RemovalPolicy.RETAIN` on stateful resources (SE-0006).",
+          "MUST comment every escape hatch / L1 override with the reason the L2 abstraction was insufficient.",
+          "SHOULD keep each construct single-responsibility (SE-0003): one construct = one cohesive capability."
+        ]
+      },
+      {
+        "id": "ADR-0004",
+        "title": "No hardcoded values — configuration and parameterization",
+        "status": "Accepted",
+        "path": "adr\\devops\\0004-no-hardcoded-values-configuration.md",
+        "applicableTo": [
+          "iac",
+          "cdk",
+          "configuration"
+        ],
+        "rules": [
+          "MUST expose every environment- or consumer-varying value as a typed field on a `props` interface; MUST NOT hardcode account IDs, regions, ARNs, CIDRs, instance sizes, capacities, or endpoint URLs in construct/stack bodies.",
+          "MUST source per-environment values from a typed config module keyed by `environment` (resolved via CDK context), not from copy-pasted stacks.",
+          "MUST resolve secrets from Secrets Manager and non-secret runtime config from SSM Parameter Store by reference (ADR-0009); MUST NOT inline secret material or embed it in context/props.",
+          "MUST provide safe defaults for optional props and document each default; required inputs (account, region, environment, owner) have no default and fail synth if missing.",
+          "MUST validate inputs early (e.g. allowed `environment` values, CIDR shape) and fail `cdk synth` with a clear message on bad config.",
+          "MUST NOT use CloudFormation `Parameters` for values known at synth time; prefer context/props. Deploy-time operator inputs are the only exception and must be documented.",
+          "SHOULD keep `cdk.context.json` committed and current so synth is reproducible across machines (ADR-0002)."
+        ]
+      },
+      {
+        "id": "ADR-0005",
+        "title": "Self-service infrastructure via a reusable construct library",
+        "status": "Accepted",
+        "path": "adr\\devops\\0005-self-service-construct-library.md",
+        "applicableTo": [
+          "iac",
+          "cdk",
+          "self-service",
+          "platform"
+        ],
+        "rules": [
+          "MUST provision common infrastructure (APIs, compute, buckets, queues, databases) from the in-house construct library when a suitable construct exists; MUST NOT hand-roll equivalent raw L2 wiring in an app repo.",
+          "MUST keep a consumer's surface area to typed props: adding a construct to a stack requires passing parameters only, no editing of library internals (ADR-0004).",
+          "MUST, when a needed pattern is missing, add or extend a library construct (with tests, defaults, and README) rather than one-off wiring in the app repo (ADR-0003 promote-on-second-use).",
+          "MUST version the library with semver and pin it in consumers; breaking prop changes are a major bump with a migration note.",
+          "MUST make every library construct compliant by default: tags (ADR-0006), least-privilege IAM (ADR-0009), encryption, retention (SE-0008), removal policy (SE-0006).",
+          "SHOULD provide sensible, cost-aware defaults (serverless/on-demand, ARM/Graviton where compatible — SE-0008) so the zero-config path is also the low-cost path.",
+          "SHOULD NOT over-parameterize: expose the knobs teams actually vary; keep policy (encryption, tagging) non-optional."
+        ]
+      },
+      {
+        "id": "ADR-0006",
+        "title": "Mandatory tagging via CDK Aspects for cost allocation",
+        "status": "Accepted",
+        "path": "adr\\devops\\0006-tagging-via-cdk-aspects.md",
+        "applicableTo": [
+          "cdk",
+          "cost",
+          "tagging",
+          "finops"
+        ],
+        "rules": [
+          "MUST apply the standard tag set once per stage via the shared `applyStandardTags`/`Tags.of` + Aspect helper; MUST NOT tag resources individually or rely on manual per-construct tags for the mandatory set.",
+          "MUST source every tag value from the typed config module (ADR-0004); MUST NOT hardcode tag values or put secrets/PII/free-form prose in tags (SE-0007).",
+          "MUST use the exact canonical keys from SE-0007; the validation Aspect MUST reject synonyms and missing mandatory tags and fail `cdk synth`.",
+          "MUST tag data stores with `data-classification` and expiring resources with `temporary: <yyyy-mm-dd>` (SE-0007).",
+          "MUST ensure new mandatory keys are activated as cost allocation tags before relying on them for reporting (SE-0008); flag activation as a task in the PR.",
+          "MUST keep tag values low-cardinality and stable so cost reports group cleanly.",
+          "SHOULD add `component`/`workload` sub-tags only through the same aspect, never ad hoc, to keep Cost Explorer dimensions consistent."
+        ]
+      },
+      {
+        "id": "ADR-0007",
+        "title": "Environments, accounts, and the deployment pipeline",
+        "status": "Accepted",
+        "path": "adr\\devops\\0007-environments-accounts-and-pipeline.md",
+        "applicableTo": [
+          "cdk",
+          "pipeline",
+          "environments",
+          "operations"
+        ],
+        "rules": [
+          "MUST deploy to `dev`, `staging`, and `prod` through the CDK Pipeline; MUST NOT `cdk deploy` by hand into any shared environment (personal sandbox only).",
+          "MUST define each environment as the same CDK `Stage` parameterized by the typed config module (ADR-0004); MUST NOT fork stacks per environment.",
+          "MUST place a manual approval gate before the `prod` stage and run policy/security checks (ADR-0008) before any deploy stage.",
+          "MUST keep environments in separate accounts and pass `env` (account/region) from config; MUST NOT deploy multiple environments into one account.",
+          "MUST make deploys idempotent and re-runnable (SE-0004); a re-run with no source change is a no-op.",
+          "MUST review `cdk diff` for the target stage (and change-set replacements) before approving prod (SE-0006, ADR-0002).",
+          "SHOULD keep the pipeline definition itself in CDK (self-mutating) so pipeline changes are code-reviewed like any other change."
+        ]
+      },
+      {
+        "id": "ADR-0008",
+        "title": "CI/CD gates and policy-as-code",
+        "status": "Accepted",
+        "path": "adr\\devops\\0008-cicd-gates-and-policy-as-code.md",
+        "applicableTo": [
+          "cdk",
+          "pipeline",
+          "quality",
+          "security",
+          "supply-chain"
+        ],
+        "rules": [
+          "MUST run the full gate set locally (synth, lint, unit tests, cdk-nag, tag validation, Gitleaks, Semgrep, Trivy) before declaring work complete; failing gates = unfinished work.",
+          "MUST install and run the Gitleaks pre-commit hook; MUST NOT bypass it (`--no-verify`) to force a commit containing a flagged secret — rotate the secret and re-commit clean.",
+          "MUST NOT suppress a cdk-nag finding, tag-validation error, Semgrep finding, or Trivy finding without an inline justification comment AND a human-approved, time-bound exception in the PR (SE-0010).",
+          "MUST generate and attach an SBOM (CycloneDX or SPDX) as a build artifact for every container image built; a build without one is incomplete.",
+          "MUST sign every container image with Cosign only after its Trivy image scan passes; MUST NOT push an unsigned or scan-failed image to a deployable registry.",
+          "MUST verify the Cosign signature before any deploy stage pulls an image; MUST NOT deploy an image with a missing or invalid signature, and MUST NOT add a suppression path for this gate.",
+          "MUST include a `cdk diff` and a `Cost impact` section in every infra PR (SE-0008); MUST call out any resource replacement.",
+          "MUST write unit tests for in-house constructs asserting the security- and cost-relevant properties (encryption on, least-privilege policy shape, retention set, tags present).",
+          "MUST NOT merge a PR with any blocking gate open, failing, or pending.",
+          "MUST NOT lower gate thresholds, delete tests, or broaden suppression/ignore lists (ratchet only).",
+          "SHOULD keep synth fast and deterministic so gates run on every PR without flake (ADR-0002).",
+          "SHOULD treat a High-risk ZAP finding against staging as a release blocker for the next prod promotion, not just a staging-only issue."
+        ]
+      },
+      {
+        "id": "ADR-0009",
+        "title": "Least-privilege IAM and secrets in IaC",
+        "status": "Accepted",
+        "path": "adr\\devops\\0009-least-privilege-and-secrets.md",
+        "applicableTo": [
+          "cdk",
+          "security",
+          "iam",
+          "secrets"
+        ],
+        "rules": [
+          "MUST use CDK `grant*` methods or resource-scoped policies for IAM; MUST NOT write `Action: \"*\"` or `Resource: \"*\"` unless AWS requires it, and then MUST comment it and record a human-approved cdk-nag suppression (ADR-0008).",
+          "MUST store secrets in Secrets Manager / SSM SecureString and reference them by ARN/name; MUST NOT place secret material in source, context, env vars, or synthesized templates (ADR-0004).",
+          "MUST enable encryption at rest on every data store and TLS in transit; library constructs make this non-optional (ADR-0005).",
+          "MUST scope each role to one workload with least privilege; MUST NOT share a broad role across unrelated functions.",
+          "MUST NOT create static IAM access keys in infrastructure; use roles and assumed-role trust (ADR-0007).",
+          "SHOULD enable secret rotation and use customer-managed KMS keys for confidential data (SE-0007 `data-classification`).",
+          "SHOULD run cdk-nag security rules as a blocking gate (ADR-0008) and treat findings as defects, not warnings."
+        ]
+      },
+      {
+        "id": "ADR-0010",
+        "title": "Cost governance and FinOps for infrastructure",
+        "status": "Accepted",
+        "path": "adr\\devops\\0010-cost-governance-finops.md",
+        "applicableTo": [
+          "cdk",
+          "cost",
+          "finops",
+          "operations"
+        ],
+        "rules": [
+          "MUST follow all SE-0008 cost rules (retention/lifecycle on accumulating resources, serverless/on-demand for spiky load, recorded human approval for GPU/large-instance/provisioned-capacity/cross-region, ARM/Graviton where compatible); this ADR realizes them in CDK and MUST NOT relax them.",
+          "MUST provision AWS Budgets + a Cost Anomaly Detection monitor via the `CostGuardrails` construct (ADR-0005) when creating a new account or a project expected to exceed ~$100/month; MUST NOT rely on console-created budgets that drift from code.",
+          "MUST bake the SE-0008 cost-aware defaults into library constructs (ADR-0005) so the zero-config path is the low-cost path.",
+          "MUST include a `Cost impact` section in any infra PR that creates or resizes billable resources — estimated monthly cost, scaling dimension, and the tag values the spend appears under (ADR-0006) — alongside `cdk diff` (ADR-0008).",
+          "MUST ensure spend is attributable before scaling a workload: mandatory tags present and activated as cost allocation tags (ADR-0006).",
+          "SHOULD surface Compute Optimizer / idle-resource findings as follow-up tasks (SE-0008)."
+        ]
+      },
+      {
+        "id": "",
+        "title": "DevOps & Infrastructure ADRs",
+        "status": "unknown",
+        "path": "adr\\devops\\README.md",
+        "applicableTo": [],
+        "rules": []
+      },
+      {
+        "id": "ADR-0000",
+        "title": "ADR-NNNN: <Short imperative title>",
+        "status": "Proposed",
+        "path": "adr\\software-engineering\\0000-template.md",
+        "applicableTo": [
+          "<architecture | testing | cloud | quality | ...>"
+        ],
+        "rules": [
+          "MUST ...",
+          "MUST NOT ...",
+          "SHOULD ..."
+        ]
+      },
+      {
+        "id": "ADR-0001",
+        "title": "Record architecture decisions",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0001-record-architecture-decisions.md",
+        "applicableTo": [
+          "process"
+        ],
+        "rules": [
+          "MUST read all `Accepted` ADRs in this repo before generating or reviewing code, and obey every `Rules for agents` section.",
+          "MUST reference the governing ADR number(s) in PR descriptions (e.g. `Complies with ADR-0004, ADR-0007`).",
+          "MUST NOT modify the Decision section of an `Accepted` ADR; write a superseding ADR instead and set the old status to `Superseded by ADR-NNNN`.",
+          "MUST propose a new ADR (status `Proposed`) when making a significant decision not covered here, and flag it for human approval; agents MUST NOT self-accept ADRs.",
+          "SHOULD add a one-line comment linking the ADR at architectural seams in code (module boundaries, public interfaces)."
+        ]
+      },
+      {
+        "id": "ADR-0002",
+        "title": "Multi-layer architecture with strict dependency rule",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0002-multi-layer-architecture.md",
+        "applicableTo": [
+          "architecture"
+        ],
+        "rules": [
+          "MUST keep the domain layer free of framework, ORM, HTTP, and cloud SDK imports.",
+          "MUST NOT let presentation code access infrastructure directly (e.g. handler -> DB client). It goes through an application service.",
+          "MUST define external dependencies as interfaces/ports owned by the inner layer, implemented in infrastructure (dependency inversion).",
+          "MUST place data persistence behind a repository/port in infrastructure and follow the data standards (ADR-0011–ADR-0015); the domain layer holds no SQL, ORM, or SDK query code.",
+          "MUST NOT leak vendor/SDK types across layer boundaries; map them to domain or DTO types at the adapter.",
+          "MUST keep each layer in a distinct directory (`presentation/`|`api/`, `application/`, `domain/`, `infrastructure/`) or the repo's documented equivalent.",
+          "SHOULD keep cross-cutting concerns (logging, metrics, auth) in middleware/decorators, not scattered in business code.",
+          "SHOULD flag any existing violation it touches, and fix it if the fix is small and covered by tests."
+        ]
+      },
+      {
+        "id": "ADR-0003",
+        "title": "Apply SOLID principles",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0003-solid-principles.md",
+        "applicableTo": [
+          "quality",
+          "architecture"
+        ],
+        "rules": [
+          "MUST inject I/O-performing dependencies (clock, DB, HTTP, queue, random) via constructor/parameters; MUST NOT instantiate them inside business logic.",
+          "MUST NOT create classes/modules that mix unrelated responsibilities (e.g. parsing + persistence + notification in one class). Split by reason-to-change.",
+          "MUST NOT implement an interface partially (throwing `NotImplemented` from contract methods). Split the interface instead.",
+          "SHOULD prefer adding a new strategy/handler over extending an if/else or switch ladder when a third variant appears (two variants may stay a conditional).",
+          "SHOULD keep functions under ~40 lines and cyclomatic complexity <= 10 (see ADR-0010 for enforcement).",
+          "SHOULD NOT over-abstract: no speculative interfaces with a single implementation and no test double. YAGNI applies; SOLID is for managing change that actually exists."
+        ]
+      },
+      {
+        "id": "ADR-0004",
+        "title": "Idempotency by default",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0004-idempotency-by-default.md",
+        "applicableTo": [
+          "architecture",
+          "reliability"
+        ],
+        "rules": [
+          "MUST design every mutating endpoint, consumer, and job to produce the same end state when executed multiple times with the same input.",
+          "MUST implement `Idempotency-Key` handling on endpoints that create resources or move money/inventory, and document the key scope and TTL.",
+          "MUST dedupe message consumers before external side effects (email, payment, third-party API call), not after.",
+          "MUST use conditional/versioned writes (optimistic concurrency) when read-modify-write cannot be avoided.",
+          "MUST write re-runnable operational scripts and migrations; a second run is a no-op, never an error or a duplicate.",
+          "MUST cover idempotency in tests: at minimum one test per mutating operation that executes it twice and asserts single effect (ADR-0005).",
+          "SHOULD log detected duplicates with the idempotency key for observability (ADR-0009)."
+        ]
+      },
+      {
+        "id": "ADR-0005",
+        "title": "Testing strategy — unit tests + Playwright E2E",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0005-testing-strategy-playwright.md",
+        "applicableTo": [
+          "testing",
+          "quality"
+        ],
+        "rules": [
+          "MUST write unit tests for every new/changed domain or application behavior — happy path, error paths, and boundaries; target >= 80% line coverage on those layers (gate in ADR-0010).",
+          "MUST add or update a Playwright test when a user-facing flow is added or changed.",
+          "MUST include an idempotency test for every mutating operation (run twice, assert once) per ADR-0004.",
+          "MUST test database migrations forward and, for reversible ones, their rollback before merge; backfills are tested for idempotency (ADR-0012, ADR-0006).",
+          "SHOULD include an automated restore test of backups in the pipeline so recovery is proven, not assumed (ADR-0014).",
+          "MUST NOT use `waitForTimeout`, arbitrary sleeps, or ordering-dependent tests.",
+          "MUST use web-first assertions and user-facing locators in Playwright tests.",
+          "MUST make each test create/own its data; MUST NOT depend on data left by another test.",
+          "MUST NOT delete or weaken a failing test to make CI pass; fix the code or escalate.",
+          "SHOULD keep the E2E suite lean — cover journeys, not every permutation (permutations belong in unit tests)."
+        ]
+      },
+      {
+        "id": "ADR-0006",
+        "title": "Blast radius control",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0006-blast-radius-control.md",
+        "applicableTo": [
+          "architecture",
+          "reliability",
+          "cloud"
+        ],
+        "rules": [
+          "MUST gate new user-facing behavior behind a feature flag defaulting to OFF when the change is risky or spans multiple PRs; flag removal is a tracked follow-up task.",
+          "MUST set explicit timeouts on every network call and bounded retries with exponential backoff + jitter; MUST NOT retry non-idempotent operations.",
+          "MUST keep stateful and stateless resources in separate CDK/CloudFormation stacks; MUST set `DeletionPolicy: Retain` + `UpdateReplacePolicy: Retain` (CDK `RemovalPolicy.RETAIN`) on databases, buckets, and queues in prod.",
+          "MUST NOT introduce a change that requires simultaneous deploy of multiple services (lockstep). Changes are backward compatible; contracts evolve expand-then-contract.",
+          "MUST make every schema/data migration reversible or explicitly two-phase, and state the rollback plan in the PR description.",
+          "MUST NOT widen a change's scope opportunistically (\"while I'm here\" refactors); separate PR.",
+          "SHOULD run `cdk diff`/change sets and review the change set for replacements (`Modification: True` on `Replacement`) before any prod stack update; the full IaC gate set is in devops ADR-0008.",
+          "SHOULD prefer cell/shard isolation for multi-tenant hot paths where one tenant's load can hurt others."
+        ]
+      },
+      {
+        "id": "ADR-0007",
+        "title": "Mandatory resource tagging standard",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0007-resource-tagging-standard.md",
+        "applicableTo": [
+          "cloud",
+          "cost",
+          "operations"
+        ],
+        "rules": [
+          "MUST apply all seven mandatory tags at stack/stage level so they propagate (in CDK via `Tags.of` + a tagging Aspect, devops ADR-0006); MUST add resource-level tags where propagation is not supported.",
+          "MUST parameterize tag values from the typed config module (devops ADR-0004), never hardcode per copy-paste.",
+          "MUST tag data stores with `data-classification`.",
+          "MUST NOT put secrets, personal data, or free-form prose in tag values.",
+          "MUST use the exact canonical key spellings above; MUST NOT invent synonyms (`env`, `Environment`, `team`).",
+          "MUST include `temporary` with an expiry date on experiment/spike resources.",
+          "SHOULD fail the pipeline when the CI tag-validation step reports a missing mandatory tag, rather than deploying and remediating later."
+        ]
+      },
+      {
+        "id": "ADR-0008",
+        "title": "Cost tracking and allocation",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0008-cost-tracking-and-allocation.md",
+        "applicableTo": [
+          "cloud",
+          "cost",
+          "finops"
+        ],
+        "rules": [
+          "MUST include a `Cost impact` section in any PR that creates or resizes billable infrastructure: estimated monthly cost, scaling dimension, and which tag values the spend will appear under.",
+          "MUST choose serverless/on-demand options for spiky or unknown load and justify any always-on capacity.",
+          "MUST set retention/lifecycle on anything that accumulates (CloudWatch log groups, S3 buckets, snapshots) — unbounded retention is a defect.",
+          "SHOULD apply retention, archival, and tiering to databases and datastores per ADR-0015; stale hot data is a recurring, compounding cost.",
+          "MUST create/update an AWS Budget + anomaly monitor when provisioning a new account or a project whose spend is expected to exceed $100/month.",
+          "MUST NOT provision GPU, large instance families, provisioned-capacity databases, or cross-region data replication (for performance/availability) without an explicit human approval recorded in the PR. The cross-account/cross-region **backup** copies mandated by ADR-0014 are pre-approved and exempt from this gate.",
+          "SHOULD prefer ARM (Graviton) instances and current-generation instance families where compatible.",
+          "SHOULD flag idle/oversized resources it notices (e.g. via Compute Optimizer findings) as follow-up tasks."
+        ]
+      },
+      {
+        "id": "ADR-0009",
+        "title": "Monitoring and observability",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0009-monitoring-and-observability.md",
+        "applicableTo": [
+          "operations",
+          "reliability"
+        ],
+        "rules": [
+          "MUST emit structured JSON logs with the standard fields; MUST NOT log secrets, tokens, passwords, or personal data.",
+          "MUST propagate trace context across every service boundary it introduces (HTTP header, message attribute).",
+          "MUST record an error-level log with trace id at the point of failure handling, once — no log-and-rethrow duplication up the stack.",
+          "MUST define/update golden-signal metrics and at least one SLO-based alarm when creating a new service or endpoint; alarms MUST have an owner and a runbook link.",
+          "MUST set explicit log retention on every new log group and metric namespace conventions per the repo's observability doc.",
+          "MUST NOT create paging alerts on raw infrastructure causes (CPU%, memory) for user-facing issues — page on SLO burn; keep cause signals as dashboards.",
+          "SHOULD add a dashboard (or extend the service dashboard) with the golden signals for every new deployable.",
+          "SHOULD emit database health metrics (connections, replica lag, slow queries) and enable Performance Insights on production databases (ADR-0013).",
+          "SHOULD log detected idempotency-key replays (ADR-0004) and feature-flag decisions for high-risk flags (ADR-0006)."
+        ]
+      },
+      {
+        "id": "ADR-0010",
+        "title": "Code quality and maintainability gates",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0010-code-quality-and-maintainability.md",
+        "applicableTo": [
+          "quality",
+          "process"
+        ],
+        "rules": [
+          "MUST run the full local equivalent of CI gates before declaring work complete; failing gates = unfinished work.",
+          "MUST NOT disable, skip, or inline-suppress linter/type/test rules to get green (`eslint-disable`, `# type: ignore`, `.skip`) without a comment justifying it AND a human-approved exception in the PR.",
+          "MUST NOT lower coverage thresholds, delete tests, or broaden lint ignore lists.",
+          "MUST keep functions/files within the complexity and size limits; refactor rather than suppress.",
+          "MUST add a new third-party dependency only with a justification paragraph in the PR description.",
+          "MUST leave touched code at least as clean as found (fix trivial issues in-place; file follow-ups for larger ones — do not scope-creep the PR, ADR-0006).",
+          "SHOULD use Conventional Commits and reference governing ADRs in the PR description (ADR-0001)."
+        ]
+      },
+      {
+        "id": "ADR-0011",
+        "title": "Database selection and data modeling",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0011-database-selection-and-data-modeling.md",
+        "applicableTo": [
+          "data",
+          "architecture"
+        ],
+        "rules": [
+          "MUST default to a managed relational database for transactional/relational data; MUST justify any NoSQL choice with the specific access patterns it serves.",
+          "MUST model NoSQL from access patterns (primary key + GSIs), and MUST NOT rely on `Scan` in a request path (ADR-0013).",
+          "MUST store money as integer minor units or `decimal`/`numeric` with an explicit currency; MUST NOT use floating-point for monetary or exact values.",
+          "MUST store timestamps in UTC (`timestamptz`) and use native types (`uuid`, `jsonb`) over stringly-typed columns.",
+          "MUST give each dataset a single owning service; MUST NOT write another service's tables (integrate via API or events, ADR-0002).",
+          "MUST use managed database services (Aurora/RDS, DynamoDB); MUST NOT self-host databases on raw compute.",
+          "SHOULD normalize relational schemas to 3NF and denormalize only with a documented justification."
+        ]
+      },
+      {
+        "id": "ADR-0012",
+        "title": "Data integrity and consistency",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0012-data-integrity-and-consistency.md",
+        "applicableTo": [
+          "data",
+          "reliability"
+        ],
+        "rules": [
+          "MUST encode invariants as database constraints (`NOT NULL`, FK, `UNIQUE`, `CHECK`); MUST NOT rely on application checks alone for data that must stay consistent.",
+          "MUST wrap multi-row invariants in a transaction; MUST NOT leave a multi-step write partially applied on error.",
+          "MUST use optimistic concurrency (version check) or row locks for read-modify-write; MUST NOT last-write-wins on contended records (ADR-0004).",
+          "MUST enforce cross-entity relationships in the owning service for NoSQL and with real FKs for relational; MUST NOT create orphanable references without a cleanup invariant.",
+          "MUST use soft-delete + retention for customer data (ADR-0015); MUST NOT hard-delete recoverable/auditable customer data outside the retention/erasure process.",
+          "MUST make backfills idempotent and batched, and validate them (counts/checksums) before the contract step (ADR-0006).",
+          "SHOULD add database-level defaults and generated columns rather than duplicating that logic across services."
+        ]
+      },
+      {
+        "id": "ADR-0013",
+        "title": "Indexing and query performance",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0013-indexing-and-query-performance.md",
+        "applicableTo": [
+          "data",
+          "performance",
+          "cost"
+        ],
+        "rules": [
+          "MUST back every hot-path query with an appropriate index and verify it with `EXPLAIN`/the query planner before merge.",
+          "MUST NOT run unbounded or full-scan queries in a request path; MUST bound result sets and use keyset pagination (not `OFFSET`) for large lists.",
+          "MUST avoid N+1 access — batch, join, or preload; MUST NOT issue per-row queries in a loop.",
+          "MUST NOT `SELECT *` in application queries; select the columns actually used.",
+          "MUST design NoSQL keys/GSIs from access patterns and MUST NOT `Scan` in request paths (ADR-0011); MUST choose high-cardinality partition keys to avoid hot partitions.",
+          "MUST drop demonstrably unused/redundant indexes rather than accumulating them.",
+          "SHOULD add covering/partial indexes for hot read queries; SHOULD enable slow-query logging and Performance Insights on every production database (ADR-0009).",
+          "SHOULD cache hot read-heavy data with explicit TTL + write-invalidation only after the query itself is indexed."
+        ]
+      },
+      {
+        "id": "ADR-0014",
+        "title": "Backup, disaster recovery, and customer data portability",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0014-backup-disaster-recovery-and-portability.md",
+        "applicableTo": [
+          "data",
+          "reliability",
+          "dr",
+          "cost"
+        ],
+        "rules": [
+          "MUST enable PITR + automated backups (AWS Backup) on every store holding customer or business data; MUST NOT ship a customer-data store without them.",
+          "MUST define and document RPO and RTO per data class, and size the backup/DR approach to meet them.",
+          "MUST copy backups to a separate AWS account AND a second region, in immutable (Vault Lock/WORM) KMS-encrypted vaults; MUST NOT keep backups only in the primary account or region.",
+          "MUST test restores on a schedule and record the outcome; MUST treat an untested backup as a gap, not coverage.",
+          "MUST provide per-customer and bulk data export in an open format, plus a documented data-return runbook for shutdown/exit.",
+          "MUST enable deletion protection and `RemovalPolicy.RETAIN` on production data stores (ADR-0006); destructive ops require recorded human approval.",
+          "MUST keep infrastructure reproducible from source (devops ADR-0002) so recovery is restore-plus-redeploy.",
+          "SHOULD run periodic DR game days and encrypt backups with a KMS key distinct from the primary, with restore access held by a separate role (devops ADR-0009)."
+        ]
+      },
+      {
+        "id": "ADR-0015",
+        "title": "Data retention, archival, and cleanup",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0015-data-retention-archival-and-cleanup.md",
+        "applicableTo": [
+          "data",
+          "cost",
+          "privacy"
+        ],
+        "rules": [
+          "MUST assign every dataset a documented retention period keyed to `data-classification` (ADR-0007); MUST NOT retain data indefinitely by default.",
+          "MUST enforce retention with automated, idempotent cleanup/archival jobs (ADR-0004), with observability on rows affected and failures (ADR-0009).",
+          "MUST tier cold data to cheaper storage (S3/Glacier, TTL→S3) rather than growing the hot database unbounded.",
+          "MUST time-partition large append-only/time-series tables so archival and deletion are cheap partition operations, not row-by-row scans.",
+          "MUST support data-subject erasure/anonymization, including a documented backup/archive propagation policy (ADR-0014).",
+          "MUST NOT hard-delete data still within its retention window or under legal hold; use the soft-delete grace window (ADR-0012).",
+          "SHOULD compress and use columnar formats (Parquet) for queryable archives; SHOULD NOT archive data that is trivially recomputable."
+        ]
+      },
+      {
+        "id": "ADR-0016",
+        "title": "Governance-plugin tree porting and self-protection",
+        "status": "Accepted",
+        "path": "adr\\software-engineering\\0016-governance-plugin-tree-porting-and-self-protection.md",
+        "applicableTo": [
+          "architecture",
+          "integration",
+          "security"
+        ],
+        "rules": [
+          "MUST NOT edit any file under `.claude-plugin/`, `fullstack/plugin.json`,",
+          "MUST NOT re-port or \"refresh\" these files from a newer predecessor commit",
+          "MUST NOT claim these ported manifests \"install\" or \"register\" the plugin",
+          "MUST run all three ported test suites (`test-guard.sh`,",
+          "MUST NOT edit `fullstack/scripts/test-guard.sh`,"
+        ]
+      },
+      {
+        "id": "ADR-0017",
+        "title": "Wrap architecture — thoth owns the verdict, AGT plugs in behind five interfaces",
+        "status": "accepted",
+        "path": "adr\\software-engineering\\0017-wrap-architecture-thoth-owns-the-verdict.md",
+        "applicableTo": [
+          "architecture",
+          "integration",
+          "security"
+        ],
+        "rules": [
+          "The decision interface, the canonical Action record, the environment/assurance model, and fail-closed-on-ambiguity are implemented natively in thoth and never delegated to AGT.",
+          "AGT is reached only through five named interfaces: policy evaluation, audit sink, credential vault, facet extraction, integrity manifest.",
+          "Each of the five interfaces has a conformance test thoth owns.",
+          "The differential harness (ported M1.5) runs against AGT on every upstream release.",
+          "No posture-block sentence or published claim rests on an AGT behavior thoth has not verified against its own fixtures (REQUIREMENTS.md §0.7 rule 5, OSS-03)."
+        ]
+      },
+      {
+        "id": "ADR-0018",
+        "title": "M1.5 reference port — fidelity and self-protection for thoth's maat-legacy port",
+        "status": "superseded",
+        "path": "adr\\software-engineering\\0018-m15-reference-port-fidelity-and-self-protection.md",
+        "applicableTo": [
+          "architecture",
+          "integration",
+          "security"
+        ],
+        "rules": [
+          "None of M1.5's own five ported files (guard.mjs's detector, test-guard.sh, mutation-check.mjs, guard-shadow-differential.test.ts, guard-fixture-filter.mjs) may be placed inside any of the eslint kernel-import-restriction's three per-file override blocks (kernel.ts; action.ts+types.ts; normalize-fs.ts+normalize-shell.ts) — there is no directory-wide boundary in the real eslint.config.mjs, only these three narrow file-scoped overrides. This constraint binds M2's own pure-core files (action.ts; kernel.ts's isMutating()/pol05Rule(); precedence.ts's mandatory-key delta; schema.ts/schemas.ts/types.ts) when that later story lands them, not this one.",
+          "Every one of M1.5's five ported files (docs/REQUIREMENTS.md §13 line 644 scope: guard.mjs's detector, test-guard.sh, mutation-check.mjs, and the differential rig's two files that exist at d64066c) is byte-for-byte verified against maat-legacy HEAD d64066c's blob SHA before the port is called complete; no logic paraphrase during the port itself. docs/REQUIREMENTS.md §1.2's own line-count ledger is not yet reconciled against d64066c for the M2/M3-deferred rows outside this scope (see docs/backlog.md).",
+          "No maat-legacy file is pulled into this repository before this ADR is Accepted by human action.",
+          "The mutation gate (mutation-check.mjs, QA-06) must be green before the M1.5 build story is reviewable, not merely before it ships — CLAUDE.md's named compensating control for running this port at STANDARD tier.",
+          "This ADR does not edit .governance.json; the M1.5 build story confirms or extends protected-path coverage for the landing zone under its own fresh security review before any ported file lands outside the existing `(^|/)(src/(kernel|gates|policy)|hooks|bin)/` pattern."
+        ]
+      },
+      {
+        "id": "ADR-0019",
+        "title": "Reference-port fidelity and self-protection — generic pattern",
+        "status": "accepted",
+        "path": "adr\\software-engineering\\0019-reference-port-fidelity-and-self-protection.md",
+        "applicableTo": [
+          "architecture",
+          "integration",
+          "security"
+        ],
+        "rules": [
+          "A ported file that is impure by necessity (it touches the filesystem, network, process state, or inspects live input) MUST NOT be placed inside the adopting project's own purity/kernel boundary, if one exists — whatever mechanism enforces that boundary (a lint rule, a structural test, a directory convention). The boundary's real, current placement rules are read directly from the adopting project's own config before any port is placed, never assumed or restated from memory or from a different project's boundary shape.",
+          "Every ported file MUST be verified byte-for-byte (e.g. `git hash-object`) against the pinned source commit's blob SHA before the port is called complete, when the source and destination are the same format/language. A cross-format or cross-language translation cannot satisfy a hash match by construction; its fidelity claim is instead differential/behavior-verified against the source's own test cases, and is stated as such rather than as a hash match it did not actually run.",
+          "No file from the source repository enters the adopting repository before the adopting project's own instance of this pattern (an ADR following this one, naming the specific source repo, commit, files, and destination) is Accepted by human action — never by the same agent or session proposing it.",
+          "A ported file that contains behavior-bearing enforcement or decision logic (anything a regression suite tests pass/fail behavior against) MUST pass a mutation-testing gate — proving the ported regression suite actually fails on named regression/mutant classes, not merely that it passed once — before the porting story is reviewable, in addition to byte-hash verification. A port that is static, manifest-only, or config-only, with no mutation-testable decision logic, is adequately covered by byte-hash verification alone; the mutation gate is not required for it.",
+          "This ADR does not itself grant authority to edit the adopting project's own protected-path/write-gate configuration. Bringing newly-ported code under that project's own protection mechanism, once it is part of that project's enforcement surface, is a separately, freshly reviewed decision made at landing time — because the destination path, and often the destination mechanism itself, may not exist yet when this ADR is written."
+        ]
+      },
+      {
+        "id": "ADR-0020",
+        "title": "M1.5 reference port — corrected compensating control and guard.mjs fidelity method",
+        "status": "accepted",
+        "path": "adr\\software-engineering\\0020-m15-reference-port-correction-mutation-gate-and-guard-fidelity.md",
+        "applicableTo": [
+          "architecture",
+          "integration",
+          "security"
+        ],
+        "rules": [
+          "None of M1.5's own five ported files (guard.mjs's detector, test-guard.sh, mutation-check.mjs, guard-shadow-differential.test.ts, guard-fixture-filter.mjs) may be placed inside any of the eslint kernel-import-restriction's three per-file override blocks (kernel.ts; action.ts+types.ts; normalize-fs.ts+normalize-shell.ts) — there is no directory-wide boundary in the real eslint.config.mjs, only these three narrow file-scoped overrides. This constraint binds M2's own pure-core files (action.ts; kernel.ts's isMutating()/pol05Rule(); precedence.ts's mandatory-key delta; schema.ts/schemas.ts/types.ts) when that later story lands them, not this one. Unchanged from ADR-0018.",
+          "Three of M1.5's five ported files (test-guard.sh, guard-fixture-filter.mjs, and mutation-check.mjs's harness-mechanism portion) are byte-for-byte verified against maat-legacy HEAD d64066c's blob SHA before the port is called complete. guard.mjs (a genuine self-contained functions-only subset, not the whole file) and guard-shadow-differential.test.ts (the .ts→.mjs translation) are BOTH fidelity-verified the differential/behavior-verified way instead. No logic paraphrase during the port itself, for any of the five. docs/REQUIREMENTS.md §1.2's own line-count ledger is not yet reconciled against d64066c for the M2/M3-deferred rows outside this scope (see docs/backlog.md).",
+          "No maat-legacy file is pulled into this repository before this ADR is Accepted by human action.",
+          "The mutation gate that must be green before the M1.5 build story is reviewable (not merely before it ships — CLAUDE.md's named compensating control for running this port at STANDARD tier) is: mutation-check.mjs's ported HARNESS MECHANISM (shadow-copy build, apply-mutant, rerun-suite, kill/survive scoring — QA-06's own general mechanism), run against a NEW, narrowly-scoped mutant set authored fresh against the functions actually ported from guard.mjs (the SUR-06–09 detection/target-extraction logic). mutation-check.mjs's own pinned mutant set (11 mutants targeting reportScopeCoversFile()'s brace-expansion logic — report-gate.mjs's own EVD-01/EVD-03 scope-matching capability, M4-deferred per docs/REQUIREMENTS.md §13 line 647, not §1.3 row 1) does not apply to M1.5's real scope and must never be claimed as covering it.",
+          "This ADR does not edit .governance.json; the M1.5 build story confirms or extends protected-path coverage for the landing zone under its own fresh security review before any ported file lands outside the existing `(^|/)(src/(kernel|gates|policy)|hooks|bin)/` pattern."
+        ]
+      },
+      {
+        "id": "",
+        "title": "Architecture Decision Records (ADRs)",
+        "status": "unknown",
+        "path": "adr\\software-engineering\\README.md",
+        "applicableTo": [],
+        "rules": []
+      }
+    ]
+  }
+}

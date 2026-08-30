@@ -1,0 +1,7 @@
+{
+  "adr": {
+    "dir": ["adr/devops", "adr/software-engineering"],
+    "autoSync": false,
+    "upstreamBranch": "main"
+  }
+}
