@@ -1,0 +1,95 @@
+# CI-01: "Thoth's own tests and lints shall run on every change." Every job step below is a real
+# gate — lint, typecheck, the full node:test suite, and every QA/OSS instrument's own real check
+# (QA-01, QA-02, QA-05, QA-06, QA-13, QA-14, QA-15, QA-16, OSS-01). Any failing step fails the
+# job; there is no continue-on-error anywhere in this file, so there is no permanently-pending
+# state — a red step is a red job, full stop.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Lint, typecheck, test, QA/OSS instruments
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # QA-02, QA-14 (git diff) and OSS-01 (full history scan) all need real history, not a
+          # shallow clone.
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Matches package.json engines floor — measured, not assumed (Node 22.18.0 is the first
+          # 22.x LTS build with unflagged TypeScript type-stripping; see src/lib/exec.ts's own
+          # measured-facts convention, PRINCIPLES.md rule 18).
+          node-version: "22.18.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test (full node:test suite)
+        run: npm test
+
+      - name: Resolve diff base/head refs for diff-aware checks
+        id: diff-refs
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "head=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "head=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: QA-01 fixture-coverage-check
+        run: node src/qa/fixture-coverage-check.ts
+
+      - name: QA-02 diff-fixture-check
+        run: node src/qa/diff-fixture-check.ts "${{ steps.diff-refs.outputs.base }}" "${{ steps.diff-refs.outputs.head }}"
+
+      - name: QA-05 fixture-isolation-check
+        run: node src/qa/fixture-isolation-check.ts
+
+      - name: QA-06 mutation-harness (standing gate; self-test proof runs under `npm test` above)
+        run: node src/qa/mutation-harness.ts
+
+      - name: QA-13 recurring-findings-registry
+        run: node src/qa/recurring-findings-registry.ts
+
+      - name: QA-14 reference-resolver
+        run: node src/qa/reference-resolver.ts "${{ steps.diff-refs.outputs.base }}" "${{ steps.diff-refs.outputs.head }}"
+
+      - name: QA-15 completeness-claim-checker
+        run: node src/qa/completeness-claim-checker.ts
+
+      - name: QA-16 broken-instrument-gate
+        run: node src/qa/broken-instrument-gate.ts
+
+      - name: OSS-01 full-history secret scan
+        run: node src/secret-scan/history-scan.ts
+
+      - name: Upload OSS-01 redacted report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-scan-report
+          path: docs/qa/history-scan-report.json
+          if-no-files-found: ignore
