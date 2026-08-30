@@ -17,6 +17,52 @@ export interface GitOps {
   originSlug(): Promise<string | null>;
 }
 
+// GitHub Actions' documented sentinel for `github.event.before`/`.after` on a branch's first
+// push, or a history-discontinuous push (force-push spanning unrelated history) — a
+// syntactically-valid-looking ref that resolves to no real commit. `git diff` against it fails;
+// see `resolveChangedFiles` below for why that failure must not be swallowed into a silent pass
+// (GH issue 18, recurred — see docs/reviews/s1-protect-the-baseline-cross-domain-2026-08-30.md).
+// (Deliberately not written as a real "Issue #N"/"#N" shape here: this file is itself scanned by
+// QA-14, which fails closed on any Issue citation since no issue-tracker credential is wired in.)
+export function isZeroSha(ref: string): boolean {
+  return /^0+$/.test(ref);
+}
+
+export interface ResolvedDiff {
+  changedFiles: string[];
+  /** True when `base`/`head` was the zero-SHA sentinel and this fell back to a full-tree scan
+   * (every tracked blob at the resolved ref) instead of a real diff. */
+  fullTreeFallback: boolean;
+}
+
+/**
+ * Resolves the changed-file list a diff-aware QA instrument (QA-02, QA-14) should scan.
+ *
+ * Detects the zero-SHA sentinel explicitly, BEFORE attempting `git diff`, and falls back to a
+ * full-tree scan (every tracked file at the resolvable ref, via `lsTree`) rather than letting
+ * `git diff` throw and having the caller swallow that into a silent vacuous pass — that swallow
+ * was exactly the recurring gap (GH issue 18: first predicted 2026-08-25, demonstrated 2026-08-30).
+ * A full-tree scan is the safer default for both instruments' own stated purpose ("enforced in
+ * the pipeline, not by review discipline" / "every reference ... shall resolve") — it keeps
+ * checking real content instead of skipping the gate outright on an unresolvable ref.
+ *
+ * Returns `null` only when `git diff` itself fails for a reason OTHER than the zero-SHA sentinel
+ * (e.g. a genuinely bad non-zero ref) — callers keep their prior behavior for that case.
+ */
+export async function resolveChangedFiles(git: GitOps, base: string, head: string): Promise<ResolvedDiff | null> {
+  if (isZeroSha(base) || isZeroSha(head)) {
+    const scanRef = isZeroSha(head) ? "HEAD" : head;
+    const tree = await git.lsTree(scanRef);
+    return { changedFiles: [...tree.keys()], fullTreeFallback: true };
+  }
+  try {
+    const changedFiles = await git.diffNameOnly(base, head);
+    return { changedFiles, fullTreeFallback: false };
+  } catch {
+    return null;
+  }
+}
+
 export function makeGitOps(runner: Runner, cwd: string): GitOps {
   async function run(args: string[]): Promise<string> {
     const res = await runner("git", args, { cwd, encoding: "utf8" });

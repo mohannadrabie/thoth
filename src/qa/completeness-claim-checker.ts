@@ -3,12 +3,21 @@
 // mismatch." Applies to prose, code comments, review reports and posture output alike.
 //
 // Machine-readable marker (the authoritative mechanism this check enforces):
-//   [[completeness: cmd="<shell command>" expect=<N>]]
-// The checker re-runs `cmd` (via an injected runner), parses the LAST integer in its stdout, and
-// fails if it doesn't equal `expect`. A bare numeric-completeness-shaped claim with no marker
-// nearby also fails ("no machine-readable instrument reference exists") — detected by a small,
-// explicitly-labeled-as-heuristic phrase list (documented below), not claimed to be exhaustive of
-// every possible phrasing.
+//   [[completeness: cmd="<known instrument name>" expect=<N>]]
+// `cmd=` is a SYMBOLIC NAME, resolved only against the fixed, code-owned `KNOWN_INSTRUMENTS`
+// allowlist below — never executed as raw text. This is a deliberate security boundary: this
+// marker is parsed out of `docs/STATE.md`/`docs/decisions.md`/`CHANGELOG.md` prose, which a PR
+// author (including a fork/untrusted contributor) can edit, and this checker is wired
+// unconditionally into `.github/workflows/ci.yml`'s QA-15 step on every push/PR. Executing
+// attacker-controlled `cmd=` text directly (the original, now-fixed shape of this checker) was a
+// demonstrated arbitrary-command-execution gadget — see
+// `docs/reviews/s1-protect-baseline-app-security-2026-08-30.md`, finding 1. A `cmd=` name not on
+// the allowlist fails closed (reported, never run) rather than being silently skipped or executed.
+// The checker re-runs the allowlisted instrument (via an injected runner), parses the LAST
+// integer in its stdout, and fails if it doesn't equal `expect`. A bare numeric-completeness-
+// shaped claim with no marker nearby also fails ("no machine-readable instrument reference
+// exists") — detected by a small, explicitly-labeled-as-heuristic phrase list (documented below),
+// not claimed to be exhaustive of every possible phrasing.
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import type { Runner } from "../lib/exec.ts";
@@ -21,6 +30,27 @@ export interface MarkerClaim {
   cmd: string;
   expect: number;
 }
+
+export interface KnownInstrument {
+  cmd: string;
+  args: string[];
+}
+
+// Fixed, code-owned allowlist of instrument invocations a `[[completeness: cmd="..." ...]]`
+// marker may reference, by symbolic name only. Adding a new name here is a reviewed code change,
+// not something prose in docs/STATE.md/decisions.md/CHANGELOG.md can ever add for itself — that
+// asymmetry (prose picks a name; code owns what the name runs) is the whole fix. Every entry maps
+// to one of this repo's own real QA/instrument scripts or their package.json aliases, never a
+// shell string built from marker text.
+export const KNOWN_INSTRUMENTS: Readonly<Record<string, KnownInstrument>> = Object.freeze({
+  "qa-fixture-coverage": { cmd: "node", args: ["src/qa/fixture-coverage-check.ts"] },
+  "qa-diff-fixture": { cmd: "node", args: ["src/qa/diff-fixture-check.ts"] },
+  "qa-fixture-isolation": { cmd: "node", args: ["src/qa/fixture-isolation-check.ts"] },
+  "qa-recurring-findings": { cmd: "node", args: ["src/qa/recurring-findings-registry.ts"] },
+  "qa-reference-resolver": { cmd: "node", args: ["src/qa/reference-resolver.ts"] },
+  "adr-cache-ensure": { cmd: "node", args: ["docs/adr-cache.mjs", "--ensure"] },
+  "oss-history-scan": { cmd: "node", args: ["src/secret-scan/history-scan.ts"] },
+});
 
 export interface BareClaim {
   raw: string;
@@ -74,11 +104,16 @@ function lastInteger(text: string): number | null {
 }
 
 export async function verifyMarkerClaim(claim: MarkerClaim, runner: Runner): Promise<InstrumentResult> {
-  const [cmd, ...args] = claim.cmd.split(/\s+/);
-  if (!cmd) {
-    return { ok: false, vacuous: false, summary: "empty instrument command", details: [claim.raw] };
+  const instrument = KNOWN_INSTRUMENTS[claim.cmd];
+  if (!instrument) {
+    return {
+      ok: false,
+      vacuous: false,
+      summary: `instrument name "${claim.cmd}" is not on the fixed completeness-instrument allowlist — never executed`,
+      details: [claim.raw, `known names: ${Object.keys(KNOWN_INSTRUMENTS).join(", ")}`],
+    };
   }
-  const res = await runner(cmd, args, { timeoutMs: 60_000 });
+  const res = await runner(instrument.cmd, instrument.args, { timeoutMs: 60_000 });
   const actual = lastInteger(res.stdout);
   if (actual === null) {
     return {

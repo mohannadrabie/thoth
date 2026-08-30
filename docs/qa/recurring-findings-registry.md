@@ -44,9 +44,6 @@ mean anything.
 
 ## Registry
 
-_0 recurring finding classes logged yet — this is a fresh repository (`docs/decisions.md`,
-2026-08-29: prior lineage's history is out of scope for this build) with no review history to
-have recurred from. Disclosed here, not silently omitted._
-
 | Class | First seen | Second seen | Status |
 |---|---|---|---|
+| silent pass on invalid/zero-SHA diff ref | 2026-08-25 GH issue 18 (original deferral explicitly predicted this exact fallback gap: "needs its own fallback handling to avoid trading this bug for a worse one") | 2026-08-30 docs/reviews/s1-protect-the-baseline-cross-domain-2026-08-30.md | QA-02 diff-fixture-check; QA-14 reference-resolver (both now fall back to a full-tree scan via resolveChangedFiles in src/lib/git.ts, with regression tests) |

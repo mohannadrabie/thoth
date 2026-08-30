@@ -16,8 +16,8 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { makeGitOps } from "../lib/git.ts";
+import { resolve, sep } from "node:path";
+import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
@@ -98,6 +98,21 @@ function verifyLocalIssue(raw: string, n: number, deps: ReferenceResolverDeps): 
     return { raw, kind: "issue", verdict: "unresolved-authority", reason: `Issue #${n} does not exist in this repository` };
   }
   return { raw, kind: "issue", verdict: "resolved", reason: "issue confirmed to exist" };
+}
+
+/**
+ * Resolves `relPath` against `repoRoot` and returns the resolved absolute path ONLY if it stays
+ * within `repoRoot` — a backtick-quoted citation is PR-authored, untrusted text, and a crafted
+ * `../../`-style citation must never be handed to `existsSync`/`readFileSync` to probe file
+ * existence or line counts outside the repository (app-security review, SUSPICION finding on
+ * `pathExists`/`lineCount`'s wiring below). Returns null when the resolved path escapes.
+ */
+export function resolveWithinRepo(repoRoot: string, relPath: string): string | null {
+  const resolvedRoot = resolve(repoRoot);
+  const resolved = resolve(resolvedRoot, relPath);
+  const rootWithSep = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
+  if (resolved !== resolvedRoot && !resolved.startsWith(rootWithSep)) return null;
+  return resolved;
 }
 
 function classifyPath(raw: string, deps: ReferenceResolverDeps): Citation | null {
@@ -206,10 +221,8 @@ async function main(): Promise<void> {
   const head = process.argv[3] ?? process.env.QA14_HEAD_REF ?? "HEAD";
 
   const git = makeGitOps(realRunner, repoRoot);
-  let changedFiles: string[];
-  try {
-    changedFiles = await git.diffNameOnly(base, head);
-  } catch {
+  const resolved = await resolveChangedFiles(git, base, head);
+  if (resolved === null) {
     printInstrumentResult("QA-14 reference-resolver", {
       ok: true,
       vacuous: true,
@@ -218,6 +231,14 @@ async function main(): Promise<void> {
     });
     process.exit(0);
   }
+  if (resolved.fullTreeFallback) {
+    console.log(
+      `[QA-14 reference-resolver] NOTE: base "${base}" / head "${head}" included the zero-SHA sentinel ` +
+        `(GitHub's github.event.before on a branch's first push or a history-discontinuous push) — ` +
+        `falling back to a full-tree scan instead of a diff, not silently passing.`,
+    );
+  }
+  const changedFiles = resolved.changedFiles;
 
   const repoSlug = await git.originSlug();
 
@@ -233,10 +254,15 @@ async function main(): Promise<void> {
   );
 
   const deps: ReferenceResolverDeps = {
-    pathExists: (p) => existsSync(resolve(repoRoot, p)),
+    pathExists: (p) => {
+      const resolved = resolveWithinRepo(repoRoot, p);
+      return resolved !== null && existsSync(resolved);
+    },
     lineCount: (p) => {
+      const resolved = resolveWithinRepo(repoRoot, p);
+      if (resolved === null) return null;
       try {
-        const content = readFileSync(resolve(repoRoot, p), "utf8");
+        const content = readFileSync(resolved, "utf8");
         return content.split("\n").length;
       } catch {
         return null;

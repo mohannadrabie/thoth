@@ -48,9 +48,9 @@ test("QA-13: bare date with no citation in 'First seen' -> FAIL", () => {
   assert.match(result.details.join("\n"), /First seen/);
 });
 
-test("QA-13: the real repo registry file parses and validates clean", async () => {
+test("QA-13: the real repo registry file parses and validates clean (non-vacuous: Issue #18's recurrence is logged, S1 2026-08-30)", async () => {
   const markdown = await readFile("docs/qa/recurring-findings-registry.md", "utf8");
   const result = validateRegistry(parseRegistry(markdown));
   assert.equal(result.ok, true, result.details.join("\n"));
-  assert.equal(result.vacuous, true, "the real registry is empty today — must disclose that, not silently pass");
+  assert.equal(result.vacuous, false, "the registry now has one logged recurring finding class — no longer vacuous");
 });

@@ -6,7 +6,7 @@ import type { PolicyFixture, PolicyRule } from "./policy-fixtures.ts";
 import { discoverFixtures, discoverRules } from "./policy-fixtures.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
-import { makeGitOps } from "../lib/git.ts";
+import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 
 export function checkDiffFixtures(
@@ -85,18 +85,24 @@ async function main(): Promise<void> {
   const head = process.argv[3] ?? process.env.QA02_HEAD_REF ?? "HEAD";
 
   const git = makeGitOps(realRunner, process.cwd());
-  let changedFiles: string[];
-  try {
-    changedFiles = await git.diffNameOnly(base, head);
-  } catch (err) {
+  const resolved = await resolveChangedFiles(git, base, head);
+  if (resolved === null) {
     printInstrumentResult("QA-02 diff-fixture-check", {
       ok: true,
       vacuous: true,
-      summary: `No diff available between ${base} and ${head} (${(err as Error).message}) — vacuous pass.`,
+      summary: `No diff available between ${base} and ${head} — vacuous pass.`,
       details: [],
     });
     process.exit(0);
   }
+  if (resolved.fullTreeFallback) {
+    console.log(
+      `[QA-02 diff-fixture-check] NOTE: base "${base}" / head "${head}" included the zero-SHA sentinel ` +
+        `(GitHub's github.event.before on a branch's first push or a history-discontinuous push) — ` +
+        `falling back to a full-tree scan instead of a diff, not silently passing.`,
+    );
+  }
+  const changedFiles = resolved.changedFiles;
 
   const rules = await discoverRules(policyRoot);
   const fixtures = await discoverFixtures(policyRoot);

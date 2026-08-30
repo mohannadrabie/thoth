@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { resolve as pathResolve } from "node:path";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
-import { scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
+import { resolveWithinRepo, scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
+import type { Runner } from "../lib/exec.ts";
+import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 
 function deps(overrides: Partial<ReferenceResolverDeps> = {}): ReferenceResolverDeps {
   return {
@@ -139,4 +142,30 @@ test("QA-14: mixed valid and invalid citations -> FAIL names only the bad ones",
   const result = summarizeCitations(citations);
   assert.equal(result.ok, false);
   assert.equal(result.details.length, 2);
+});
+
+test("QA-14 (regression, Issue #18 recurrence): a zero-SHA base ref falls back to a full-tree scan, never a silent vacuous pass", async () => {
+  const runner: Runner = (cmd, args) => {
+    if (args[0] === "diff") {
+      throw new Error("git diff must never be attempted when base/head is the zero-SHA sentinel");
+    }
+    if (args[0] === "ls-tree") {
+      return Promise.resolve({ stdout: "100644 blob aaa\tdocs/STATE.md\n", stderr: "", code: 0 });
+    }
+    return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+  };
+  const git = makeGitOps(runner, ".");
+  const resolved = await resolveChangedFiles(git, "0".repeat(40), "HEAD");
+  assert.notEqual(resolved, null);
+  assert.equal(resolved?.fullTreeFallback, true);
+  assert.deepEqual(resolved?.changedFiles, ["docs/STATE.md"]);
+});
+
+test("QA-14 (regression, app-security SUSPICION): a `../../`-style citation path resolves to null (rejected), never probed outside repoRoot", () => {
+  const repoRoot = pathResolve("/repo-root-fixture");
+  assert.equal(resolveWithinRepo(repoRoot, "../../etc/passwd"), null);
+  assert.equal(resolveWithinRepo(repoRoot, "../../../secrets/config.json"), null);
+  // A well-behaved, contained citation still resolves normally — the fix must not over-reject.
+  assert.equal(resolveWithinRepo(repoRoot, "docs/STATE.md"), pathResolve(repoRoot, "docs/STATE.md"));
+  assert.equal(resolveWithinRepo(repoRoot, "."), repoRoot);
 });
