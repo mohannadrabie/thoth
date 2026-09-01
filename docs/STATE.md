@@ -15,16 +15,21 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
   - Toolchain: TypeScript (native Node type-stripping, `engines.node >=22.18.0`), `node:test`, npm, ESLint flat config. License: Apache-2.0 (T9).
 
 ## Next (in order)
-1. **Human: accept or reject ADR-0021** (`adr/software-engineering/0021-thoth-native-architecture.md`, currently `Proposed`) — the native architecture (policy kernel, canonical Action record, normalizer/extractor registry, gate surfaces, evidence trail, environment/assurance model) that S1 was built against and S2 needs accepted before it can start. Per SE ADR-0001, only a human can accept it — the Manager will not self-accept regardless of standing authorization.
-2. **Human: merge S1** — `git push` then merge/fast-forward `master` with commits `2992bfb`+`366c54d` (already committed locally; human-only action, never done by the loop). See "Next action" below for the exact commands.
-3. **After both:** plan S2 (kernel / Action record / normalizer registry, ADR-0021 shapes 1–3) — the next story on the critical path (S1→S2→S3→S4→S5→S11a→S11b per the human-approved 17-story breakdown, `docs/decisions.md` 2026-08-30).
+1. **Human: push the ADR-0021 acceptance commit** — `adr` submodule commit `cdb245d` ("Accept ADR-0021... supersede ADR-0017") is made locally, not yet pushed. `git -C adr push origin main`. Human decision already given ("I accept") this session; the Manager made the commit but is holding the push (any push to a default branch is human-only, including the `adr` submodule's `main`).
+2. **After that:** plan S2 (kernel / Action record / normalizer registry, ADR-0021 shapes 1–3) — the next story on the critical path (S1→S2→S3→S4→S5→S11a→S11b per the human-approved 17-story breakdown). GitHub Milestone "S2 — Canonical Action record + pure policy kernel" (#20) already exists, open.
+
+**thoth's own push (S1's code) is done** — `master` confirmed pushed and matching `origin/master` at `d3a833f` (verified via `git fetch` this session, not assumed).
 
 ## Blocked on a human
-- ADR-0021 final acceptance (see Next #1).
-- Merge of S1's two local commits (see Next #2) — human-only regardless of review verdict.
-- Repo visibility flip to public — explicitly out of S1's scope (OSS-01 builds/runs the scan only); revisit at OSS-02–14.
-- T6 (rehearsal account/cluster) — doesn't block S1/S2, will block S11c/S12 when reached.
+- Push the `adr` submodule's acceptance commit (see Next #1) — the one remaining action before S2 can start.
+- Repo visibility flip to public — explicitly out of S1's scope (OSS-01 builds/runs the scan only); revisit at OSS-02–14 (Milestone #35).
+- T6 (rehearsal account/cluster) — doesn't block S1/S2, will block S11c/S12 (Milestones #31/#32) when reached.
 - T9 was decided this session (Apache-2.0) — no longer blocking.
+
+## GitHub tracking (reconciled 2026-09-01)
+- **Milestones:** the 9 stale pre-pivot milestones (old M1/M1.5/M2–M8 titles, zero linked issues) deleted. Replaced with 17 fresh milestones matching the human-approved story breakdown: #19 (S1, closed/shipped) through #35 (S15). Numbering/titles: S1=#19, S2=#20, S3=#21, S4=#22, S5=#23, S6=#24, S7=#25, S8=#26, S9=#27, S10=#28, S11a=#29, S11b=#30, S11c=#31, S12=#32, S13=#33, S14=#34, S15=#35.
+- **Issues:** #58 created for S1, closed `completed`, linked to Milestone #19, cites commits `2992bfb`/`366c54d`/`d3a833f`.
+- **"thoth delivery board" project (v2, id 4):** the one stale item (Issue #32, from the abandoned lineage) removed. Issue #58 added, `Status=Shipped`, `Risk tier=STANDARD`.
 
 ## Open questions / pending decisions
 - All logged and ratified in `docs/decisions.md` (5 active rows this session — AGT-pivot, its consequences, S1 tier/ceremony/toolchain, the AGT-reuse-evaluation refinement, the autonomous-continuation authorization, and the fresh-start-from-`master` row). Nothing new unlogged.
