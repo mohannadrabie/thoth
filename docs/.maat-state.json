@@ -1,6 +1,6 @@
 {
   "adrCatalog": {
-    "version": "be365e410fc028d4f371b206470e36b622bd361d",
+    "version": "83b2e3e84fee027c4d91f6ab98fb95fa70cbb378",
     "location": "adr/devops, adr/software-engineering",
     "roots": [
       {
@@ -572,7 +572,7 @@
       {
         "id": "ADR-0017",
         "title": "Wrap architecture — thoth owns the verdict, AGT plugs in behind five interfaces",
-        "status": "accepted (pending supersession by ADR-0021)",
+        "status": "superseded",
         "path": "adr\\software-engineering\\0017-wrap-architecture-thoth-owns-the-verdict.md",
         "applicableTo": [
           "architecture",
@@ -644,7 +644,7 @@
       {
         "id": "ADR-0021",
         "title": "Thoth-native architecture — kernel, Action record, normalizer registry, gate surfaces, evidence trail, environment model; AGT evaluated per shape against verified 2026-08-30 facts, reused for none of the six",
-        "status": "proposed",
+        "status": "accepted",
         "path": "adr\\software-engineering\\0021-thoth-native-architecture.md",
         "applicableTo": [
           "architecture",
