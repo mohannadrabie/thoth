@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — REQUIREMENTS.md amendment 2026-09-01: runtime primitives overtook the document (pending architecture review)
+- §1.4 rebuilt: every runtime primitive now names its actual managed-settings key. Six shipped, admin-enforceable keys were uncounted while the requirements they cover stayed marked *build*.
+- **SUR-04** moved from build to configure-and-verify (`allowManagedMcpServersOnly` + `allowedMcpServers`). **INT-01**'s runtime-settings half likewise (`allowManagedPermissionRulesOnly`, `permissions.disableBypassPermissionsMode`, `allowManagedHooksOnly`, `strictPluginOnlyCustomization`, `strictKnownMarketplaces`, `disableSideloadFlags`).
+- **POL-09 split**: write-protection is now a runtime primitive (admin console / plist / HKLM delivery, unwritable by the governed session); immutable pinning and the per-artifact stamp remain a build. Narrowed the matching §1.5 row.
+- **ENV-13** and **SUR-11** acceptance now name `sandbox.enabled` / `sandbox.network.allowedDomains`.
+- §0.7 gains normative **rule 6**: a runtime primitive shipping after this document retires the requirement it covers, re-checked by instrument.
+- **QA-17 added (P0, lands in M1)**: instrument that diffs the runtime's published settings surface against §1.4's named keys and fails on an uncounted key. Enforcement mechanism for rule 6.
+- Open decisions added: **T14** audit substrate (blocks scheduling the gap-G7 copy-and-fix), **T15** policy-engine substrate (Cedar, resolve by differential after M1.5), **T16** containment by workspace vs by probe (deliberately unanswered, gated on evaluation evidence).
+- Explicitly unchanged and recorded as such: the semantic detector (SUR-06 to SUR-09), gap **G5** (`SessionStart` still cannot halt), and all of §6 (the unlock economy).
+
 ### Added — S1: protect the baseline (CI-01, QA-01, QA-02, QA-05, QA-06, QA-13, QA-14, QA-15, QA-16, OSS-01)
 - Project skeleton: TypeScript (run natively via Node's built-in type stripping, `engines.node >=22.18.0`), `node:test`, npm scripts, ESLint flat config (SE ADR-0010), Apache-2.0 `LICENSE`.
 - `.github/workflows/ci.yml` (CI-01): lint, typecheck, full test suite, and every QA/OSS instrument's own gate run on every push/PR to `master`.
