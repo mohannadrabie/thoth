@@ -2,3 +2,5 @@
 {"at":"2026-08-30T06:29:50.929Z","event":"stage","scope":"S1","stage":"review","outcome":"round1=REWORK(app-security HIGH)+APPROVE-WITH-CONDITIONS(cross-domain MED); round2=APPROVE+APPROVE-WITH-CONDITIONS(1 LOW backlogged) after fix 366c54d; reviewRoundsSinceClean reset to 0"}
 {"at":"2026-09-01T23:58:02.501Z","event":"tier-ratified","scope":"S1b","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"additive-CI-only,narrow-blast-radius,compensating-control-already-named"}
 {"at":"2026-09-02T00:24:39.899Z","event":"receipt-reopened","scope":"s1b","agent":"cross-domain-reviewer","trigger":"stale-first-receipt-verdict","report":"docs/reviews/s1b-runtime-settings-drift-cross-domain-2026-09-01.md"}
+{"at":"2026-09-02T00:56:40.920Z","event":"tier-ratified","scope":"S2","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"pure-in-memory-lib-no-live-gate-yet"}
+{"at":"2026-09-02T02:34:28.748Z","event":"stage","scope":"S2","stage":"review-close","outcome":"clean-after-2-fix-now-rounds"}

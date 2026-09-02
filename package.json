@@ -23,6 +23,7 @@
     "qa:completeness-claims": "node src/qa/completeness-claim-checker.ts",
     "qa:broken-instrument-gate": "node src/qa/broken-instrument-gate.ts",
     "qa:runtime-settings-drift": "node src/qa/runtime-settings-drift-check.ts",
+    "qa:kernel-purity": "node src/qa/kernel-purity-check.ts",
     "oss:secret-scan": "node src/secret-scan/history-scan.ts"
   },
   "devDependencies": {
