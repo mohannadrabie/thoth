@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeLayers } from "./precedence.ts";
+import { mergeLayers, mergeToolClassificationLayers } from "./precedence.ts";
 import type { RuleSet } from "../kernel/rule-types.ts";
 import {
   centralLayer,
@@ -9,6 +9,11 @@ import {
   projectLayer,
   shippedDefaultsLayer,
 } from "../fixtures/rules.ts";
+import {
+  centralToolClassificationLayer,
+  emptyToolClassificationSet,
+  shippedToolClassificationLayer,
+} from "../fixtures/tool-classification.ts";
 
 test("mergeLayers: all three layers empty -> empty merged set", () => {
   const merged = mergeLayers(emptyRuleSet, emptyRuleSet, emptyRuleSet);
@@ -64,4 +69,42 @@ test("mergeLayers: rule order follows first-appearance across shipped -> central
   // first-appearance order must be preserved even though CONFLICTING_RULE_ID's VALUE came from
   // the project layer.
   assert.deepEqual(ids, [CONFLICTING_RULE_ID, "allow-dev-writes"]);
+});
+
+// --- mergeToolClassificationLayers (SUR-03 / T5: extends mergeLayers' shape, two-tier) ----------
+
+test("mergeToolClassificationLayers: both layers empty -> empty merged set", () => {
+  const merged = mergeToolClassificationLayers(emptyToolClassificationSet, emptyToolClassificationSet);
+  assert.deepEqual(merged.tools, []);
+  assert.equal(merged.version, emptyToolClassificationSet.version);
+});
+
+test("mergeToolClassificationLayers (T5 conflict fixture): central overrides shipped for the same tool name", () => {
+  const merged = mergeToolClassificationLayers(shippedToolClassificationLayer, centralToolClassificationLayer);
+  const bash = merged.tools.find((t) => t.name === "Bash");
+  assert.ok(bash);
+  assert.equal(bash.class, "remote-mutating", "central's reclassification must win over shipped's");
+  assert.equal(bash.sourceLayer, "central");
+});
+
+test("mergeToolClassificationLayers: a tool name present only in the shipped layer passes through unchanged, tagged with its layer", () => {
+  const merged = mergeToolClassificationLayers(shippedToolClassificationLayer, centralToolClassificationLayer);
+  const read = merged.tools.find((t) => t.name === "Read");
+  assert.ok(read);
+  assert.equal(read.class, "read-only");
+  assert.equal(read.sourceLayer, "shipped-defaults");
+});
+
+test("mergeToolClassificationLayers: version resolves to central's when central classifies any tool, else shipped's", () => {
+  const shippedOnly = mergeToolClassificationLayers(shippedToolClassificationLayer, emptyToolClassificationSet);
+  assert.equal(shippedOnly.version, shippedToolClassificationLayer.version);
+
+  const withCentral = mergeToolClassificationLayers(shippedToolClassificationLayer, centralToolClassificationLayer);
+  assert.equal(withCentral.version, centralToolClassificationLayer.version);
+});
+
+test("mergeToolClassificationLayers: deterministic — merging the same two layers twice yields identical results", () => {
+  const first = mergeToolClassificationLayers(shippedToolClassificationLayer, centralToolClassificationLayer);
+  const second = mergeToolClassificationLayers(shippedToolClassificationLayer, centralToolClassificationLayer);
+  assert.deepEqual(first, second);
 });

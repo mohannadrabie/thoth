@@ -98,6 +98,9 @@ jobs:
       - name: S2 kernel-purity-check (ADR-0021 POL-11 structural gate)
         run: node src/qa/kernel-purity-check.ts
 
+      - name: S3 normalizer-registry-purity-check (ADR-0021 POL-12 structural gate)
+        run: node src/qa/normalizer-registry-purity-check.ts
+
       - name: OSS-01 full-history secret scan
         run: node src/secret-scan/history-scan.ts
 
