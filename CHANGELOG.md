@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — S1b: runtime-settings drift check (QA-17)
+- `docs/qa/runtime-settings-inventory.json`: vendored, version-controlled snapshot of Claude Code's documented runtime-configurable settings keys (source: `code.claude.com/docs/en/admin-setup`, captured 2026-09-01) — 18 keys across five primitives (exclusive tool-server allowlist, permission-rule lockdown, customisation/hook lockdown, required version range, filesystem/network isolation).
+- `src/qa/runtime-settings-drift-check.ts` (QA-17): pure `parseDocumentedKeys`/`computeDrift` diff the vendored snapshot against `REQUIREMENTS.md` §1.4's live table (heading-bounded parse, exact-string-match, case-sensitive). No `fetch`/`http(s)` import — offline by construction, never scrapes the real docs page. Two rows excepted from key-extraction by construction (a fixed, code-owned list, not a runtime flag): the hooks row (empty "Setting keys" cell) and the managed-policy-delivery row (channels/paths, not literal keys).
+- `package.json`: `qa:runtime-settings-drift` script alias.
+- `.github/workflows/ci.yml`: new `schedule` trigger (weekly, Monday 06:00 UTC) plus a separate `runtime-settings-drift` job gated `if: github.event_name == 'schedule'` — own checkout/setup/install/run steps, never folded into the push/PR `ci` job.
+
 ### Changed — REQUIREMENTS.md amendment 2026-09-01: runtime primitives overtook the document (pending architecture review)
 - §1.4 rebuilt: every runtime primitive now names its actual managed-settings key. Six shipped, admin-enforceable keys were uncounted while the requirements they cover stayed marked *build*.
 - **SUR-04** moved from build to configure-and-verify (`allowManagedMcpServersOnly` + `allowedMcpServers`). **INT-01**'s runtime-settings half likewise (`allowManagedPermissionRulesOnly`, `permissions.disableBypassPermissionsMode`, `allowManagedHooksOnly`, `strictPluginOnlyCustomization`, `strictKnownMarketplaces`, `disableSideloadFlags`).

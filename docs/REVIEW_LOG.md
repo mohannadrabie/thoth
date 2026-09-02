@@ -8,3 +8,6 @@ Evidence rule: reports live in docs/reviews/ as <scope>-<agent>-YYYY-MM-DD.md, v
 | 2026-08-30 | S1 protect the baseline (commit 2992bfb: CI-01, QA-*, OSS-01) | cross-domain-reviewer | APPROVE-WITH-CONDITIONS | docs/reviews/s1-protect-the-baseline-cross-domain-2026-08-30.md |
 | 2026-08-30 | S1 protect the baseline (commit 366c54d: fix pass closing app-security REWORK + cross-domain conditions, issues #57 #18) | app-security-reviewer | APPROVE | docs/reviews/s1-protect-baseline-app-security-reconfirm-2026-08-30.md |
 | 2026-08-30 | S1 protect the baseline (commit 366c54d, Stage 3 re-confirm fix-now pass) | cross-domain-reviewer | APPROVE-WITH-CONDITIONS | docs/reviews/s1-protect-the-baseline-cross-domain-reconfirm-2026-08-30.md |
+| 2026-09-01 | S1b runtime-settings drift check (QA-17, Milestone #36, Issue #59) | app-security-reviewer | APPROVE | docs/reviews/s1b-runtime-settings-drift-app-security-2026-09-01.md |
+| 2026-09-01 | S1b runtime-settings drift check (QA-17, Milestone #36, Issue #59; finding filed as Issue #60) | cross-domain-reviewer | APPROVE-WITH-CONDITIONS | docs/reviews/s1b-runtime-settings-drift-cross-domain-2026-09-01.md |
+| 2026-09-01 | S1b runtime-settings drift check (QA-17, Milestone #36, Issue #59; re-confirm pass closing Issue #60) | cross-domain-reviewer | APPROVE | docs/reviews/s1b-runtime-settings-drift-cross-domain-2026-09-01.md |

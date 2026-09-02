@@ -3,6 +3,12 @@
 # (QA-01, QA-02, QA-05, QA-06, QA-13, QA-14, QA-15, QA-16, OSS-01). Any failing step fails the
 # job; there is no continue-on-error anywhere in this file, so there is no permanently-pending
 # state — a red step is a red job, full stop.
+#
+# QA-17's runtime-settings-drift-check runs separately, on its own weekly `schedule` trigger only
+# (see the `runtime-settings-drift` job below) — it checks REQUIREMENTS.md §1.4 against the
+# vendored inventory for drift that can appear even with no code change in this repo (Claude
+# Code's own documented settings surface moving), so gating it on push/PR would miss exactly the
+# drift it exists to catch.
 name: CI
 
 on:
@@ -10,6 +16,11 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    # Weekly, Monday 06:00 UTC. QA-17's drift check has nothing to do with a code push — it re-
+    # diffs the vendored runtime-settings inventory against REQUIREMENTS.md §1.4 on a cadence, so
+    # a schedule trigger (not push/PR) is the correct gate for it.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -17,6 +28,7 @@ permissions:
 jobs:
   ci:
     name: Lint, typecheck, test, QA/OSS instruments
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -93,3 +105,29 @@ jobs:
           name: history-scan-report
           path: docs/qa/history-scan-report.json
           if-no-files-found: ignore
+
+  # QA-17: runs only on the weekly `schedule` trigger above — a separate job, own checkout/setup,
+  # never folded into the push/PR `ci` job's steps. Drift here has nothing to do with a code push
+  # in this repo: it can appear purely because Claude Code's own documented runtime-settings
+  # surface moved upstream, so a cadence-based check is correct, and gating it on push/PR would
+  # both miss that drift and fire it on every unrelated change.
+  runtime-settings-drift:
+    name: QA-17 runtime-settings-drift-check (scheduled)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Matches package.json engines floor, same as the `ci` job above.
+          node-version: "22.18.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: QA-17 runtime-settings-drift-check
+        run: npm run qa:runtime-settings-drift
