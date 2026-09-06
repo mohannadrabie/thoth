@@ -18,6 +18,7 @@
     "qa:diff-fixture": "node src/qa/diff-fixture-check.ts",
     "qa:fixture-isolation": "node src/qa/fixture-isolation-check.ts",
     "qa:mutation-selftest": "node src/qa/mutation-harness.ts",
+    "qa:mutation-shell": "node src/qa/shell-detector-mutants.ts",
     "qa:recurring-findings": "node src/qa/recurring-findings-registry.ts",
     "qa:reference-resolver": "node src/qa/reference-resolver.ts",
     "qa:completeness-claims": "node src/qa/completeness-claim-checker.ts",

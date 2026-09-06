@@ -50,6 +50,7 @@ export const KNOWN_INSTRUMENTS: Readonly<Record<string, KnownInstrument>> = Obje
   "qa-reference-resolver": { cmd: "node", args: ["src/qa/reference-resolver.ts"] },
   "adr-cache-ensure": { cmd: "node", args: ["docs/adr-cache.mjs", "--ensure"] },
   "oss-history-scan": { cmd: "node", args: ["src/secret-scan/history-scan.ts"] },
+  "qa-mutation-shell": { cmd: "node", args: ["src/qa/shell-detector-mutants.ts"] },
 });
 
 export interface BareClaim {

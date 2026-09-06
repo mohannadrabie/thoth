@@ -1,0 +1,16 @@
+# red-team, S4 Stage-3 review, Finding 6 (Issue #75) / architecture-reviewer Finding 5 (Issue #78):
+# this repo had no line-ending policy at all — on a Windows checkout (core.autocrlf=true), git
+# converts previously-tracked files to CRLF on ordinary operations (checkout/stash/pull/merge)
+# while brand-new untracked files stay LF, producing a silent split that broke
+# src/qa/shell-detector-mutants.ts's byte-literal multi-line anchor matching. Force LF for the
+# source/text files this project's own tooling reads byte-for-byte, so that class of drift cannot
+# recur regardless of a contributor's local git config. (shell-detector-mutants.ts's own
+# `normalizeLineEndings` closes the same gap independently at the matching layer — both are kept,
+# per both review reports' "either is sufficient alone" recommendation.)
+* text=auto eol=lf
+*.ts text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

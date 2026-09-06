@@ -10,9 +10,17 @@ import type { WorldFacts } from "../kernel/kernel.ts";
 import { mergeLayers } from "../rule/precedence.ts";
 import { centralLayer, projectLayer, shippedDefaultsLayer } from "../fixtures/rules.ts";
 import {
+  shellChainedReadThenMutateCall,
+  shellCommandSubstitutionCall,
+  shellDirectoryFlagAliasCollisionCall,
+  shellDirectoryFlagLongCall,
   shellEquivalentDeleteCall,
+  shellMultiResourceCall,
+  shellMultiTargetResourcePlusRedirectCall,
+  shellNewlineChainedCall,
   shellOverLongResourceTokenCall,
   shellUnrecognizedVerbCall,
+  shellUnterminatedSingleQuoteCall,
   structuredClusterDelimiterInjectionCall,
   structuredClusterDeleteCall,
   structuredClusterUnrecognizedVerbCall,
@@ -142,6 +150,68 @@ test("Issue #65 regression, end to end: an over-long, smuggled-segment resource 
 
 test("Issue #66 regression, end to end: a delimiter-injected resourceName is DENIED via POL-05's unresolved path, never silently allowed with a spoofed target", () => {
   const record = normalize("cluster", structuredClusterDelimiterInjectionCall);
+  assert.deepEqual(record.targets, []);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+// --- S4 (Milestone #22): SUR-06/09 end to end through the real registry -> kernel chain --------
+
+test("SUR-06a, end to end: a chained read-then-mutate shell call is DENIED by the kernel via POL-05's unresolved path, not silently allowed", () => {
+  const record = normalize("shell", shellChainedReadThenMutateCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("design-challenger Finding #1, end to end: command substitution is DENIED by the kernel via POL-05, not silently allowed as a clean pod-delete", () => {
+  const record = normalize("shell", shellCommandSubstitutionCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("design-challenger Finding #2, end to end: a directory flag's presence is DENIED by the kernel via POL-05, not silently allowed while invisible in the record", () => {
+  const record = normalize("shell", shellDirectoryFlagLongCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+// --- S4 Stage-3 review fix-now round, end to end through the real registry -> kernel chain -----
+
+test("app-security Finding 1 (Issue #68), end to end: an unterminated quote is DENIED by the kernel via POL-05, not silently allowed as a clean pod-get", () => {
+  const record = normalize("shell", shellUnterminatedSingleQuoteCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("red-team Finding 1 (Issue #70), end to end: a newline-separated read-then-mutate call is DENIED by the kernel via POL-05, not silently allowed as a clean get-only", () => {
+  const record = normalize("shell", shellNewlineChainedCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("red-team Finding 3 (Issue #72), end to end: '-C=<v>' is DENIED by the kernel via POL-05, not silently allowed as if it supplied --context", () => {
+  const record = normalize("shell", shellDirectoryFlagAliasCollisionCall);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("Issue #82 (round 3, council-approved path), end to end: a multi-resource delete is DENIED by the kernel via POL-05, never reaching a multi-target ActionRecord kernel.ts's matchesTarget was never audited against", () => {
+  const record = normalize("shell", shellMultiResourceCall);
+  assert.deepEqual(record.targets, []);
+  const verdict = decide(worldFacts(), record);
+  assert.equal(verdict.outcome, "deny");
+  assert.equal(verdict.ruleId, "POL-05");
+});
+
+test("Issue #82, impact-analyst's compound PoC, end to end: a rule scoped only to 'pods/' must NOT authorize an unrelated redirect target bundled into the same call — the kernel never receives the multi-target record that would let it", () => {
+  const record = normalize("shell", shellMultiTargetResourcePlusRedirectCall);
   assert.deepEqual(record.targets, []);
   const verdict = decide(worldFacts(), record);
   assert.equal(verdict.outcome, "deny");

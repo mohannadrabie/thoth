@@ -7,3 +7,7 @@
 {"at":"2026-09-02T02:55:36.883Z","event":"tier-ratified","scope":"S3","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"in-memory/fixture normalizer registry + classification/verification fns, no live session/credential/hook surface, matches S2's heavier STANDARD precedent"}
 {"at":"2026-09-02T03:26:14.135Z","event":"receipt-reopened","scope":"S3","agent":"app-security-reviewer","trigger":"verdict-in-first-receipt-block(APPROVE-WITH-CONDITIONS)-vs-final-receipt(APPROVE)-plus-1-suspicion","report":"docs/reviews/s3-normalizer-registry-tool-inventory-app-security-2026-09-01.md"}
 {"at":"2026-09-02T03:26:14.231Z","event":"receipt-reopened","scope":"S3","agent":"cross-domain-reviewer","trigger":"evidence-checksum-line-transposed(demonstrated/code-traced-swapped)-vs-actual-tags","report":"docs/reviews/s3-normalizer-registry-tool-inventory-cross-domain-2026-09-01.md"}
+{"at":"2026-09-02T21:14:46.818Z","event":"tier-ratified","scope":"s4","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"Milestone #22 names it historically-highest-incident component; confirmed not argued down"}
+{"at":"2026-09-04T03:31:17.906Z","event":"stage","scope":"s4","stage":"review-round-2","outcome":"no-go-repeat"}
+{"at":"2026-09-04T03:44:12.167Z","event":"council","scope":"s4","trigger":"rule-16c","verdict":"GO","rounds":"2"}
+{"at":"2026-09-06T03:00:49.856Z","event":"stage","scope":"s4","stage":"review-round-4-post-council","outcome":"second-stall-hard-stop"}

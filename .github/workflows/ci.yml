@@ -83,6 +83,9 @@ jobs:
       - name: QA-06 mutation-harness (standing gate; self-test proof runs under `npm test` above)
         run: node src/qa/mutation-harness.ts
 
+      - name: QA-06 shell-detector-mutants (S4, Milestone #22 — real registered mutant classes)
+        run: node src/qa/shell-detector-mutants.ts
+
       - name: QA-13 recurring-findings-registry
         run: node src/qa/recurring-findings-registry.ts
 

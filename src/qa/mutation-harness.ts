@@ -104,8 +104,9 @@ export function summarizeMutationRun(run: MutationRunResult, registeredRealMutan
       ok: true,
       vacuous: true,
       summary:
-        "0 real mutant classes registered yet (no production detector/kernel exists to mutate — S2+ builds that). " +
-        "The engine itself is proven against a self-test mutant; see mutation-harness.test.ts.",
+        "0 real mutant classes registered on this call. This engine itself is proven against a self-test " +
+        "mutant (see mutation-harness.test.ts); real registrations against a production detector are a " +
+        "SEPARATE script that imports this engine — see src/qa/shell-detector-mutants.ts for S4's.",
       details: [],
     };
   }
@@ -133,7 +134,10 @@ export function summarizeMutationRun(run: MutationRunResult, registeredRealMutan
 }
 
 function main(): void {
-  // Standing invocation point for S2+'s real mutant classes once a detector exists. Today: 0.
+  // This engine's own self-test entry point — always 0 registered mutants by design (a real
+  // detector's mutant classes are registered by a SEPARATE consuming script, e.g.
+  // src/qa/shell-detector-mutants.ts, run as its own CI step; wiring them into this file would mix
+  // the generic engine with one specific detector's mutants).
   const result = summarizeMutationRun({ results: [], killedCount: 0, survivedCount: 0, noopCount: 0 }, 0);
   printInstrumentResult("QA-06 mutation-harness", result);
   process.exit(0);
