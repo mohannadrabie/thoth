@@ -680,8 +680,8 @@
   "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
   "humanRulingRequired": false,
-  "councilHeld": false,
-  "councilVerdict": null,
+  "councilHeld": true,
+  "councilVerdict": "GO (split-budget model for T11, Issue #89 canary-fixture fix)",
   "roundsSinceLastGo": 0,
   "priorScope": {
     "scope": "s4",

@@ -119,3 +119,61 @@ evidence (a CHECKSUM over the tags above - MUST equal them, and MUST total the c
 checks=n/a (pre-build plan review; no code exists yet - hooks/ directory confirmed absent)
 adr=HIT(35)
 report=docs/reviews/s5-deny-by-default-hook-wiring-architecture-2026-09-06.md
+
+
+---
+
+# Round 2 -- fast re-confirmation of round-1 conditions against S5 Phase 1 plan v2
+
+**Scope:** docs/plans/S5-phase1-2026-09-06.md (v2), "v2 revision map" rows 7-11 (criteria 19-23), which claim to close my round-1 conditions 1-5. Not a full re-review -- design-challenger is running its own round-2 adversarial pass in parallel on the whole plan; this pass verifies, independently, only my own 5 named conditions.
+**Reviewer:** architecture-reviewer (Imhotep)
+**Date:** 2026-09-06
+**ADR cache:** CACHE HIT: reused 35 ADR(s) [adr/devops:12, adr/software-engineering:23] from catalog (fp 83b2e3e) -- no ADR re-read needed, no new ADR surface touched by this narrow pass.
+
+## What was read
+
+docs/plans/S5-phase1-2026-09-06.md (v2, full -- criteria 19-23, their "New files" descriptions, and C19-C23 verification rows). My own round-1 report (this same file, above). Code-traced against the actually-shipped tree: find src/policy -type f (full listing) and a grep for loadBootstrapRuleSet / bootstrapRuleSet across src/ (no hits -- confirms no S5 code exists yet, as the plan itself states). No code was run; this is still a pre-build plan review, same evidence ceiling as round 1.
+
+## Per-condition re-confirmation (independent, not trusting the v2 revision-map table)
+
+### Condition 1 (round-1 finding 1) -- hook-side tool_name to toolType fail-closed check -> criterion 19
+
+RESOLVED. The plans hooks/pretooluse-kernel-gate.mjs bullet now states a concrete behavior, not a restated goal: "reads stdins tool_name and denies (not crash, not silent shell-normalize) on any value other than Bash -- a code-level mirror of the registrys own SUR-02 fall-through-deny, not resting on .claude/settings.json's matcher string alone." This is an if/else described at the level of "what the hook checks and what it does on failure," matching the shape of the already-shipped registry fall-through (src/policy/normalizer/registry.ts, code-traced in round 1). Criterion 19 has a named, concrete verification (C19): a unit test where stdin tool_name is "Edit" (or any non-Bash value), asserting a deny, never a normalize-as-shell attempt and never an uncaught exception -- a real, writable, red-then-green test, not a doc check. This closes the gap named in round 1: the boundary no longer depends solely on .claude/settings.json's matcher string.
+
+### Condition 2 (round-1 finding 2) -- halt-state file schema -> criterion 20
+
+RESOLVED. v2 names a concrete schema (not just "multi-reason-capable" asserted in prose): a JSON object keyed by reason, each reason an independent set/detail/setAt record, one file per session_id under .thoth/halt-state/. The plan states the ownership discipline explicitly -- each writer owns one key under reasons and never touches another writers key, additive by construction, so S11b's future second halt reason plugs in as a new key, not a competing last-write-wins flag -- and, critically, backs this with a real test (C20): two independent reasons written to the same session's halt-state file (simulating S11b's future second reason) do not clobber each other; the relay halts on either being set. That test is exactly the proof the round-1 condition asked for: it forces the implementation to be additive (a merge/read-modify-write write path) rather than letting "multi-reason-capable" stay an unverified claim. This is a genuine plug-in point now, not vague.
+
+One residual observation, non-blocking, not one of the original 5 conditions and not re-opening this: the plan does not spell out the write-path mechanics (read-modify-write vs. file-locking) for the case where two hook processes could write concurrently. Within S5's own scope this looks low-risk -- SessionStart runs and completes before UserPromptSubmit fires in the same session -- but S11b's own build should re-check for a true concurrent-writer race before it relies on this schema. Noting for the record only; not a new gating finding.
+
+### Condition 3 (round-1 finding 3) -- bootstrap-ruleset.ts function export -> criterion 21
+
+RESOLVED. The plan now states: bootstrap-ruleset.ts exports loadBootstrapRuleSet(): RuleSet (a function that today trivially returns a hardcoded minimal RuleSet), so S6's real config-loading swap changes this file's internals only, never pretooluse-kernel-gate.mjs's own call site. This is exactly shape (a) from round-1 finding 3, named explicitly rather than left as an option. Criterion 21's verification (C21) is concrete and enforceable: typecheck/lint (a bare constant export would be a type/lint-visible regression) plus a unit test importing loadBootstrapRuleSet as a function -- a bare-constant regression would fail typecheck, which is a real, mechanical guarantee, not a review-time-only promise. Confirmed by grep: no bootstrap-ruleset.ts exists yet on disk (expected -- still Phase 1), so this remains a plan-level, not code-traced, resolution -- but the plan-level specification is now concrete enough that S6's blast radius is confined to a non-sensitive file, which is what the condition asked for.
+
+### Condition 4 (round-1 finding 4) -- subagent-non-escalation.test.ts relocated to src/policy/tools/ -> criterion 22
+
+RESOLVED, and independently verified against the shipped tree, not just the plan's claim. Ran find src/policy -type f: every existing module in this codebase co-locates its test file in the same directory as its source -- kernel/action-record.ts + kernel/action-record.test.ts, kernel/kernel.ts + kernel/kernel.test.ts, normalizer/registry.ts + normalizer/registry.test.ts (and five more normalizer pairs), rule/precedence.ts + rule/precedence.test.ts, rule/schema.ts + rule/schema.test.ts, verification/allowlist.ts + verification/allowlist.test.ts -- and, most directly relevant, tools/classification.ts + tools/classification.test.ts already exist side by side today. Placing subagent-non-escalation.test.ts in src/policy/tools/ alongside classification.ts is not just "not worse" than kernel/ -- it is the one placement that matches this codebase's own established 1:1 co-location convention everywhere else. This is a stronger confirmation than the plan's own prose gives it credit for.
+
+### Condition 5 (round-1 finding 5) -- new hook's evidence-trail disclosure -> criterion 23
+
+RESOLVED, no overclaiming found. The plan states the new hook's header comment discloses that this hook's own deny/allow verdicts are not yet durably recorded anywhere (no evidence trail -- that is S8/Milestone #26/INT-05's job), the same way the file it replaces (criterion 14) used to disclose its own residual gaps. This matches what was asked for precisely: a plain statement of the gap, attribution to the milestone that owns closing it, and explicit continuity with this codebase's existing disclosed-header convention. No claim of a mechanism that does not exist; no vague "will be addressed later" without attribution. Verification (C23) is reviewer-checked only (header-comment wording), which is appropriately weak for a doc-disclosure criterion -- there is nothing more mechanical to check here, and the plan does not pretend otherwise.
+
+## Updated verdict
+
+APPROVE. All 5 of the round-1 APPROVE-WITH-CONDITIONS items are closed in v2 with concrete, specific language and, for 4 of the 5 (19, 20, 21, 23 partially), a named, executable test criterion that would catch a regression, not just a restated intention. Condition 4 is independently confirmed against the actual shipped codebase convention, not merely accepted on the plan's own say-so. No new conditions from this reviewer. This does not speak to design-challenger's own round-2 pass (running in parallel, separate scope) or to the still-open Manager confirmation the plan itself flags for criterion 14 (design-challenger's finding, not this reviewer's).
+
+## RECEIPT (round 2)
+
+RECEIPT: verdict=APPROVE
+findings (ALL of them, ranked by blast radius):
+1. [CLEAN][derived] Condition 1 (hook-side tool_name fail-closed check, criterion 19) resolved -- concrete check description plus named executable test C19, not a restated goal
+2. [CLEAN][derived] Condition 2 (halt-state file schema, criterion 20) resolved -- concrete keyed-by-reason JSON schema plus a test (C20) that proves additive, non-clobbering behavior, not just an asserted claim
+3. [CLEAN][derived] Condition 3 (bootstrap-ruleset.ts function export, criterion 21) resolved -- named loadBootstrapRuleSet(): RuleSet plus typecheck-enforced regression guard (C21)
+4. [CLEAN][code-traced] Condition 4 (subagent-non-escalation.test.ts placement, criterion 22) resolved -- independently verified against shipped tree: src/policy/tools/classification.ts plus classification.test.ts already co-located there, matching this codebase's universal 1:1 test-co-location convention (kernel/, normalizer/, rule/, verification/ all confirmed same pattern)
+5. [CLEAN][derived] Condition 5 (evidence-trail disclosure, criterion 23) resolved -- header-comment text discloses the gap plainly, attributes it to S8/Milestone #26/INT-05, mirrors existing convention; no overclaiming found
+6. [SUSPICION][LOW][derived] Halt-state file's concurrent-write mechanics (read-modify-write vs. locking) not spelled out -- low risk within S5's own sequential SessionStart-then-UserPromptSubmit scope, but flagged for S11b's own build to re-check before it relies on the schema for a genuine concurrent writer; non-blocking, not one of the original 5 conditions
+counts (a CHECKSUM -- MUST equal the lines listed above; never truncated): issues=0 suspicions=1 clean=5
+evidence (a CHECKSUM over the tags above -- MUST equal them, and MUST total the counts line): demonstrated=0 code-traced=1 derived=5
+checks=n/a (pre-build plan review; no S5 code exists yet -- grep for loadBootstrapRuleSet/bootstrapRuleSet across src/ returned no matches, confirming Phase 1 status)
+adr=HIT(35)
+report=docs/reviews/s5-deny-by-default-hook-wiring-architecture-2026-09-06.md
