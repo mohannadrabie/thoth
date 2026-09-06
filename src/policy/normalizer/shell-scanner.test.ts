@@ -402,3 +402,35 @@ test("Issue #83, sibling location: an ESCAPED '&' immediately before a live '>' 
   assert.deepEqual(findLiveRedirectOperatorPositions(String.raw`cmd \&> /tmp/out`), [6]);
   assert.deepEqual(extractRedirectTargets(String.raw`cmd \&> /tmp/out`), ["/tmp/out"]);
 });
+
+// --- red-team round-4 (Issue #84): '>&WORD' is a real bash file redirect (the historical synonym
+// for '&>WORD'), not fd-dup — only '>&DIGIT'/'>&-' are genuine fd-dup. Round 3's #81 fix skipped
+// ANY '>' followed by '&' unconditionally, silently dropping the '>&WORD' target. -----------------
+
+test("Issue #84 (report's own repro): '>& out' (spaced) extracts 'out' as a real write target, not fd-dup", () => {
+  assert.deepEqual(extractRedirectTargets("kubectl get pods/api --context=prod >& out"), ["out"]);
+});
+
+test("Issue #84: '>&out' (glued, no live whitespace) extracts 'out' as a real write target", () => {
+  assert.deepEqual(extractRedirectTargets("kubectl get pods/api --context=prod >&out"), ["out"]);
+});
+
+test("Issue #84: findLiveRedirectOperatorPositions reports '>& out' at the '>' character's own position (not preceded by a live '&', so no tokenStart shift)", () => {
+  assert.deepEqual(findLiveRedirectOperatorPositions("cmd >& out"), [4]);
+});
+
+test("Issue #84 regression pin: bare '>&2' (digit form) still extracts NO target — genuine fd-dup, unaffected by the word-form fix", () => {
+  assert.deepEqual(extractRedirectTargets("cmd >&2"), []);
+});
+
+test("Issue #84 regression pin: multi-digit fd-dup ('>&12') still extracts NO target", () => {
+  assert.deepEqual(extractRedirectTargets("cmd >&12"), []);
+});
+
+test("Issue #84 regression pin: bare '>&-' (close-the-descriptor form) still extracts NO target", () => {
+  assert.deepEqual(extractRedirectTargets("cmd >&-"), []);
+});
+
+test("Issue #84 regression pin: '&>' (ampersand LEADING, both-streams to a real file) is unaffected by the trailing-ampersand fix", () => {
+  assert.deepEqual(extractRedirectTargets("cat p &> /tmp/out"), ["/tmp/out"]);
+});

@@ -471,3 +471,43 @@ export const shellEscapedRedirectWithResourceCall: ShellCall = {
   environment: ENVIRONMENT,
   identity: IDENTITY,
 };
+
+/** Issue #84 (red-team round-4): '>&WORD' (spaced or glued) is a real bash file redirect — the
+ * historical '>&word' synonym for '&>word' (both streams to a real file) — NOT a fd-dup, unlike
+ * '>&DIGIT'/'>&-'. Round 3's fd-dup exclusion skipped ANY '>' followed by '&' unconditionally,
+ * so this resource-plus-redirect call's redirect target vanished, starving the Issue #82
+ * assembled-target-count guard down to 1 (the resource alone) and clean-resolving as a read —
+ * while real bash creates/writes 'out'. The report's own exact repro. */
+export const shellFdDupWordRedirectCall: ShellCall = {
+  command: `kubectl get pods/api --context=${CLUSTER} >& out`,
+  environment: ENVIRONMENT,
+  identity: IDENTITY,
+};
+
+/** Same defect, the glued spelling ('>&out', no live whitespace between the '&' and the word) —
+ * must be excluded from `positional` as a single self-contained token AND still surface its real
+ * target, exactly like the pre-existing no-space bare-'>' case (shellNoSpaceRedirectCall). */
+export const shellFdDupWordRedirectGluedCall: ShellCall = {
+  command: `kubectl get pods/api --context=${CLUSTER} >&out`,
+  environment: ENVIRONMENT,
+  identity: IDENTITY,
+};
+
+/** Regression pin (no kubectl resource at all — isolates the scanner-level fix from Issue #82's
+ * multi-target guard): a plain '>& WORD' write, same shape as shellFdDupAmpersandRedirectCall's
+ * '&>' sibling, must resolve as an ordinary clean write to 'out', not silently as a no-op read. */
+export const shellFdDupWordRedirectPlainWriteCall: ShellCall = {
+  command: "cat payload >& out",
+  environment: ENVIRONMENT,
+  identity: IDENTITY,
+};
+
+/** Regression pin: same shape as shellFdDupAmpersandCall (a genuine leading write target, then a
+ * trailing fd-dup form appended) but with '>&-' (close-the-descriptor form) instead of '2>&1' —
+ * must still resolve as a clean write to the ONE real target, the trailing '>&-' contributing no
+ * target of its own, unaffected by the Issue #84 fix (the digit/'-' branch stays excluded). */
+export const shellFdDupCloseFdCall: ShellCall = {
+  command: "cat payload > /tmp/ok >&-",
+  environment: ENVIRONMENT,
+  identity: IDENTITY,
+};

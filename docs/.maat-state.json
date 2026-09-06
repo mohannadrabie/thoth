@@ -678,8 +678,8 @@
   },
   "scope": "s4",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 2,
-  "humanRulingRequired": false,
+  "reviewRoundsSinceClean": 3,
+  "humanRulingRequired": true,
   "councilHeld": true,
   "councilVerdict": "NO-GO (second stall on the same shape)",
   "roundsSinceLastGo": 0

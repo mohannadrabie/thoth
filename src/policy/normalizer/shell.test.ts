@@ -23,6 +23,10 @@ import {
   shellEscapedRedirectWithResourceCall,
   shellFdDupAmpersandCall,
   shellFdDupAmpersandRedirectCall,
+  shellFdDupCloseFdCall,
+  shellFdDupWordRedirectCall,
+  shellFdDupWordRedirectGluedCall,
+  shellFdDupWordRedirectPlainWriteCall,
   shellHeredocRedirectCall,
   shellHerestringNotHeredocCall,
   shellKubectlWithRedirectCall,
@@ -468,6 +472,59 @@ test("Issue #83, sharper instance: the same escaped-redirect defect with a resou
 });
 
 test("Issue #83 regression pin: a genuine fd-dup ('2>&1') still resolves cleanly end to end, unaffected by the escape-awareness fix", () => {
+  const record = normalizeShellCall(shellFdDupAmpersandCall);
+  assert.deepEqual(record.verbs, ["write"]);
+  assert.deepEqual(record.targets, ["/tmp/ok"]);
+  assert.deepEqual(record.unresolved, []);
+});
+
+// ============================================================================================
+// Issue #84 (red-team round-4, second stall, human-ruled Option B — day-1 S5-blocking task):
+// round 3's own #81 fd-dup fix skipped ANY '>' followed by '&' unconditionally. Bash only treats
+// '>&DIGIT'/'>&-' as fd-dup — '>&WORD' (spaced or glued) is a real file redirect, the historical
+// synonym for '&>WORD'. The unconditional skip made the redirect target vanish, starving the
+// Issue #82 assembled-target-count guard and clean-resolving a call the un-ampersanded control
+// correctly denies. Fix: the skip is now conditional on a digit or '-' immediately following the
+// '&', mirroring the existing '&>' tokenStart handling's own adjacency check.
+// ============================================================================================
+
+test("Issue #84 (report's own repro): 'kubectl get pods/api --context=prod >& out' must deny — the redirect target ('out') plus the resource token ('pods/api') assemble 2 targets, same as the un-ampersanded control", () => {
+  const record = normalizeShellCall(shellFdDupWordRedirectCall);
+  assert.ok(
+    record.unresolved.length > 0,
+    "must deny — '>& out' is a real file redirect in bash, not a fd-dup; clean-resolving here was the demonstrated bypass (one appended '&' flipped deny to allow)",
+  );
+  assert.deepEqual(record.targets, []);
+});
+
+test("Issue #84, glued spelling ('>&out', no live whitespace): same guarantee", () => {
+  const record = normalizeShellCall(shellFdDupWordRedirectGluedCall);
+  assert.ok(record.unresolved.length > 0);
+  assert.deepEqual(record.targets, []);
+});
+
+test("Issue #84, isolated at the plain-write shape (no kubectl resource, so Issue #82's guard is not what's doing the denying here): 'cat payload >& out' resolves as an ordinary clean write to 'out'", () => {
+  const record = normalizeShellCall(shellFdDupWordRedirectPlainWriteCall);
+  assert.deepEqual(record.verbs, ["write"]);
+  assert.deepEqual(record.targets, ["out"]);
+  assert.deepEqual(record.unresolved, []);
+});
+
+test("Issue #84 regression pin: 'cat payload > /tmp/ok >&-' resolves as a clean write to the ONE real target — the trailing '>&-' (close-the-descriptor form) contributes no target of its own, unaffected by the fix", () => {
+  const record = normalizeShellCall(shellFdDupCloseFdCall);
+  assert.deepEqual(record.verbs, ["write"]);
+  assert.deepEqual(record.targets, ["/tmp/ok"]);
+  assert.deepEqual(record.unresolved, []);
+});
+
+test("Issue #84 regression pin: '&>' (both-streams, ampersand LEADING) still resolves cleanly, unaffected by the trailing-ampersand fix", () => {
+  const record = normalizeShellCall(shellFdDupAmpersandRedirectCall);
+  assert.deepEqual(record.verbs, ["write"]);
+  assert.deepEqual(record.targets, ["/tmp/ok"]);
+  assert.deepEqual(record.unresolved, []);
+});
+
+test("Issue #84 regression pin: bare digit fd-dup ('2>&1') still resolves cleanly, unaffected by the fix", () => {
   const record = normalizeShellCall(shellFdDupAmpersandCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);

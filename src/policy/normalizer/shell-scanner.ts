@@ -347,9 +347,25 @@ function findLiveRedirectMatches(liveText: string): LiveRedirectMatch[] {
       continue;
     }
     const length = m[0].length;
-    if (liveText[idx + length] === "&") continue; // fd-dup destination, not a file path
     const precededByLiveAmpersand =
       idx > 0 && liveText[idx - 1] === "&" && states[idx - 1] === "none" && !escaped[idx - 1];
+    if (liveText[idx + length] === "&") {
+      // Issue #84 (red-team round-4): bash treats '>&DIGIT' and '>&-' as a fd-dup (no file
+      // created, no path target) but '>&WORD' (spaced or glued — the historical synonym for
+      // '&>WORD', both streams to a REAL file) as an ordinary file redirect. The skip below is
+      // conditional on the character IMMEDIATELY after the '&' being a digit or '-' — mirroring
+      // `precededByLiveAmpersand`'s own single-character adjacency check just above, not a full
+      // run-of-digits validation (a deliberately narrow fix: docs/decisions.md's 2026-09-06
+      // second-stall ruling explicitly declined a broader redirect-classification grammar rewrite).
+      const afterAmpersand = liveText[idx + length + 1];
+      const isFdDup = afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand));
+      if (isFdDup) continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path
+      // '>&WORD': the '&' is part of the operator itself (equivalent to '&>WORD'), not a separate
+      // token — extend `length` by 1 so target extraction (extractRedirectTargets) and the token
+      // exclusion (findLiveRedirectOperatorPositions) both start right after the '&', not the '>'.
+      matches.push({ idx, length: length + 1, tokenStart: precededByLiveAmpersand ? idx - 1 : idx });
+      continue;
+    }
     matches.push({ idx, length, tokenStart: precededByLiveAmpersand ? idx - 1 : idx });
   }
   return matches;

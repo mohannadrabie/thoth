@@ -423,13 +423,51 @@ const MUTANTS: Mutant[] = [
   // forward-2026-09-03.md): mutants for the new/changed branches Issues #80/#81/#82 introduced,
   // beyond the anchor updates above to mutants that already existed pre-round-3.
   // Issue #81 (shell-scanner.ts side): fd-dup exclusion in the shared redirect-match scan that
-  // both extractRedirectTargets and findLiveRedirectOperatorPositions build on.
+  // both extractRedirectTargets and findLiveRedirectOperatorPositions build on. Anchor updated
+  // Issue #84 (red-team round-4): the unconditional "any '&' after '>'" check was replaced with a
+  // conditional (digit/'-' after the '&') — this mutant now removes the WHOLE trailing-ampersand
+  // branch (both the genuine fd-dup exclusion AND the Issue #84 word-form handling), which still
+  // fabricates a bogus target out of a fd-dup destination like '2>&1' or '>&2'.
   textMutant(
     "redirect-match-fd-dup-exclusion-disabled",
-    "Issue #81: removing the fd-dup guard in findLiveRedirectMatches (shared by extractRedirectTargets and findLiveRedirectOperatorPositions) fabricates a bogus target/operator-position out of a fd-dup destination like '2>&1' or '>&2', which creates no file at all",
+    "Issue #81: removing the whole trailing-ampersand branch in findLiveRedirectMatches (shared by extractRedirectTargets and findLiveRedirectOperatorPositions) fabricates a bogus target/operator-position out of a fd-dup destination like '2>&1' or '>&2', which creates no file at all",
     SCANNER,
-    'if (liveText[idx + length] === "&") continue; // fd-dup destination, not a file path',
-    "",
+    'if (liveText[idx + length] === "&") {',
+    'if (false) {',
+  ),
+  // Issue #84 (red-team round-4, second stall): the digit/'-' conditional itself — this is the
+  // exact regression the human's Option B ruling named: reverting `if (isFdDup) continue;` to an
+  // unconditional `continue;` silently drops a '>&WORD' target again, treating a real bash file
+  // redirect (the '&>WORD' synonym) as if it were fd-dup, exactly the demonstrated bypass
+  // ('kubectl get pods/api --context=prod >& out' clean-resolving as a read while bash writes
+  // 'out').
+  textMutant(
+    "trailing-ampersand-word-form-treated-as-fd-dup",
+    "Issue #84: making the fd-dup skip unconditional again (ignoring isFdDup) silently drops a real '>&WORD' file-redirect target, reopening the exact deny-bypass the human ruled on (docs/decisions.md 2026-09-06 row)",
+    SCANNER,
+    "if (isFdDup) continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path",
+    "continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path",
+  ),
+  // Issue #84, sibling branch: the digit/'-' check ITSELF — inverting it would treat a genuine
+  // fd-dup ('>&2', '>&-') as if it were a real file redirect, fabricating a bogus target ("2"/"-")
+  // for a construct that creates no file at all (the opposite-direction regression from the one
+  // above).
+  textMutant(
+    "trailing-ampersand-digit-dash-check-inverted",
+    "Issue #84: inverting the digit/'-' check would treat a genuine fd-dup ('>&2', '>&-') as a real file redirect, fabricating a bogus target out of a construct that creates no file",
+    SCANNER,
+    String.raw`const isFdDup = afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand));`,
+    String.raw`const isFdDup = !(afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand)));`,
+  ),
+  // Issue #84, third branch: the '+1' length extension that skips past the '&' itself for the
+  // word-form case — without it, target extraction would slice starting AT the '&' instead of
+  // just after it, extracting "&out" instead of "out".
+  textMutant(
+    "trailing-ampersand-word-form-length-not-extended",
+    "Issue #84: not extending `length` by 1 for the '>&WORD' word-form case would make target extraction slice starting at the '&' itself, extracting a bogus '&out'-shaped target instead of the real 'out'",
+    SCANNER,
+    "matches.push({ idx, length: length + 1, tokenStart: precededByLiveAmpersand ? idx - 1 : idx });\n      continue;\n    }",
+    "matches.push({ idx, length, tokenStart: precededByLiveAmpersand ? idx - 1 : idx });\n      continue;\n    }",
   ),
   textMutant(
     "redirect-match-ampersand-prefixed-token-start-broken",

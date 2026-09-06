@@ -1,7 +1,19 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-06 (session continuation — hard stop mid-Issue-#84-close-out, awaiting human ruling)
+
+## ⏸ Resume point — human ruling needed before anything else
+
+**S4 is shipped and pushed** (`origin/master` matches local `54a60aa`). The one open item — closing Issue #84 before S5 can start (human's 2026-09-06 Option B ruling) — hit **rule 16(c)'s hard stop a second time**: `story-implementer`'s fix-now round genuinely closed Issue #84's literal repro, but the mandated `red-team` re-confirm (round 5) found the same fix has a narrower residual (digit-leading filenames like `>&2026-09-06.log` still misclassify) — a THIRD consecutive non-clean round on this exact code path. Per the standing rule-16 carve-out (logged in `docs/decisions.md` *before* this round returned, and honored even though the human's last message authorized continuing), **no further autonomous fix-now round runs without a ruling.**
+
+**Read this first:** `docs/reviews/s4-shell-semantic-detector-issue84-path-forward-2026-09-06.md` — three options (A: apply red-team's own proven 2-line fix + one fast final re-confirm [recommended], B: same fix, skip re-confirm [not recommended], C: pause for a full classification-grammar redesign).
+
+**Working tree right now (uncommitted):** `story-implementer`'s round-5 fix (`src/policy/normalizer/shell-scanner.ts` + tests + fixtures + mutants + CHANGELOG) is in place and does genuinely improve things (425/425 tests, 52/52 mutants, zero kernel-boundary diff) — it is NOT reverted, just not yet complete per red-team. `docs/reviews/s4-shell-semantic-detector-red-team-round5-2026-09-06.md`, `docs/REVIEW_LOG.md`'s new row, and `docs/decisions.md`'s two new 2026-09-06 rows are also uncommitted pending this ruling — see the commit note below.
+
+**Issue #84 stays OPEN** — red-team's explicit verdict, not closed this round. Its GitHub comment records the round-5 finding.
+
+**Single next action:** get the human's choice of A/B/C from the brief above, then resume the ship loop from wherever that choice re-enters (A/B → apply fix → verify → close #84 → S5 intake; C → new design-challenger/architecture pass on the classification grammar before touching #84 again).
 
 ## Current state
 - **S4 (shell-command semantic detector) — built, reviewed (4 rounds + 1 council), verified, audited. Shipped this session with one named, human-ruled residual; ready for the human's push/merge.**
