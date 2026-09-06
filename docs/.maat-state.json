@@ -676,11 +676,17 @@
       }
     ]
   },
-  "scope": "s4",
-  "tier": "CRITICAL",
+  "scope": "s5",
+  "tier": null,
   "reviewRoundsSinceClean": 0,
   "humanRulingRequired": false,
-  "councilHeld": true,
-  "councilVerdict": "GO (round 6 re-confirm, Issue #84 closed)",
-  "roundsSinceLastGo": 0
+  "councilHeld": false,
+  "councilVerdict": null,
+  "roundsSinceLastGo": 0,
+  "priorScope": {
+    "scope": "s4",
+    "tier": "CRITICAL",
+    "councilHeld": true,
+    "councilVerdict": "GO (round 6 re-confirm, Issue #84 closed)"
+  }
 }
