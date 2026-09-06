@@ -350,16 +350,20 @@ function findLiveRedirectMatches(liveText: string): LiveRedirectMatch[] {
     const precededByLiveAmpersand =
       idx > 0 && liveText[idx - 1] === "&" && states[idx - 1] === "none" && !escaped[idx - 1];
     if (liveText[idx + length] === "&") {
-      // Issue #84 (red-team round-4): bash treats '>&DIGIT' and '>&-' as a fd-dup (no file
-      // created, no path target) but '>&WORD' (spaced or glued — the historical synonym for
-      // '&>WORD', both streams to a REAL file) as an ordinary file redirect. The skip below is
-      // conditional on the character IMMEDIATELY after the '&' being a digit or '-' — mirroring
-      // `precededByLiveAmpersand`'s own single-character adjacency check just above, not a full
-      // run-of-digits validation (a deliberately narrow fix: docs/decisions.md's 2026-09-06
-      // second-stall ruling explicitly declined a broader redirect-classification grammar rewrite).
-      const afterAmpersand = liveText[idx + length + 1];
-      const isFdDup = afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand));
-      if (isFdDup) continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path
+      // Issue #84 (red-team round-4, then round-5 residual): bash treats '>&DIGIT' and '>&-' as a
+      // fd-dup (no file created, no path target) but '>&WORD' (spaced or glued — the historical
+      // synonym for '&>WORD', both streams to a REAL file) as an ordinary file redirect. bash
+      // classifies on the WHOLE word after '&', not merely its first character — round-4's fix
+      // read only the immediately-adjacent character, which still misclassified a digit-LEADING
+      // but not all-digit word (e.g. '2026-09-06.log', '2out') as fd-dup, silently dropping its
+      // write target (round-5 red-team re-confirm, same Issue #84, one character further right).
+      // Reuses the same quote-aware `tokenize` this function's own caller (`extractRedirectTargets`)
+      // already invokes one line later — single source of truth for what counts as a "word" here,
+      // not a second bespoke definition; also correctly resolves a quoted ('>&"2"') or
+      // backslash-escaped ('>&\2') fd-dup word, which the old raw single-character read could not.
+      const [fdWord] = tokenize(liveText.slice(idx + length + 1));
+      const isFdDup = fdWord !== undefined && (fdWord.startsWith("-") || /^\d+$/.test(fdWord));
+      if (isFdDup) continue; // fd-dup destination ('>&DIGITS' / '>&-...'), not a file path
       // '>&WORD': the '&' is part of the operator itself (equivalent to '&>WORD'), not a separate
       // token — extend `length` by 1 so target extraction (extractRedirectTargets) and the token
       // exclusion (findLiveRedirectOperatorPositions) both start right after the '&', not the '>'.

@@ -24,6 +24,7 @@ import {
   shellFdDupAmpersandCall,
   shellFdDupAmpersandRedirectCall,
   shellFdDupCloseFdCall,
+  shellFdDupDigitLeadingWordRedirectCall,
   shellFdDupWordRedirectCall,
   shellFdDupWordRedirectGluedCall,
   shellFdDupWordRedirectPlainWriteCall,
@@ -529,6 +530,26 @@ test("Issue #84 regression pin: bare digit fd-dup ('2>&1') still resolves cleanl
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
   assert.deepEqual(record.unresolved, []);
+});
+
+// ============================================================================================
+// Issue #84 residual (round 5, red-team re-confirm): round 4's fix read only the character
+// IMMEDIATELY after '&', not the whole word — bash classifies '>&WORD' on the whole word:
+// fd-dup iff WORD is entirely digits or starts with '-'. A digit-LEADING but not all-digit word
+// (e.g. a date-stamped log file) still misclassified as fd-dup one round ago. Fixed by reusing
+// the module's own quote-aware `tokenize` to read the whole word, not a second character.
+// docs/reviews/s4-shell-semantic-detector-red-team-round5-2026-09-06.md, Finding 1.
+// ============================================================================================
+
+test('Issue #84 residual (round 5): "kubectl get pods/api --context=prod >&2026-09-06.log" must DENY - >&WORD is fd-dup only when WORD is ALL digits or starts with a dash', () => {
+  const record = normalizeShellCall(shellFdDupDigitLeadingWordRedirectCall);
+  assert.ok(
+    record.unresolved.length > 0,
+    "must deny — '2026-09-06.log' is not all-digits and does not start with '-', so bash treats " +
+      "'>&2026-09-06.log' as a real file redirect, not fd-dup; clean-resolving here was the " +
+      "demonstrated bypass (a digit-leading filename silently vanished as a write target)",
+  );
+  assert.deepEqual(record.targets, []);
 });
 
 // --- app-security Finding 1 (Issue #68): unterminated quote denies -----------------------------

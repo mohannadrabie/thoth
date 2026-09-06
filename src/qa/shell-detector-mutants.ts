@@ -435,29 +435,44 @@ const MUTANTS: Mutant[] = [
     'if (liveText[idx + length] === "&") {',
     'if (false) {',
   ),
-  // Issue #84 (red-team round-4, second stall): the digit/'-' conditional itself — this is the
-  // exact regression the human's Option B ruling named: reverting `if (isFdDup) continue;` to an
-  // unconditional `continue;` silently drops a '>&WORD' target again, treating a real bash file
-  // redirect (the '&>WORD' synonym) as if it were fd-dup, exactly the demonstrated bypass
-  // ('kubectl get pods/api --context=prod >& out' clean-resolving as a read while bash writes
-  // 'out').
+  // Issue #84 (red-team round-4, second stall; anchor re-pointed round-5 for the whole-word fix):
+  // this is the exact regression the human's Option A ruling named: reverting `if (isFdDup)
+  // continue;` to an unconditional `continue;` silently drops a '>&WORD' target again, treating a
+  // real bash file redirect (the '&>WORD' synonym) as if it were fd-dup, exactly the demonstrated
+  // bypass ('kubectl get pods/api --context=prod >& out' clean-resolving as a read while bash
+  // writes 'out').
   textMutant(
     "trailing-ampersand-word-form-treated-as-fd-dup",
     "Issue #84: making the fd-dup skip unconditional again (ignoring isFdDup) silently drops a real '>&WORD' file-redirect target, reopening the exact deny-bypass the human ruled on (docs/decisions.md 2026-09-06 row)",
     SCANNER,
-    "if (isFdDup) continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path",
-    "continue; // fd-dup destination ('>&DIGIT' / '>&-'), not a file path",
+    "if (isFdDup) continue; // fd-dup destination ('>&DIGITS' / '>&-...'), not a file path",
+    "continue; // fd-dup destination ('>&DIGITS' / '>&-...'), not a file path",
   ),
   // Issue #84, sibling branch: the digit/'-' check ITSELF — inverting it would treat a genuine
   // fd-dup ('>&2', '>&-') as if it were a real file redirect, fabricating a bogus target ("2"/"-")
   // for a construct that creates no file at all (the opposite-direction regression from the one
-  // above).
+  // above). Anchor re-pointed round-5 for the whole-word fix (`fdWord`/`tokenize`), same branch.
   textMutant(
     "trailing-ampersand-digit-dash-check-inverted",
     "Issue #84: inverting the digit/'-' check would treat a genuine fd-dup ('>&2', '>&-') as a real file redirect, fabricating a bogus target out of a construct that creates no file",
     SCANNER,
-    String.raw`const isFdDup = afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand));`,
-    String.raw`const isFdDup = !(afterAmpersand === "-" || (afterAmpersand !== undefined && /\d/.test(afterAmpersand)));`,
+    String.raw`const isFdDup = fdWord !== undefined && (fdWord.startsWith("-") || /^\d+$/.test(fdWord));`,
+    String.raw`const isFdDup = fdWord !== undefined && !(fdWord.startsWith("-") || /^\d+$/.test(fdWord));`,
+  ),
+  // Issue #84 residual, round-5 (red-team re-confirm): the all-digits-vs-digit-PREFIX distinction
+  // itself — round 4's fix tested only the ONE character after '&'; a digit-leading but not
+  // all-digit word (e.g. '2026-09-06.log', '2out') still misclassified as fd-dup and silently
+  // vanished as a write target. Weakening the digit test from "the WHOLE word is digits"
+  // (`/^\d+$/`) to "the word merely STARTS WITH a digit" (`/^\d/`) reopens exactly that residual —
+  // a genuinely new decision branch this round's fix introduces, distinct from the digit/dash
+  // check inverted above (that mutant flips the polarity; this one narrows what counts as "all
+  // digits").
+  textMutant(
+    "trailing-ampersand-all-digits-vs-digit-prefix-broken",
+    "Issue #84 residual (round 5): weakening the all-digits check to a mere digit-PREFIX check reopens the exact round-5 bypass — a digit-leading, non-all-digit word (e.g. '2026-09-06.log') would misclassify as fd-dup again, silently dropping its write target",
+    SCANNER,
+    String.raw`/^\d+$/.test(fdWord)`,
+    String.raw`/^\d/.test(fdWord)`,
   ),
   // Issue #84, third branch: the '+1' length extension that skips past the '&' itself for the
   // word-form case — without it, target extraction would slice starting AT the '&' instead of

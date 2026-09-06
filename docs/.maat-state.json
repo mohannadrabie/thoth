@@ -678,9 +678,9 @@
   },
   "scope": "s4",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 3,
-  "humanRulingRequired": true,
+  "reviewRoundsSinceClean": 0,
+  "humanRulingRequired": false,
   "councilHeld": true,
-  "councilVerdict": "NO-GO (second stall on the same shape)",
+  "councilVerdict": "GO (round 6 re-confirm, Issue #84 closed)",
   "roundsSinceLastGo": 0
 }

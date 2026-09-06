@@ -434,3 +434,48 @@ test("Issue #84 regression pin: bare '>&-' (close-the-descriptor form) still ext
 test("Issue #84 regression pin: '&>' (ampersand LEADING, both-streams to a real file) is unaffected by the trailing-ampersand fix", () => {
   assert.deepEqual(extractRedirectTargets("cat p &> /tmp/out"), ["/tmp/out"]);
 });
+
+// --- Issue #84 residual, round-5 red-team re-confirm: extractRedirectTargets bash-conformance
+// table (docs/reviews/s4-shell-semantic-detector-red-team-round5-2026-09-06.md, section 1) — 25
+// named '>&' forms executed against real bash 5.3.9(1)-release. Measured rule: '>&WORD' is
+// fd-dup iff WORD is entirely digits or starts with '-'; every other WORD (including one that
+// merely BEGINS with digits) is a real file redirect. Rows 24-25 use an operator shape bash
+// itself rejects outright ('2>&out' is "ambiguous redirect"; '>>&out' is a syntax error — bash
+// creates no file for either) — this detector does not model "invalid syntax" as a third
+// outcome, so per the same two-way rule it classifies WORD="out" (not all-digit, no dash) as a
+// file redirect; a documented, non-gating over-approximation (red-team Finding 2, LOW: fabricates
+// a write target bash never creates), not a fd-dup misclassification (Finding 1's HIGH, which
+// this table's rows 3-11/17/18/23 pin down).
+test("extractRedirectTargets bash-conformance table — 25 named '>&' forms match observed bash 5.3.9", () => {
+  const cases: Array<{ label: string; cmd: string; expected: string[] }> = [
+    { label: "spaced word", cmd: "echo hi >& out", expected: ["out"] },
+    { label: "glued word", cmd: "echo hi >&out", expected: ["out"] },
+    { label: "digit-leading word", cmd: "echo hi >&2out", expected: ["2out"] },
+    { label: "digit-leading alnum word", cmd: "echo hi >&12x", expected: ["12x"] },
+    { label: "digit+dot word", cmd: "echo hi >&2.txt", expected: ["2.txt"] },
+    { label: "zero-leading word", cmd: "echo hi >&0abc", expected: ["0abc"] },
+    { label: "zero-padded digit-leading word", cmd: "echo hi >&007x", expected: ["007x"] },
+    { label: "digit+underscore word", cmd: "echo hi >&2_1", expected: ["2_1"] },
+    { label: "digit+dot word (2)", cmd: "echo hi >&1.0", expected: ["1.0"] },
+    { label: "plus-prefixed word (not a dash)", cmd: "echo hi >&+2", expected: ["+2"] },
+    { label: "spaced digit-leading word", cmd: "echo hi >& 2out", expected: ["2out"] },
+    { label: "quoted word", cmd: 'echo hi >&"out"', expected: ["out"] },
+    { label: "single-digit fd-dup", cmd: "echo hi >&2", expected: [] },
+    { label: "zero-padded fd-dup", cmd: "echo hi >&02", expected: [] },
+    { label: "two-digit fd-dup", cmd: "echo hi >&12", expected: [] },
+    { label: "many-digit fd-dup", cmd: "echo hi >&9999999999", expected: [] },
+    { label: "quoted digit fd-dup", cmd: 'echo hi >&"2"', expected: [] },
+    { label: "escaped digit fd-dup", cmd: String.raw`echo hi >&\2`, expected: [] },
+    { label: "close-fd", cmd: "echo hi >&-", expected: [] },
+    { label: "dash-prefixed word", cmd: "echo hi >&-x", expected: [] },
+    { label: "dash-digit word", cmd: "echo hi >&-2", expected: [] },
+    { label: "dash-prefixed filename-shaped word", cmd: "echo hi >&-report.log", expected: [] },
+    { label: "spaced dash-prefixed word", cmd: "echo hi >& -x", expected: [] },
+    { label: "fd-number-prefixed operator, non-numeric word (bash: ambiguous redirect)", cmd: "cat /etc/hosts 2>&out", expected: ["out"] },
+    { label: "doubled-operator ampersand form (bash: syntax error)", cmd: "echo hello >>&out", expected: ["out"] },
+  ];
+  assert.equal(cases.length, 25, "this table must stay at exactly the 25 forms the report measured");
+  for (const { label, cmd, expected } of cases) {
+    assert.deepEqual(extractRedirectTargets(cmd), expected, `${label}: '${cmd}'`);
+  }
+});

@@ -511,3 +511,15 @@ export const shellFdDupCloseFdCall: ShellCall = {
   environment: ENVIRONMENT,
   identity: IDENTITY,
 };
+
+/** Issue #84 residual (round 5, red-team re-confirm): round 4's own fix read only the ONE
+ * character immediately after '&', not the whole word — a digit-LEADING but not all-digit word
+ * (the single most ordinary filename shape in ops, a date-stamped log) still misclassified as
+ * fd-dup, silently dropping the write target. `kubectl get pods/api --context=prod
+ * >&2026-09-06.log` clean-resolved as a read while real bash 5.3.9 creates and writes the file;
+ * deleting one space (`>& 2026-09-06.log`) correctly denied. The report's own exact repro. */
+export const shellFdDupDigitLeadingWordRedirectCall: ShellCall = {
+  command: `kubectl get pods/api --context=${CLUSTER} >&2026-09-06.log`,
+  environment: ENVIRONMENT,
+  identity: IDENTITY,
+};
