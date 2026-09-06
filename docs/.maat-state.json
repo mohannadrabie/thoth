@@ -677,7 +677,7 @@
     ]
   },
   "scope": "s5",
-  "tier": null,
+  "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
   "humanRulingRequired": false,
   "councilHeld": false,
