@@ -1,0 +1,27 @@
+{
+  "sourceUrl": "https://code.claude.com/docs/en/tools-reference",
+  "capturedAt": "2026-09-06",
+  "evidenceTier": "derived",
+  "evidenceNote": "Captured via a live web search this session cross-referencing code.claude.com/docs/en/tools-reference (evidence tier: derived -- a search, not a direct page fetch executed by this same session; same disclosed-evidence-tier convention docs/plans/S5-phase1-2026-09-06.md section 5.A already uses for the 600s hook-timeout figure). Cross-checked against this repo's own already-shipped .claude/settings.json, whose existing PreToolUse matcher (\"Edit|Write|MultiEdit|NotebookEdit\") and this story's own new \"Bash\" matcher independently confirm five of these names are real, in-use tool identifiers on this exact runtime, not merely claimed by a third-party source. Re-vendoring this file from the live docs page is a human/reviewed action on a cadence, same convention as docs/qa/runtime-settings-inventory.json (QA-17) -- never fetched live in CI.",
+  "tools": [
+    "Task",
+    "Bash",
+    "Glob",
+    "Grep",
+    "Read",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
+    "BashOutput",
+    "KillShell",
+    "SlashCommand",
+    "ExitPlanMode",
+    "AskUserQuestion",
+    "ListMcpResources",
+    "ReadMcpResource"
+  ]
+}

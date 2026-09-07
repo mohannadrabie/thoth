@@ -56,6 +56,7 @@ These areas always draw a named reviewer before a change to them is shippable �
 - **Evidence / audit trail** — `hooks/audit-log.mjs` and any component that records or verifies the incapability/assurance evidence (Plane A/C verification per `docs/REQUIREMENTS.md` §0.3).
 - **Secret scanning / CI gates** — `.github/workflows/ci.yml`, `.gitleaks.toml`, `.gitleaksignore`, `scripts/secret-scan/*`.
 - **Policy delivery / config surface** — anything that changes how policy is authored or delivered to the enforcement point (`docs/REQUIREMENTS.md` §"Policy is centralized").
+- **Halt-state directory** — `.thoth/halt-state/` (S5, Milestone #23): session-readable, and partly derived from secrets-adjacent config (the MCP-declaration input files `hooks/sessionstart-tool-enum.mjs` reads via `src/policy/tools/mcp-enumeration.ts`) — a future edit to its contents or the code that reads/writes it draws the same named-reviewer ceremony as this project's other named sensitive surfaces above.
 
 ## Architecture Decisions
 

@@ -104,6 +104,18 @@ jobs:
       - name: S3 normalizer-registry-purity-check (ADR-0021 POL-12 structural gate)
         run: node src/qa/normalizer-registry-purity-check.ts
 
+      - name: S5 gate-command-path-check (SUR-13 precondition / Issue #87 fix, Milestone #23)
+        run: node src/qa/gate-command-path-check.ts
+
+      - name: S5 gate-manifest-check (SUR-13, Milestone #23)
+        run: node src/qa/gate-manifest-check.ts
+
+      - name: S5 gate-matcher-drift-check (SUR-05, Milestone #23)
+        run: node src/qa/gate-matcher-drift-check.ts
+
+      - name: S5 gate-latency-budget-check (OPS-03, Milestone #23 — CI-10 incident on overrun, never a change to the separate 60s enforcement timeout)
+        run: node src/qa/gate-latency-budget-check.ts
+
       - name: OSS-01 full-history secret scan
         run: node src/secret-scan/history-scan.ts
 
