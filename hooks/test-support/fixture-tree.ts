@@ -97,3 +97,26 @@ export function fixtureEnv(tree: FixtureTree): NodeJS.ProcessEnv {
     USERPROFILE: tree.homeDir,
   };
 }
+
+/** Writes a synthetic `docs/qa/s5-central-classification.json` fixture at the REAL relative path
+ * `hooks/sessionstart-tool-enum.mjs` resolves it against — `<projectDir>/docs/qa/
+ * s5-central-classification.json` — inside this fixture tree's own isolated `projectDir` (already
+ * redirected via `fixtureEnv`'s `CLAUDE_PROJECT_DIR` override).
+ *
+ * This is the true-dependency-injection seam for a spawned-hook-process test that needs the hook to
+ * load a SYNTHETIC/expired central-classification fixture instead of the real committed one — per
+ * `architecture-reviewer`'s S5 Stage-3 CRITICAL review round 2 council-seat ruling (GitHub Issue
+ * #99): the production entry point has no dedicated, ambient-environment-variable override of any
+ * kind for which fixture file it reads (that shape is exactly what Issue #99 demonstrated as a
+ * `REQUIREMENTS.md:70` section 0.4 property 2 violation — a session-writable signal deciding which
+ * policy source a fail-closed gate trusts). Writing into the already-isolated `CLAUDE_PROJECT_DIR`
+ * tree reuses the SAME seam this file already uses for every other hook input (`.claude/settings.json`,
+ * `.mcp.json`, `~/.claude.json`) — no new, fixture-specific ambient signal. */
+export function writeCentralClassificationFixture(tree: FixtureTree, content: unknown): string {
+  const dir = path.join(tree.projectDir, "docs", "qa");
+  fs.mkdirSync(dir, { recursive: true });
+  const fixturePath = path.join(dir, "s5-central-classification.json");
+  const text = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+  fs.writeFileSync(fixturePath, text, "utf8");
+  return fixturePath;
+}

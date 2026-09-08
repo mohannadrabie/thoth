@@ -14,3 +14,4 @@
 {"at":"2026-09-06T04:27:08.124Z","event":"council","scope":"s4","trigger":"rule-16c-second-stall-round2","verdict":"NO-GO","rounds":"3","note":"round5-redteam-reconfirm-of-issue84-fix-half-closed"}
 {"at":"2026-09-06T11:57:49.994Z","event":"tier-ratified","scope":"s5","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"Plane-B-milestone-text-first-live-enforcement-mechanism"}
 {"at":"2026-09-06T12:52:04.466Z","event":"council","scope":"s5","trigger":"rule-16b","verdict":"GO","rounds":"2","note":"split-budget-model-for-T11-timeout-canary-fixture-for-issue89"}
+{"at":"2026-09-08T02:29:39.371Z","event":"council","scope":"s5","trigger":"rule-16c","verdict":"GO","rounds":"2"}

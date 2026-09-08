@@ -20,11 +20,11 @@ labels:
   status:
     - blocked-on-owner
     - current-focus
-  feature: "<one label per Feature ID your project defines, plus a catch-all>"
+  feature: [pol, sur, int, ops, qa, ci, oss]
   catchAll: "chore"
 project_fields:
   Status: [Backlog, Design, Blocked-on-owner, In Review, Building, Shipped, Declined]
-  Feature ID: "<populated from your project's own requirements/roadmap doc, if any>"
+  Feature ID: "One label per REQUIREMENTS.md requirement-group prefix — pol/sur/int/ops/qa/ci/oss — kept in sync with that file's own group headers. If a requirement-group prefix in REQUIREMENTS.md has no matching label, that's a gap: add the label before filing against it, don't reuse the nearest existing one (2026-09-07 postmortem: SUR/OPS bugs were mistagged `pol` for lack of their own labels, S4 Issue #84 and S5 Issues #90-98)."
   Risk tier: [TRIVIAL, STANDARD, CRITICAL]
   Round count: "number, optional — design-challenger/review round tracking"
 ---

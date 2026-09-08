@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0-mo-dev-stopgap",
+  "expiresOn": "2026-10-07",
+  "ratifiedBy": "docs/decisions.md, 2026-09-07 row, \"S5 Stage-3 CRITICAL review round 1 (red-team no-go, app-security-reviewer/cross-domain-reviewer REWORK)...\"",
+  "notes": [
+    "This fixture is the ONLY place either allowlist below may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure, including runtime expiry enforcement.",
+    "centralLayer.tools[].class is presence-only / inert today (GitHub Issue #93) -- no consumer reads it before S6's real central policy ships. Classifying a tool here only removes it from SUR-03's unclassified/halt set; it does not itself drive any enforcement decision.",
+    "knownConnectors is a pure display-name string match against ~/.claude.json's claudeAiMcpEverConnected array -- spoofable in principle, NOT a real security control. Ships only because the human explicitly reviewed and accepted this exact risk (see 'ratifiedBy' above), dated and time-boxed via 'expiresOn' to force renewal. Never silently rolled forward: past expiresOn, both allowlists in this fixture stop being applied automatically at runtime."
+  ],
+  "centralLayer": {
+    "tools": [
+      { "name": "github", "class": "remote-mutating", "note": "GitHub MCP server: can mutate remote repo state (issues/PRs/pushes)" },
+      { "name": "aws-mcp-server", "class": "remote-mutating", "note": "AWS MCP server: can mutate AWS resources" },
+      { "name": "aws-knowledge-mcp-server", "class": "remote-mutating", "note": "network egress (AWS docs/knowledge lookup); no remote-read-only bucket exists" },
+      { "name": "aws-api-mcp-server", "class": "remote-mutating", "note": "executes AWS API/CLI calls against real resources" },
+      { "name": "terraform", "class": "remote-mutating", "note": "can plan/apply real infrastructure changes" },
+      { "name": "playwright", "class": "remote-mutating", "note": "drives a browser against live web pages; network egress" }
+    ]
+  },
+  "knownConnectors": [
+    "claude.ai Gmail",
+    "claude.ai Excalidraw",
+    "claude.ai Google Drive",
+    "claude.ai Google Calendar",
+    "claude.ai Adobe for creativity",
+    "claude.ai Canva",
+    "claude.ai Spotify"
+  ]
+}

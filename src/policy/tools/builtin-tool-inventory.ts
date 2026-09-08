@@ -8,21 +8,28 @@
 //
 // This file has a SECOND job: it is also SUR-03's real "shipped defaults" tool-CLASSIFICATION
 // layer — `mergeToolClassificationLayers`'s first argument (src/policy/rule/precedence.ts) — that
-// `hooks/sessionstart-tool-enum.mjs` merges with a (currently empty, S6-pending) "central" layer to
-// classify Claude Code's own built-in tools at session start. This is DELIBERATELY SEPARATE from
-// src/policy/fixtures/tool-classification.ts's three-tool fixture (`shippedToolClassificationLayer`
-// et al.) — that file stays S3's own pure TEST fixture, unchanged, still consumed only by
-// classification.test.ts / precedence.test.ts. This file is the real bootstrap catalog S5's live
-// hook actually runs against.
+// `hooks/sessionstart-tool-enum.mjs` merges with a "central" layer loaded at runtime from
+// docs/qa/s5-central-classification.json (a dated, human-ratified, separately-reviewable fixture —
+// see src/policy/tools/central-classification.ts's own header comment for the full disclosure,
+// including its runtime expiry). CORRECTED (S5 Stage-3 CRITICAL review round 1, GitHub Issue #91):
+// this comment previously called the central layer "currently empty, S6-pending" — as of this
+// story's own fix-now pass it is populated, and no ratified milestone currently owns building a
+// real central-override CONFIG LOADER (checked directly against every open milestone's `gh`
+// description); until one does, the fixture above is the only central layer that exists. This is
+// DELIBERATELY SEPARATE from src/policy/fixtures/tool-classification.ts's three-tool fixture
+// (`shippedToolClassificationLayer` et al.) — that file stays S3's own pure TEST fixture, unchanged,
+// still consumed only by classification.test.ts / precedence.test.ts. This file is the real
+// bootstrap catalog S5's live hook actually runs against.
 //
 // EVERY classification below is `story-implementer`'s own disclosed, reviewable judgment call —
 // NOT a §0.4-compliance claim (same disclosure criterion 13 already makes for bootstrap-
-// ruleset.ts's placeholder RuleSet), pending T5's real central-override layer (S6). SUR-03's own
-// acceptance bar here is narrower than "is this classification perfectly correct": it only asks
-// whether a tool is CLASSIFIED AT ALL (unclassified halts the session) — the specific bucket
-// (read-only / workspace-mutating / remote-mutating) does not itself gate anything yet, since no
-// real central policy consumes it before S6. Where a tool's real-world blast radius is ambiguous
-// (e.g. TodoWrite, SlashCommand), the more conservative (higher) bucket is chosen deliberately.
+// ruleset.ts's placeholder RuleSet). SUR-03's own acceptance bar here is narrower than "is this
+// classification perfectly correct": it only asks whether a tool is CLASSIFIED AT ALL (unclassified
+// halts the session) — the specific bucket (read-only / workspace-mutating / remote-mutating) does
+// not itself gate anything yet, since no real central policy consumes it yet (GitHub Issue #93,
+// tracked at docs/backlog.md as a future story's job, not currently scheduled). Where a tool's
+// real-world blast radius is ambiguous (e.g. TodoWrite, SlashCommand), the more conservative
+// (higher) bucket is chosen deliberately.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

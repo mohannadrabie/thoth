@@ -75,8 +75,16 @@ export function extractMcpServerNames(input: unknown, source: McpDeclarationSour
  * is used only to SUBTRACT connector names back out — see that hook's own `computeSessionTools`),
  * and instead writes them under a SEPARATE, distinctly-named halt-state reason key —
  * `"SUR-03-unclassified-connector"` — never the shared `"SUR-03-unclassified-tool"` key ordinary
- * MCP server declarations use. A connector's mere presence is unconditionally reported this way
- * (there is no "classified" state a connector identity could ever reach). This is a small, simple,
+ * MCP server declarations use. This function itself still reports a connector's mere presence
+ * unconditionally — there is no "classified" state a connector identity could ever reach at THIS
+ * layer. Whether the calling hook then halts on that presence is a separate question this function
+ * has no say in: `hooks/sessionstart-tool-enum.mjs`'s own `KNOWN_CONNECTORS` fixture-backed exemption
+ * (human-ratified, dated, disclosed as a spoofable residual — see `docs/decisions.md`'s 2026-09-07
+ * row and `src/policy/tools/central-classification.ts`'s own header) can suppress the resulting halt
+ * for a listed name. "Unconditionally reported" describes this function's own output, not the
+ * hook-level halt decision downstream of it — corrected 2026-09-07 (red-team, S5 Stage-3 round 1 &
+ * round 2 editorial items) after this comment was found stale against the exemption this same story
+ * shipped. This is a small, simple,
  * additive halt-state schema extension (one more reason key, same `{set, detail, setAt}` shape
  * criterion 20 already defines) — not a new mechanism.
  *
