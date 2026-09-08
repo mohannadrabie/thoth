@@ -30,6 +30,15 @@ function main(): void {
   // hooks/pretooluse-kernel-gate.mjs enforces live today. Same "never touch printer.ts's tested
   // stdout" reasoning as the pin line above.
   process.stdout.write(result.disclosure + "\n");
+  // Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3, 2026-09-08 council ruling,
+  // Path B): a mandatory:true declaration with no real locking force is never silently dropped --
+  // printed here, one line per declaration, same "never touch printer.ts's tested stdout" reasoning
+  // as the pin/disclosure lines above.
+  for (const d of result.inertMandatoryDeclarations) {
+    process.stdout.write(
+      `NOTE: rule id="${d.ruleId}" (layer=${d.layer}) declares mandatory:true but has no real locking force -- only the central layer's mandatory declarations are authoritative; this declaration is NOT silently dropped, it still resolves normally, but it does not protect anything.\n`,
+    );
+  }
   process.exit(result.exitCode);
 }
 

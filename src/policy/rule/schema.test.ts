@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateRule, validateRuleSet, findDuplicateTopLevelKeys } from "./schema.ts";
+import { validateRule, validateRuleSet, findDuplicateTopLevelKeys, findTopLevelKeys } from "./schema.ts";
 import { validRule } from "../fixtures/rules.ts";
 
 function omit(obj: object, key: string): Record<string, unknown> {
@@ -187,4 +187,56 @@ test("validateRuleSet: without rawText, a duplicate top-level key cannot be dete
   // literal (as every other test in this file passes) can never expose this shape.
   const collapsed = { version: "1.0.0", rules: [{ id: "real", effect: "deny" }] };
   assert.deepEqual(validateRuleSet(collapsed), []);
+});
+
+// --- Stage-3 round-3 fix-now (2026-09-08), Issue #115 [MED], red-team round-2-demonstrated --------
+// Round 1's findDuplicateTopLevelKeys compared RAW escaped key text; JSON.parse compares unescaped
+// values, so a \uXXXX-escaped duplicate "rules" key slipped past round 1's check entirely. Fixed by
+// unescaping via JSON.parse's own decoder before counting, PLUS a general tokenizer/parser-agreement
+// invariant (not a blocklist entry for this one escape shape).
+
+test("findTopLevelKeys: unescapes a \\uXXXX-escaped key to its real value", () => {
+  const text = `{"\\u0072ules": [1,2,3]}`;
+  assert.deepEqual(findTopLevelKeys(text), ["rules"]);
+});
+
+test("findDuplicateTopLevelKeys (Issue #115): a \\u0072-escaped duplicate of \"rules\" is caught — red-team's exact round-2 repro", () => {
+  const text = `{
+  "version": "1.0.0",
+  "rules": [ { "id": "decoy-allow", "effect": "allow" } ],
+  "\\u0072ules": [ { "id": "real-deny", "effect": "deny" } ]
+}`;
+  assert.deepEqual(findDuplicateTopLevelKeys(text), ["rules"]);
+});
+
+test("validateRuleSet (Issue #115): a top-level key written with a \\uXXXX escape that normalizes to a duplicate of another top-level key is rejected", () => {
+  const text = `{
+  "version": "1.0.0",
+  "rules": [ { "id": "decoy-allow", "effect": "allow", "verbs": ["get"], "targets": ["pod"] } ],
+  "\\u0072ules": [ { "id": "real-deny", "effect": "deny", "verbs": ["get"], "targets": ["pod"] } ]
+}`;
+  const parsed = JSON.parse(text) as unknown;
+  const errors = validateRuleSet(parsed, text);
+  const dupError = errors.find((e) => e.field === "rules" && /duplicate top-level key "rules"/.test(e.message));
+  assert.ok(dupError, "the escaped duplicate must be rejected exactly like a byte-identical literal duplicate");
+});
+
+test("validateRuleSet (Issue #115): the tokenizer/parser-agreement invariant — a well-formed document with no escape tricks never false-positives", () => {
+  const text = `{"version":"1.0.0","rules":[{"id":"a","effect":"allow","rationale":"contains \\"version\\": 1 as text, and a decoy \\"rules\\" word too"}]}`;
+  const parsed = JSON.parse(text) as unknown;
+  assert.deepEqual(validateRuleSet(parsed, text), []);
+});
+
+test("validateRuleSet (Issue #115): the tokenizer/parser-agreement invariant holds across escape-heavy CRLF/unicode documents (differential-style check)", () => {
+  const documents = [
+    `{"version":"1.0.0","rules":[{"id":"a","effect":"allow","rationale":"line1\\nline2\\ttabbed"}]}`,
+    `{"version":"1.0.0","rules":[{"id":"a","effect":"allow","rationale":"emoji \\ud83d\\ude00 astral"}]}`,
+    `{\r\n  "version": "1.0.0",\r\n  "rules": []\r\n}`,
+    `{"version":"1.0.0","rules":[{"id":"a","effect":"allow","rationale":"backslash \\\\ and quote \\" inline"}]}`,
+  ];
+  for (const text of documents) {
+    const parsed = JSON.parse(text) as unknown;
+    assert.deepEqual(validateRuleSet(parsed, text), [], `expected 0 errors for: ${text}`);
+    assert.deepEqual(new Set(findTopLevelKeys(text)), new Set(Object.keys(parsed as Record<string, unknown>)), `scanner/parser key-set disagreement for: ${text}`);
+  }
 });

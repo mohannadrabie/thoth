@@ -17,3 +17,4 @@
 {"at":"2026-09-08T02:29:39.371Z","event":"council","scope":"s5","trigger":"rule-16c","verdict":"GO","rounds":"2"}
 {"at":"2026-09-08T15:42:45.324Z","event":"tier-ratified","scope":"s6","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"first out-of-repo policy-source loader, trust-boundary mechanism, same stakes class as S5"}
 {"at":"2026-09-08T18:25:28.641Z","event":"council","scope":"s6","trigger":"rule-16c","rounds":"2","verdict":"pending","reason":"red-team no-go twice consecutively (round1: Issue #106 HIGH reg.exe PATH hijack; round2: Issue #114 HIGH mandatory-lock trust-model flaw)"}
+{"at":"2026-09-08T18:41:32.790Z","event":"council","scope":"s6","trigger":"rule-16c","rounds":"2","verdict":"GO","reason":"Path B (trust-rank) ratified — central=trusted, shipped-defaults/project=peers/untrusted; lock only voids a strictly-less-trusted layer"}

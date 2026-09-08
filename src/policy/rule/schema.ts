@@ -31,21 +31,67 @@ function isStringArray(v: unknown): v is string[] {
 // validation layer, closes the gap at its root: `loader.ts`'s `parseLayerText` never reaches
 // `position-parser.ts`'s tokenizer for a document either of these checks rejects.
 
+// === Stage-3 round-3 fix-now (2026-09-08), Issue #115 [MED], red-team round-2-demonstrated ===
+//
+// Round 1's `findDuplicateTopLevelKeys` compared each captured key's RAW, still-escaped source text
+// (`"rules"` vs. `"rules"` — two different strings to a raw-text comparison). `JSON.parse`
+// compares the UNESCAPED value (`r` = `r`, so both are the same key `rules` to the parser). A
+// unicode-escaped duplicate top-level key therefore slipped straight past round 1's check, re-opening
+// the exact wrong-origin-line defect Issue #105 was written to close (red-team round 2, finding 2).
+//
+// Round 1's own mistake, named plainly so it isn't repeated: comparing RAW text was itself a second,
+// independent hand-rolled notion of "key identity", competing with `JSON.parse`'s authoritative one,
+// instead of just asking `JSON.parse`'s own decoder to resolve the escape. The fix below does not add
+// a third notion (a hand-rolled unescaper for `\n`/`\t`/`\uXXXX`/etc. would just be a SECOND
+// reimplementation of the same logic `JSON.parse` already gets right) — it delegates the unescape
+// step to `JSON.parse` itself (`unescapeJsonStringLiteral`, below), keeping this file's own
+// responsibility to exactly one thing: finding where the top-level key TOKENS are in the raw text.
+//
+// `validateRuleSet` additionally asserts a TOKENIZER/PARSER-AGREEMENT INVARIANT (not a blocklist
+// entry for one more escape shape): after unescaping, the raw-text scanner's own top-level key SET
+// must equal `Object.keys(JSON.parse(text))` exactly, for ANY reason a divergence could occur — not
+// only the specific unicode-escape shape red-team demonstrated. This is the standing-instrument
+// answer this bug's own root cause calls for (two independent views of the same document, assumed
+// to agree, never actually asserted to) — the same defect FAMILY as Issue #114 one file over
+// (architecture-reviewer's council report names both as the same "locally-reimplemented signal
+// substituted for the authoritative one" shape), fixed here by asserting agreement with the
+// authoritative signal instead of reimplementing a competing one.
+
+/** Delegates unescaping a captured JSON string-literal's raw (still-escaped) inner text to
+ * `JSON.parse` itself — the authoritative decoder every other string value in this document is
+ * already unescaped by — rather than hand-rolling a second `\n`/`\t`/`\uXXXX`/etc. unescaper that
+ * could itself diverge from `JSON.parse`'s own rules. `raw` is always a value this file's own
+ * scanner captured as the exact text between two quotes, so wrapping it back in quotes and parsing
+ * reproduces exactly what a full `JSON.parse` of the whole document would have produced for that key.
+ * Falls back to the raw text on a malformed sequence rather than throwing: in production this is
+ * unreachable (the caller only ever supplies `rawText` after a full `JSON.parse` of the WHOLE
+ * document already succeeded — see loader.ts's `parseLayerText` — so every captured key segment is
+ * already a valid JSON string literal on its own); a direct/defensive test caller passing malformed
+ * text still gets a safe, non-throwing (if imprecise) answer rather than a crash. */
+function unescapeJsonStringLiteral(raw: string): string {
+  try {
+    return JSON.parse(`"${raw}"`) as string;
+  } catch {
+    return raw;
+  }
+}
+
 /**
- * Detects duplicate TOP-LEVEL keys in a raw JSON object's source text — before `JSON.parse` has a
- * chance to silently collapse them to last-write-wins. A minimal, purpose-built scanner (not a
- * general JSON parser, and deliberately NOT `position-parser.ts`'s tokenizer: that module lives in
- * `src/policy/config/`, one layer above `src/policy/rule/`, and importing it here would invert this
- * codebase's established layering — config consumes rule validation, not the other way around).
- * Walks the text once, tracking `{}`/`[]` nesting depth and quoted-string state (respecting `\"`
- * escapes so a brace/bracket/quote INSIDE a string value is never mistaken for structure), and
- * records every `"key"` token immediately followed by `:` while at depth 1 (directly inside the
- * outermost `{}`). Returns the list of key names that appear more than once at that level.
+ * Scans a raw JSON object's source text for every TOP-LEVEL `"key"` token (a key directly inside the
+ * outermost `{}`, immediately followed by `:`), in document order, DUPLICATES INCLUDED, UNESCAPED.
+ * A minimal, purpose-built scanner (not a general JSON parser, and deliberately NOT
+ * `position-parser.ts`'s tokenizer: that module lives in `src/policy/config/`, one layer above
+ * `src/policy/rule/`, and importing it here would invert this codebase's established layering —
+ * config consumes rule validation, not the other way around). Walks the text once, tracking `{}`/`[]`
+ * nesting depth and quoted-string state (respecting `\"` escapes so a brace/bracket/quote INSIDE a
+ * string value is never mistaken for structure). This is the raw material both
+ * `findDuplicateTopLevelKeys` and `validateRuleSet`'s own tokenizer/parser-agreement invariant are
+ * built from.
  */
-export function findDuplicateTopLevelKeys(text: string): string[] {
+export function findTopLevelKeys(text: string): string[] {
   let depth = 0;
   let i = 0;
-  const topLevelKeyCounts = new Map<string, number>();
+  const keys: string[] = [];
 
   while (i < text.length) {
     const ch = text[i];
@@ -66,7 +112,7 @@ export function findDuplicateTopLevelKeys(text: string): string[] {
         let k = i;
         while (k < text.length && /\s/.test(text[k] ?? "")) k++;
         if (text[k] === ":") {
-          topLevelKeyCounts.set(raw, (topLevelKeyCounts.get(raw) ?? 0) + 1);
+          keys.push(unescapeJsonStringLiteral(raw));
         }
       }
       continue;
@@ -84,7 +130,20 @@ export function findDuplicateTopLevelKeys(text: string): string[] {
     i++;
   }
 
-  return [...topLevelKeyCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key);
+  return keys;
+}
+
+/**
+ * Detects duplicate TOP-LEVEL keys in a raw JSON object's source text — before `JSON.parse` has a
+ * chance to silently collapse them to last-write-wins. Built on `findTopLevelKeys`'s UNESCAPED key
+ * list (Issue #115 fix), so a duplicate expressed via a `\uXXXX`/`\n`/etc. escape in one occurrence
+ * is caught exactly like a byte-identical literal duplicate. Returns the list of key names that
+ * appear more than once at the top level.
+ */
+export function findDuplicateTopLevelKeys(text: string): string[] {
+  const counts = new Map<string, number>();
+  for (const key of findTopLevelKeys(text)) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key);
 }
 
 /**
@@ -166,11 +225,36 @@ export function validateRuleSet(input: unknown, rawText?: string): ValidationErr
   }
 
   if (rawText !== undefined) {
-    for (const dupKey of findDuplicateTopLevelKeys(rawText)) {
+    const scannedKeys = findTopLevelKeys(rawText);
+    const scannedKeyCounts = new Map<string, number>();
+    for (const key of scannedKeys) scannedKeyCounts.set(key, (scannedKeyCounts.get(key) ?? 0) + 1);
+    for (const [dupKey, count] of scannedKeyCounts) {
+      if (count > 1) {
+        errors.push({
+          message: `duplicate top-level key "${dupKey}" — JSON.parse silently keeps only the LAST occurrence; rejected outright rather than silently resolved`,
+          field: dupKey,
+          expected: "each top-level key to appear at most once",
+        });
+      }
+    }
+
+    // Issue #115 [MED] fix (Stage-3 round 3): the TOKENIZER/PARSER-AGREEMENT INVARIANT — the
+    // raw-text scanner's own (unescaped) top-level key SET must equal JSON.parse's own
+    // Object.keys(input) exactly. This is general, not a blocklist entry for one more escape shape:
+    // it fires on ANY divergence between the two independent views of "what are the top-level
+    // keys", not only the specific unicode-escaped-duplicate shape red-team demonstrated. A
+    // byte-identical-duplicate or escaped-duplicate document does NOT trip this (both views still
+    // agree on the resulting SET once unescaped, even though a duplicate is present — that case is
+    // already caught by the loop above); this catches the scanner disagreeing with JSON.parse for
+    // any OTHER reason (a scanning bug, a future edge case neither of us has thought of yet).
+    const scannedKeySet = new Set(scannedKeys);
+    const parsedKeySet = new Set(Object.keys(input));
+    const setsAgree = scannedKeySet.size === parsedKeySet.size && [...scannedKeySet].every((k) => parsedKeySet.has(k));
+    if (!setsAgree) {
       errors.push({
-        message: `duplicate top-level key "${dupKey}" — JSON.parse silently keeps only the LAST occurrence; rejected outright rather than silently resolved`,
-        field: dupKey,
-        expected: "each top-level key to appear at most once",
+        message: `the raw-text top-level key scan disagrees with JSON.parse's own key set (scanned: ${[...scannedKeySet].sort().join(", ")}; parsed: ${[...parsedKeySet].sort().join(", ")}) — rejected rather than trusting either view alone`,
+        field: "<root>",
+        expected: "the raw-text scanner and JSON.parse to agree on the document's top-level keys",
       });
     }
   }

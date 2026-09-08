@@ -44,6 +44,12 @@ export interface PrinterResult {
   /** Issue #109 [MED]: always populated with `ENFORCEMENT_DISCLOSURE` above -- kept OUT of `stdout`
    * for the identical locked-test reason `pin` is above. */
   disclosure: string;
+  /** Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3, 2026-09-08 council ruling,
+   * Path B): a `mandatory: true` declaration with no real locking force (today: any
+   * shipped-defaults/project declaration -- see precedence.ts's TRUST_RANK header) is reported
+   * here, never silently dropped. Kept OUT of `stdout` for the identical locked-test reason `pin`
+   * and `disclosure` are above -- empty on a fail-closed rejection (no lock result to report). */
+  inertMandatoryDeclarations: readonly { layer: string; ruleId: string }[];
 }
 
 function centralStatusLine(centralStatus: "absent" | "unsupported" | "present" | undefined, centralChannel: string | undefined): string {
@@ -61,7 +67,7 @@ function renderRejection(
   const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: central policy load failed (${reasonKind}): ${message}`].join(
     "\n",
   );
-  return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE };
+  return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE, inertMandatoryDeclarations: [] };
 }
 
 function renderSuccess(result: LoadSuccess): PrinterResult {
@@ -83,7 +89,13 @@ function renderSuccess(result: LoadSuccess): PrinterResult {
     const origin = layer?.origin ?? "(unknown)";
     lines.push(`rule id=${rule.id} effect=${rule.effect} layer=${rule.sourceLayer} origin=${origin} line=${line} mandatory=${rule.mandatory ?? false}`);
   }
-  return { stdout: lines.join("\n"), exitCode: 0, pin: result.pin, disclosure: ENFORCEMENT_DISCLOSURE };
+  return {
+    stdout: lines.join("\n"),
+    exitCode: 0,
+    pin: result.pin,
+    disclosure: ENFORCEMENT_DISCLOSURE,
+    inertMandatoryDeclarations: result.inertMandatoryDeclarations,
+  };
 }
 
 export function printEffectivePolicy(input: PrinterInput): PrinterResult {

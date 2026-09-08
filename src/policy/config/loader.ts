@@ -31,6 +31,7 @@ import type { RuleSet } from "../kernel/rule-types.ts";
 import { validateRuleSet } from "../rule/schema.ts";
 import {
   mergeLayersWithMandatoryLock,
+  type InertMandatoryDeclaration,
   type LayerName,
   type MandatoryLockViolation,
   type MergedRuleSet,
@@ -70,8 +71,14 @@ export interface LoadSuccess {
   centralChannel?: string | undefined;
   pin: PolicyPin;
   /** Issue #108 [MED]: layer(s) voided by a mandatory-id collision (empty when none). The load
-   * still succeeds — every OTHER layer resolves normally. */
+   * still succeeds — every OTHER layer resolves normally. Issue #114 [HIGH] fix (Stage-3 round 3):
+   * under the trust-rank check, the only entry this can ever contain today is
+   * `{ layer: "project", ... }` — see precedence.ts's TRUST_RANK header for why. */
   voidedLayers: MandatoryLockViolation[];
+  /** Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3): a `mandatory: true`
+   * declaration with no real locking force (today: any shipped-defaults/project declaration) is
+   * never silently dropped — named here so printer.ts/print-cli.ts can disclose it. */
+  inertMandatoryDeclarations: InertMandatoryDeclaration[];
 }
 
 export type LoadResult = LoadSuccess | LoadFailure;
@@ -178,5 +185,6 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
     centralChannel,
     pin,
     voidedLayers: lockResult.voidedLayers,
+    inertMandatoryDeclarations: lockResult.inertMandatoryDeclarations,
   };
 }

@@ -218,6 +218,69 @@ test("Issue #108: a project layer redefining a mandatory central id voids ONLY t
   });
 });
 
+// --- Stage-3 round-3 fix-now (2026-09-08), Issue #114 [HIGH]: trust-rank, not precedence order -----
+
+test("Issue #114: a git-tracked shipped-defaults.json mandatory declaration can no longer void central end-to-end — red-team's round-2 exploit, closed", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, {
+      version: "1.0.0",
+      rules: [{ id: "central-deny-prod-exec", effect: "allow", mandatory: true }],
+    });
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [] });
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({
+        status: "present",
+        raw: JSON.stringify({ version: "1.0.0", rules: [{ id: "central-deny-prod-exec", effect: "deny", mandatory: true }] }),
+        channel: "test:chan",
+      }),
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.voidedLayers, [], "shipped-defaults' mandatory declaration must have NO force over central -- the exact Issue #114 exploit, now closed");
+      const winner = result.merged.rules.find((r) => r.id === "central-deny-prod-exec");
+      assert.equal(winner?.effect, "deny", "central's own value must win -- the attacker's shipped-defaults 'allow' never takes effect");
+      assert.equal(winner?.sourceLayer, "central");
+      assert.deepEqual(result.inertMandatoryDeclarations, [{ layer: "shipped-defaults", ruleId: "central-deny-prod-exec" }]);
+    }
+  });
+});
+
+// --- Stage-3 round-3 fix-now (2026-09-08), Issue #115 [MED]: tokenizer/parser-agreement invariant --
+
+test("Issue #115: a \\uXXXX-escaped duplicate top-level \"rules\" key is rejected end-to-end (whole load fails closed, reasonKind=schema-invalid)", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+    // Written directly (not via writeRuleSetFile/JSON.stringify, which can't produce a duplicate
+    // key) so the raw text carries the escaped-duplicate shape red-team demonstrated.
+    writeFileSync(
+      projectPath,
+      `{
+  "version": "1.0.0",
+  "rules": [ { "id": "decoy-allow", "effect": "allow" } ],
+  "\\u0072ules": [ { "id": "real-deny", "effect": "deny" } ]
+}`,
+      "utf8",
+    );
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, false, "the escaped duplicate must fail the load closed, never silently resolve to the decoy's wrong origin line");
+    if (!result.ok) assert.equal(result.reasonKind, "schema-invalid");
+  });
+});
+
 // --- AC2: single-read invariant ---------------------------------------------------------------------
 
 test("AC2 (design-challenger Attack F): centralSource.read() is called EXACTLY ONCE per invocation, and that ONE returned value feeds BOTH the merge and the pin", () => {

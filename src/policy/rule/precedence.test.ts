@@ -216,7 +216,21 @@ test("mergeLayersWithMandatoryLock (AC9, Issue #108-refined): whole-LAYER (not w
   assert.ok(result.merged.rules.some((r) => r.id === MANDATORY_ID));
 });
 
-test("mergeLayersWithMandatoryLock (design-challenger S6 Attack C / docs/decisions.md 2026-09-08 ruling, option (a)): SHIPPED-DEFAULTS -> CENTRAL is the SAME general mechanism as central -> project, not a special case — a central redefinition of a shipped-defaults mandatory id voids ONLY central, shipped-defaults' own definition still resolves", () => {
+// === Stage-3 round-3 fix-now (2026-09-08), Issue #114 [HIGH] — TRUST RANK, not precedence order ===
+// (`/maat:council` ruling, Path B: docs/reviews/s6-policy-centralization-{design-challenger-
+// council-stopbrief,council-trust-model-architecture,council-impact-analyst}-2026-09-08.md; ratified
+// in docs/decisions.md's 2026-09-08 council row. See precedence.ts's own TRUST_RANK header comment
+// for the full reasoning.)
+//
+// The two tests immediately below REPLACE the previously-green `:219`/`:236` assertions (per
+// red-team's own round-2 finding and the council's explicit ruling that reversing them is expected,
+// not something to avoid — PRINCIPLES rule 11's "reports are immutable, this is a fresh ruling, not
+// a silent edit"). The OLD assertions pinned "shipped-defaults locks central" and "a voided layer's
+// mandatory rules never lock a later layer" as correct — both were consequences of using PRECEDENCE
+// order as TRUST order, which Issue #114 demonstrated lets a git-tracked, session-writable
+// shipped-defaults.json edit silence the entire out-of-repo central layer at exit 0.
+
+test("mergeLayersWithMandatoryLock (Issue #114 fix, Path B): a SHIPPED-DEFAULTS mandatory declaration has NO locking force over CENTRAL — shipped-defaults (rank 0) and central (rank 1) are NOT peers, but central outranks shipped-defaults, so central is NEVER voided by it; central's redefinition wins the merge normally, and shipped-defaults' now-inert declaration is disclosed, not silently dropped", () => {
   const layers: NamedRuleLayer[] = [
     layer("shipped-defaults", "1.0.0", [rule(MANDATORY_ID, "deny", true)]),
     layer("central", "1.1.0", [rule(MANDATORY_ID, "allow")]),
@@ -225,29 +239,59 @@ test("mergeLayersWithMandatoryLock (design-challenger S6 Attack C / docs/decisio
   const result = mergeLayersWithMandatoryLock(layers);
   assert.deepEqual(
     result.voidedLayers,
-    [{ layer: "central", ruleId: MANDATORY_ID }],
-    "the violation must be attributed to the layer that ATTEMPTED the redefinition (central), proving the check is general — not hardcoded to only ever report against \"project\"",
+    [],
+    "REVERSES the old :219 assertion — shipped-defaults' mandatory lock has no force over central, so central is NOT voided (this is the exact Issue #114 exploit direction, now closed)",
   );
   const mandatory = result.merged.rules.find((r) => r.id === MANDATORY_ID);
-  assert.equal(mandatory?.effect, "deny", "shipped-defaults' own mandatory definition must survive central's voided attempt to override it");
-  assert.equal(mandatory?.sourceLayer, "shipped-defaults");
+  assert.equal(
+    mandatory?.effect,
+    "allow",
+    "central's redefinition wins normally, exactly as it would for a non-mandatory id — shipped-defaults' mandatory flag is structurally inert against a more-trusted layer",
+  );
+  assert.equal(mandatory?.sourceLayer, "central");
+  assert.deepEqual(
+    result.inertMandatoryDeclarations,
+    [{ layer: "shipped-defaults", ruleId: MANDATORY_ID }],
+    "shipped-defaults' mandatory:true is never silently dropped — it is disclosed as inert (no less-trusted layer exists for it to lock), per the council's loud-disclosure condition",
+  );
 });
 
-test("mergeLayersWithMandatoryLock (Issue #108): a voided layer's OWN mandatory rules do not lock anything for a still-later layer — the layer is treated as never having happened", () => {
+test("mergeLayersWithMandatoryLock (Issue #114 fix, Path B): a layer that was NEVER voided still exercises its OWN mandatory lock normally, even after harmlessly 'colliding' with an inert lower-trust declaration — central's lock on its own id still voids project, because central itself was never voided", () => {
   const layers: NamedRuleLayer[] = [
     layer("shipped-defaults", "1.0.0", [rule(MANDATORY_ID, "deny", true)]),
-    // central collides with shipped-defaults' mandatory id -> central is VOIDED entirely,
-    // including its own (otherwise-would-be) mandatory "central-only-mandatory" rule.
+    // central redefines the SAME id (harmless -- shipped-defaults cannot lock central, see the
+    // test above) AND declares its OWN mandatory id.
     layer("central", "1.1.0", [rule(MANDATORY_ID, "allow"), rule("central-only-mandatory", "deny", true)]),
-    // project redefines "central-only-mandatory" -- this must NOT be treated as a lock violation,
-    // since central's contribution (including this "mandatory" declaration) was fully discarded.
+    // project attempts to redefine central's OWN mandatory id.
     layer("project", "1.1.1", [rule("central-only-mandatory", "allow")]),
   ];
   const result = mergeLayersWithMandatoryLock(layers);
-  assert.deepEqual(result.voidedLayers, [{ layer: "central", ruleId: MANDATORY_ID }]);
+  assert.deepEqual(
+    result.voidedLayers,
+    [{ layer: "project", ruleId: "central-only-mandatory" }],
+    "REVERSES the old :236 assertion — central was never voided (shipped-defaults cannot lock it), so its OWN mandatory lock on a different id still has full force against project",
+  );
   const overridden = result.merged.rules.find((r) => r.id === "central-only-mandatory");
-  assert.equal(overridden?.effect, "allow", "project must be free to define this id -- central's own mandatory declaration never actually took effect");
-  assert.equal(overridden?.sourceLayer, "project");
+  assert.equal(overridden?.effect, "deny", "central's mandatory definition survives -- project's attempted override is void");
+  assert.equal(overridden?.sourceLayer, "central");
+  const shared = result.merged.rules.find((r) => r.id === MANDATORY_ID);
+  assert.equal(shared?.effect, "allow", "central's redefinition of shipped-defaults' inert mandatory id still resolves as central's own value");
+  assert.equal(shared?.sourceLayer, "central");
+  assert.deepEqual(result.inertMandatoryDeclarations, [{ layer: "shipped-defaults", ruleId: MANDATORY_ID }]);
+});
+
+test("mergeLayersWithMandatoryLock (Issue #114 fix, Path B): a shipped-defaults mandatory declaration has NO locking force over PROJECT either — shipped-defaults and project are PEERS (equal trust rank), and a lock requires STRICTLY greater rank, never equal", () => {
+  const layers: NamedRuleLayer[] = [
+    layer("shipped-defaults", "1.0.0", [rule(MANDATORY_ID, "deny", true)]),
+    layer("central", "1.1.0", []),
+    layer("project", "1.1.1", [rule(MANDATORY_ID, "allow")]),
+  ];
+  const result = mergeLayersWithMandatoryLock(layers);
+  assert.deepEqual(result.voidedLayers, [], "peers can never lock each other, regardless of which one is walked first");
+  const mandatory = result.merged.rules.find((r) => r.id === MANDATORY_ID);
+  assert.equal(mandatory?.effect, "allow", "project's redefinition wins normally");
+  assert.equal(mandatory?.sourceLayer, "project");
+  assert.deepEqual(result.inertMandatoryDeclarations, [{ layer: "shipped-defaults", ruleId: MANDATORY_ID }]);
 });
 
 test("mergeLayersWithMandatoryLock: version resolves the same way mergeLayers does — the last ACCEPTED layer (in order) that contributes any rule wins", () => {

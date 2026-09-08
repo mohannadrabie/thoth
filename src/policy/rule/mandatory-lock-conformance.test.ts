@@ -1,0 +1,177 @@
+// Stage-3 round-3 fix-now (2026-09-08), Issue #114 [HIGH] — build task #1, per the council's own GO
+// condition 4 (docs/reviews/s6-policy-centralization-council-impact-analyst-2026-09-08.md,
+// "Structural findings" #1; docs/reviews/s6-policy-centralization-council-trust-model-architecture-
+// 2026-09-08.md's own finding 3): a real, CI-gating, EXHAUSTIVE layer-pair conformance matrix for
+// `mergeLayersWithMandatoryLock`'s trust-rank check — a genuine instrument, not hand-derived prose,
+// per CLAUDE.md's "no hand-derived completeness claims" hard rule.
+//
+// Why this file exists, named plainly: "a general-looking mechanism, wrong dimension, correct only
+// for the tested cells" has now shipped in this codebase FOUR times before this fix (Issues #65/#66,
+// #99, #114) and a FIFTH time in the same review round (#115, a different function, same shape). No
+// standing instrument caught any of them before a reviewer did, by hand, one round later. This file
+// is that standing instrument for `mergeLayersWithMandatoryLock` specifically: every layer-pair
+// combination this function's trust-rank check can ever be asked to adjudicate is exercised here,
+// mechanically enumerated from the SAME `TRUST_RANK` table the implementation uses (imported, never
+// hand-copied — see precedence.ts's own export comment for why a second, hand-typed copy here would
+// reintroduce exactly the class of bug this file exists to prevent), so a future 4th layer or a
+// future trust-rank change cannot silently leave one cell unverified.
+//
+// Two layers of proof, deliberately not just one:
+//   1. SELF-CONSISTENCY (Part A) — derived from `TRUST_RANK` itself: proves the CHECK inside
+//      `mergeLayersWithMandatoryLock` is faithful to the trust table for every ordered pair the
+//      fixed walk order (shipped-defaults, central, project) can ever produce. This catches "the
+//      check drifted from the table" bugs.
+//   2. GROUND TRUTH (Part B) — hand-written, small, human-reviewable, independent of `TRUST_RANK`'s
+//      own values: proves the three REAL layers behave the way POL-07/section 0.4 property 2
+//      actually require (central protected, peers not). This catches "the table itself has the
+//      wrong values" bugs that Part A alone could never catch (since Part A's expectations move
+//      WITH the table).
+// Part C covers same-layer duplicate ids (the "same-layer duplicates" cell this task explicitly
+// names). Part D proves central's un-voidability holds across every mandatory-flag combination on a
+// single 3-way collision, not just the pairwise cases Parts A/B already cover.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mergeLayersWithMandatoryLock, TRUST_RANK, type LayerName, type NamedRuleLayer } from "./precedence.ts";
+import type { Rule } from "../kernel/rule-types.ts";
+
+const PRECEDENCE_ORDER: readonly LayerName[] = ["shipped-defaults", "central", "project"];
+
+function rule(id: string, effect: "allow" | "deny", mandatory?: boolean): Rule {
+  return mandatory === undefined ? { id, effect } : { id, effect, mandatory };
+}
+
+function layer(name: LayerName, items: readonly Rule[]): NamedRuleLayer {
+  return { name, version: "1.0.0", items };
+}
+
+/** Builds a 3-layer call where ONLY `declaring` has a mandatory rule (id `SHARED_ID`) and ONLY
+ * `colliding` redefines that same id (non-mandatory) -- every other layer is empty. `declaring` and
+ * `colliding` must both come from PRECEDENCE_ORDER, `declaring` strictly before `colliding`. */
+const SHARED_ID = "conformance-shared-id";
+function buildPairwiseCall(declaring: LayerName, colliding: LayerName): NamedRuleLayer[] {
+  return PRECEDENCE_ORDER.map((name) => {
+    if (name === declaring) return layer(name, [rule(SHARED_ID, "deny", true)]);
+    if (name === colliding) return layer(name, [rule(SHARED_ID, "allow")]);
+    return layer(name, []);
+  });
+}
+
+// --- Part A: self-consistency, mechanically derived from TRUST_RANK (never hand-copied) ----------
+
+const forwardPairs: { declaring: LayerName; colliding: LayerName }[] = [];
+for (let i = 0; i < PRECEDENCE_ORDER.length; i++) {
+  for (let j = i + 1; j < PRECEDENCE_ORDER.length; j++) {
+    const declaring = PRECEDENCE_ORDER[i];
+    const colliding = PRECEDENCE_ORDER[j];
+    if (declaring && colliding) forwardPairs.push({ declaring, colliding });
+  }
+}
+
+// Sanity on the enumeration itself -- exactly 3 forward-walk-order pairs exist for 3 layers
+// (3 choose 2), so this matrix is genuinely exhaustive, not a guessed subset.
+test("mandatory-lock conformance (self-check): the forward-pair enumeration covers exactly every {i,j} with i walked before j — 3 pairs for 3 layers", () => {
+  assert.equal(forwardPairs.length, 3);
+  assert.deepEqual(
+    forwardPairs.map((p) => `${p.declaring}->${p.colliding}`).sort(),
+    ["central->project", "shipped-defaults->central", "shipped-defaults->project"].sort(),
+  );
+});
+
+for (const { declaring, colliding } of forwardPairs) {
+  const expectVoided = TRUST_RANK[declaring] > TRUST_RANK[colliding];
+
+  test(`mandatory-lock conformance (Part A, derived from TRUST_RANK): ${declaring} declares mandatory, ${colliding} attempts to redefine -> ${expectVoided ? "VOIDED" : "NOT voided"} (rank ${TRUST_RANK[declaring]} ${expectVoided ? ">" : "<="} rank ${TRUST_RANK[colliding]})`, () => {
+    const result = mergeLayersWithMandatoryLock(buildPairwiseCall(declaring, colliding));
+
+    if (expectVoided) {
+      assert.deepEqual(result.voidedLayers, [{ layer: colliding, ruleId: SHARED_ID }]);
+      const winner = result.merged.rules.find((r) => r.id === SHARED_ID);
+      assert.equal(winner?.sourceLayer, declaring, "the declaring (more-trusted) layer's value must survive");
+    } else {
+      assert.deepEqual(result.voidedLayers, [], "a declaring layer with rank <= the colliding layer's rank has no locking force");
+      const winner = result.merged.rules.find((r) => r.id === SHARED_ID);
+      assert.equal(winner?.sourceLayer, colliding, "the colliding (later-walked) layer's value wins normally, same as any non-mandatory override");
+    }
+
+    // Loud-disclosure conformance: the declaring layer's mandatory:true is reported as inert iff no
+    // OTHER layer in TRUST_RANK ranks strictly lower than it -- checked here structurally, not
+    // re-derived by hand, for every pair this matrix covers.
+    const declaringHasLockingForce = Object.values(TRUST_RANK).some((r) => r < TRUST_RANK[declaring]);
+    if (declaringHasLockingForce) {
+      assert.deepEqual(result.inertMandatoryDeclarations, [], "a declaring layer with real locking force is never disclosed as inert");
+    } else {
+      assert.deepEqual(result.inertMandatoryDeclarations, [{ layer: declaring, ruleId: SHARED_ID }]);
+    }
+  });
+}
+
+// --- Part B: ground truth, hand-written and independent of TRUST_RANK's own values -----------------
+// (catches "the table itself has the wrong values" -- Part A alone cannot, since its expectations
+// move WITH the table.)
+
+test("mandatory-lock conformance (Part B, ground truth): shipped-defaults's mandatory declaration can NEVER void central — the exact Issue #114 exploit direction", () => {
+  const result = mergeLayersWithMandatoryLock(buildPairwiseCall("shipped-defaults", "central"));
+  assert.deepEqual(result.voidedLayers, [], "central must never be silenced by a git-tracked shipped-defaults edit");
+});
+
+test("mandatory-lock conformance (Part B, ground truth): shipped-defaults's mandatory declaration can NEVER void project — peers, never lock each other", () => {
+  const result = mergeLayersWithMandatoryLock(buildPairwiseCall("shipped-defaults", "project"));
+  assert.deepEqual(result.voidedLayers, []);
+});
+
+test("mandatory-lock conformance (Part B, ground truth): central's mandatory declaration DOES void project — the one real, intended locking relationship POL-07 protects", () => {
+  const result = mergeLayersWithMandatoryLock(buildPairwiseCall("central", "project"));
+  assert.deepEqual(result.voidedLayers, [{ layer: "project", ruleId: SHARED_ID }]);
+});
+
+test("mandatory-lock conformance (Part B, ground truth): central can NEVER appear in voidedLayers, for ANY forward pair", () => {
+  for (const { declaring, colliding } of forwardPairs) {
+    const result = mergeLayersWithMandatoryLock(buildPairwiseCall(declaring, colliding));
+    assert.ok(
+      !result.voidedLayers.some((v) => v.layer === "central"),
+      `central must never be voided (case: ${declaring} declares, ${colliding} collides)`,
+    );
+  }
+});
+
+// --- Part C: same-layer duplicates (the cell this task explicitly names) ---------------------------
+// Schema validation (schema.ts's validateRuleSet) rejects a duplicate rule id within one layer's own
+// document BEFORE mergeLayersWithMandatoryLock is ever called with real loader.ts input — but this
+// function does not itself assume that invariant; it operates on whatever `NamedRuleLayer[]` a
+// caller passes. Proven here directly: a layer whose own `items` array already contains two rules
+// sharing one id degrades to `mergeLayersById`'s own last-item-wins-within-a-layer behavior (the
+// same Map-based accumulation `mergeLayers` itself already relies on), never a crash and never an
+// artificial self-collision against the layer's OWN mandatory declaration.
+
+for (const name of PRECEDENCE_ORDER) {
+  test(`mandatory-lock conformance (Part C, same-layer duplicate): two rules sharing one id within a single ${name} layer -- last item wins, no crash, no self-collision`, () => {
+    const layers: NamedRuleLayer[] = PRECEDENCE_ORDER.map((n) =>
+      n === name ? layer(n, [rule("dup-id", "deny", true), rule("dup-id", "allow", false)]) : layer(n, []),
+    );
+    const result = mergeLayersWithMandatoryLock(layers);
+    assert.deepEqual(result.voidedLayers, [], "a layer's own internal duplicate is never treated as a cross-layer lock violation");
+    const winner = result.merged.rules.find((r) => r.id === "dup-id");
+    assert.equal(winner?.effect, "allow", "the LAST item within the layer wins, matching mergeLayersById's own accumulation order");
+    assert.equal(winner?.sourceLayer, name);
+  });
+}
+
+// --- Part D: central's un-voidability across every mandatory-flag combination on one 3-way collision
+
+test("mandatory-lock conformance (Part D): central is NEVER voided, across all 8 mandatory-flag combinations of a single id declared in all three layers at once", () => {
+  for (let bits = 0; bits < 8; bits++) {
+    const shippedMandatory = (bits & 1) !== 0;
+    const centralMandatory = (bits & 2) !== 0;
+    const projectMandatory = (bits & 4) !== 0;
+    const layers: NamedRuleLayer[] = [
+      layer("shipped-defaults", [rule(SHARED_ID, "deny", shippedMandatory)]),
+      layer("central", [rule(SHARED_ID, "allow", centralMandatory)]),
+      layer("project", [rule(SHARED_ID, "deny", projectMandatory)]),
+    ];
+    const result = mergeLayersWithMandatoryLock(layers);
+    assert.ok(
+      !result.voidedLayers.some((v) => v.layer === "central"),
+      `central must never be voided (bits=${bits}: shipped=${shippedMandatory} central=${centralMandatory} project=${projectMandatory})`,
+    );
+  }
+});
