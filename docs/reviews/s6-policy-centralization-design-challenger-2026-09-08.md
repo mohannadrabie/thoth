@@ -171,3 +171,24 @@ That the write-ACL claim underlying the entire central-channel trust boundary (�
 ## Verdict
 
 **go.** No calibrated blocking HIGH exists or could exist against this plan today (all six findings cap at MED — evidence=derived on five, reach=instrument on the sixth — and none can reach `reach=user` since S6 explicitly does not wire anything live this story, per the already-ratified Q2 ruling). Recommendation: build now. Task #1 stays the walking skeleton per rule 17; fold the six proof-tests above into that same build pass while the context for each is still fresh, per this project's own "unrun verification outranks unwritten prose" discipline — none of them require new topology or a mechanism this report hasn't already left to `story-implementer`/`architecture-reviewer` to design.
+
+---
+
+**Manager backstop note (2026-09-08):** this report's own RECEIPT block was returned in the agent's chat turn but never persisted into this file (rule 10: a chat-only receipt is a claim, not a record) — a gap caught by `docs/receipt-check.mjs --scope s6` at Stage 5 audit and closed here, verbatim, unedited, by the Manager.
+
+```
+RECEIPT: verdict=go
+attacks (ranked by blast radius):
+1. [SUSPICION][MED][code-traced/instrument/routine/runbook-reversible][100% of real deployments, counted-in-code] Real Windows-registry channel (write-ACL claim + reg.exe stdout parsing) can never execute in CI (ubuntu-only, confirmed) or any agent sandbox (independently reconfirmed blocked this round) before merge; plan's own "same diligence as mcp-enumeration.ts" precedent claim is factually false (that file has zero subprocess calls).
+2. [SUSPICION][MED][derived/operator/plausible/reversible-but-silent][unbounded, exempt via boundary-crossing] Fail-closed bucket collapses 3 distinct failure shapes (schema-invalid-but-valid-JSON, subprocess timeout/oversized-output/non-zero-exit) into one prose bucket; AC5/AC7 name only the plain JSON-parse-failure test — risk of a silent central-malformed→treated-as-absent bypass.
+3. [SUSPICION][MED][derived/operator/plausible/irreversible-if-silent][~0% today (shipped-defaults ships empty), exempt via boundary-crossing] General-form mandatory-lock's untested shipped-defaults→central direction is indistinguishable, by the ratified central→project-only test suite, from a plausible wrong implementation (layer-name-hardcoded check vs. generic mandatory-field check) — this codebase's own recurring bug shape (Issues #65/#66, #99).
+4. [SUSPICION][MED][derived/operator/plausible/reversible][unbounded/assumption, exempt via boundary-crossing] Mandatory-lock rejection granularity (whole-project-layer reject vs. single-rule reject) is unspecified — only implied by a test assertion's incidental wording, not named as a decision.
+5. [SUSPICION][MED][derived/operator/routine/runbook-reversible][routine input, assumption for %] Hand-rolled position-tracking tokenizer has no named test for CRLF (central channel structurally exempt from .gitattributes' LF fix that closed this exact bug class in S4), embedded-escaped-newlines in POL-02-mandated multi-line rationale, or non-ASCII column counting.
+6. [SUSPICION][MED][derived/operator/exact-race/irreversible-in-the-moment][narrow window, assumption] POL-09 pin may be computed from a second, independent read of the central source rather than the same bytes actually merged (TOCTOU) — no stated single-read invariant.
+counts (checksum): issues=0 suspicions=6 clean=0
+evidence (checksum): demonstrated=0 code-traced=1 derived=6 (attack 1 carries both code-traced and demonstrated support; counted once under its dominant tag per the receipt's own single-tag-per-line convention, hence 1+6≠6 total lines — see report body for the full multi-evidence breakdown per finding)
+round=1 roundsSinceLastGo=0 frozen=0 residuals=0 unrun=2 editorial=1
+checks=n/a (design-only round; no code exists to run — 2 real commands executed this round both returned classifier-denial, captured as evidence, not a pass/fail check)
+adr=HIT(35)
+report=docs/reviews/s6-policy-centralization-design-challenger-2026-09-08.md
+```
