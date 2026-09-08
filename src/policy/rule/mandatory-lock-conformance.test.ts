@@ -67,13 +67,31 @@ for (let i = 0; i < PRECEDENCE_ORDER.length; i++) {
   }
 }
 
-// Sanity on the enumeration itself -- exactly 3 forward-walk-order pairs exist for 3 layers
-// (3 choose 2), so this matrix is genuinely exhaustive, not a guessed subset.
-test("mandatory-lock conformance (self-check): the forward-pair enumeration covers exactly every {i,j} with i walked before j — 3 pairs for 3 layers", () => {
-  assert.equal(forwardPairs.length, 3);
+// Sanity on the enumeration itself. Stage-3 round-3 re-confirm fix-now (2026-09-08), Issue #118
+// [MED], red-team round-3-demonstrated: this test previously asserted a HARD-CODED length (3) and
+// a hard-coded three-name pair list -- so when red-team added a 4th layer to LayerName+TRUST_RANK
+// (the way a future story would), PRECEDENCE_ORDER above (a plain `readonly LayerName[]`, not
+// exhaustiveness-checked by the compiler) silently stayed at 3 names, this self-check kept passing
+// because it was checking the SAME hard-coded 3 against itself, and Part B's "central can NEVER be
+// voided" assertion silently narrowed to only the pairs it knew about even though the new layer
+// made central voidable -- the exact defect this whole file exists to prevent, recurring one level
+// up, in the file's own guard against itself. Fixed per red-team's own suggested proof-test: derive
+// the expectation from `TRUST_RANK` (the SAME source of truth Part A's per-pair expectations
+// already use, never a second hand-typed copy) instead of a hard-coded list, so a future 4th layer
+// added to TRUST_RANK without updating PRECEDENCE_ORDER turns this file red instead of silently
+// covering half the matrix.
+test("mandatory-lock conformance (self-check): PRECEDENCE_ORDER's domain equals TRUST_RANK's own key set, and the forward-pair count is n(n-1)/2 for n = Object.keys(TRUST_RANK).length — never a hard-coded 3", () => {
+  const trustRankLayers = Object.keys(TRUST_RANK);
   assert.deepEqual(
-    forwardPairs.map((p) => `${p.declaring}->${p.colliding}`).sort(),
-    ["central->project", "shipped-defaults->central", "shipped-defaults->project"].sort(),
+    new Set(PRECEDENCE_ORDER),
+    new Set(trustRankLayers),
+    "PRECEDENCE_ORDER must enumerate EXACTLY the layers TRUST_RANK knows about -- a layer present in one but not the other means this matrix is either testing a layer that doesn't exist or silently skipping one that does",
+  );
+  const n = trustRankLayers.length;
+  assert.equal(
+    forwardPairs.length,
+    (n * (n - 1)) / 2,
+    `expected n(n-1)/2 = ${(n * (n - 1)) / 2} forward pairs for n = ${n} layers (derived from TRUST_RANK, not hard-coded)`,
   );
 });
 

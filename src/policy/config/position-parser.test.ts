@@ -40,6 +40,18 @@ test("findRulePositions: locates every direct-child object of a top-level \"rule
   );
 });
 
+// --- Stage-3 round-3 re-confirm fix-now (2026-09-08), Issue #119 [MED], red-team-demonstrated ----
+
+test("findRulePositions: a top-level \"rules\" key written with a unicode escape (\\u0072ules) is recognized exactly like the literal spelling, not silently missed", () => {
+  const doc = ['{', '  "version": "1.0.0",', '  "\\u0072ules": [ { "id": "a" }, { "id": "b" } ]', "}"].join("\n");
+  const positions = findRulePositions(tokenize(doc));
+  assert.deepEqual(
+    positions.map((p) => p.line),
+    [3, 3],
+    "an escaped-\"rules\" top-level key must be recognized -- this must never silently return [] the way a raw-text-only comparison would",
+  );
+});
+
 test("findRulePositions: a \"rules\"-named key that is NOT top-level (nested inside something else) is not mistaken for the real one", () => {
   const doc = ['{', '  "version": "1.0.0",', '  "nested": { "rules": [ { "id": "decoy" } ] },', '  "rules": [ { "id": "real" } ]', "}"].join(
     "\n",

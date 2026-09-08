@@ -67,8 +67,14 @@ function isStringArray(v: unknown): v is string[] {
  * unreachable (the caller only ever supplies `rawText` after a full `JSON.parse` of the WHOLE
  * document already succeeded — see loader.ts's `parseLayerText` — so every captured key segment is
  * already a valid JSON string literal on its own); a direct/defensive test caller passing malformed
- * text still gets a safe, non-throwing (if imprecise) answer rather than a crash. */
-function unescapeJsonStringLiteral(raw: string): string {
+ * text still gets a safe, non-throwing (if imprecise) answer rather than a crash.
+ *
+ * Exported (Stage-3 round-3 re-confirm fix-now, 2026-09-08, Issue #119 [MED], red-team-demonstrated)
+ * so `position-parser.ts`'s own top-level-"rules"-key detection can delegate to this SAME decoder
+ * instead of comparing raw, still-escaped text — the same bug family (a competing, locally-
+ * reimplemented notion of key identity, instead of asking the one authoritative decoder) Issue #115
+ * was fixed for one file over, in this same file's `findTopLevelKeys`. */
+export function unescapeJsonStringLiteral(raw: string): string {
   try {
     return JSON.parse(`"${raw}"`) as string;
   } catch {

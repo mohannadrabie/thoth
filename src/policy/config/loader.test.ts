@@ -281,6 +281,92 @@ test("Issue #115: a \\uXXXX-escaped duplicate top-level \"rules\" key is rejecte
   });
 });
 
+// --- Stage-3 round-3 re-confirm fix-now (2026-09-08), Issue #119 [MED], red-team-demonstrated -----
+// The #115 fix (tokenizer/parser-agreement invariant) was applied to schema.ts's duplicate-key
+// scanner but not to position-parser.ts's own top-level-"rules"-key detection: a SINGLE (no
+// duplicate at all) unicode-escaped "rules" key passed schema validation, then findRulePositions
+// silently found nothing, and every rule's origin line degraded to a -1 sentinel at exit 0/ok:true.
+
+test("Issue #119: a layer whose top-level \"rules\" key is written with a unicode escape (no duplicate — schema validation passes) reports the CORRECT origin line, never resolves at ok:true with ruleLines containing -1", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+    // Written directly so the raw text carries the escaped (non-duplicate) "rules" key -- no
+    // duplicate top-level key at all, so schema.ts's #115 checks never fire and this layer is
+    // accepted; the ONLY question is whether position-parser.ts's own key detection agrees.
+    writeFileSync(
+      projectPath,
+      `{
+  "version": "1.0.0",
+  "\\u0072ules": [ { "id": "escaped-key-rule", "effect": "deny" } ]
+}`,
+      "utf8",
+    );
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, true, "a single escaped top-level \"rules\" key (no duplicate) is valid per schema and must load successfully");
+    if (result.ok) {
+      const projectLayer = result.layers.find((l) => l.name === "project");
+      assert.ok(projectLayer, "expected a project layer in the load result");
+      assert.deepEqual(
+        projectLayer?.ruleLines,
+        [3],
+        "the rule's origin line must be correctly reported (line 3) -- never the -1 sentinel Issue #119 demonstrated",
+      );
+    }
+  });
+});
+
+test("Issue #119 backstop: no successfully-loaded layer's ruleLines ever contains the -1 sentinel — plain-ASCII-key case", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [{ id: "a", effect: "deny" }] });
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [{ id: "b", effect: "allow" }] });
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      for (const layer of result.layers) {
+        assert.ok(!layer.ruleLines.includes(-1), `layer "${layer.name}": ruleLines must never contain the -1 sentinel for a successfully-loaded layer; got ${JSON.stringify(layer.ruleLines)}`);
+      }
+    }
+  });
+});
+
+test("Issue #119 backstop: no successfully-loaded layer's ruleLines ever contains the -1 sentinel — escaped top-level \"rules\" key case", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+    writeFileSync(projectPath, `{\n  "version": "1.0.0",\n  "\\u0072ules": [ { "id": "x", "effect": "deny" } ]\n}`, "utf8");
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      for (const layer of result.layers) {
+        assert.ok(!layer.ruleLines.includes(-1), `layer "${layer.name}": ruleLines must never contain the -1 sentinel for a successfully-loaded layer; got ${JSON.stringify(layer.ruleLines)}`);
+      }
+    }
+  });
+});
+
 // --- AC2: single-read invariant ---------------------------------------------------------------------
 
 test("AC2 (design-challenger Attack F): centralSource.read() is called EXACTLY ONCE per invocation, and that ONE returned value feeds BOTH the merge and the pin", () => {

@@ -28,6 +28,24 @@
 // it does not itself validate JSON grammar, and a malformed input may produce an incomplete or
 // nonsensical token list rather than a thrown error. That is acceptable because schema/parse
 // validation always runs first and rejects malformed input before this function is ever reached.
+//
+// Stage-3 round-3 re-confirm fix-now (2026-09-08), Issue #119 [MED], red-team-demonstrated: this
+// file's own top-level-"rules"-key detection (`findRulePositions`, below) used to compare a token's
+// RAW, still-escaped source text against the literal `"rules"` -- the exact "competing, locally-
+// reimplemented notion of key identity" shape Issue #115 was fixed for one file over, in
+// `schema.ts`'s `findTopLevelKeys`. A document whose top-level "rules" key carries a unicode escape
+// (e.g. `"rules"`, no duplicate at all, so `schema.ts`'s duplicate-key/agreement checks never
+// fire and the layer is accepted) passed schema validation, then silently found ZERO rule
+// positions here, so `loader.ts` mapped every rule's origin line to a `-1` sentinel -- POL-10's
+// diagnostic field degrading to "no answer" on a document `JSON.parse` reads correctly. Fixed by
+// importing `schema.ts`'s own `unescapeJsonStringLiteral` (the SAME authoritative decoder
+// `findTopLevelKeys` already delegates to) rather than adding a second, independent unescaper here
+// -- one notion of "what does this key token actually say", shared across both files. Note this
+// import runs CONFIG -> RULE, the same direction `loader.ts` already imports in (`schema.ts`'s own
+// header: "config consumes rule validation, not the other way around"), so this does not invert
+// this codebase's established layering.
+
+import { unescapeJsonStringLiteral } from "../rule/schema.ts";
 
 export interface Position {
   /** 1-indexed. */
@@ -161,9 +179,11 @@ export function tokenize(source: string): Token[] {
   return tokens;
 }
 
-/** Strips the surrounding quotes from a simple (no meaningful escapes expected) string token's
- * raw text — used only to compare a key name against a literal like "rules", never to recover a
- * general string's real value (JSON.parse already does that correctly, escapes included). */
+/** Strips the surrounding quotes from a string token's raw text, leaving the still-ESCAPED inner
+ * text — callers that need the key's actual decoded identity (e.g. `findRulePositions` comparing
+ * against the literal `rules`) pass this through `unescapeJsonStringLiteral` too (Issue #119 fix);
+ * this function alone never recovers a general string's real value (JSON.parse already does that
+ * correctly, escapes included). */
 function unquoteSimple(raw: string): string {
   return raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
 }
@@ -192,7 +212,11 @@ export function findRulePositions(tokens: readonly Token[]): Position[] {
       if (tok.type === "[" && rulesArrayDepth === null && depth === 1) {
         const prevColon = tokens[i - 1];
         const prevKey = tokens[i - 2];
-        if (prevColon?.type === ":" && prevKey?.type === "string" && unquoteSimple(prevKey.raw) === "rules") {
+        if (
+          prevColon?.type === ":" &&
+          prevKey?.type === "string" &&
+          unescapeJsonStringLiteral(unquoteSimple(prevKey.raw)) === "rules"
+        ) {
           rulesArrayDepth = depth + 1;
         }
       }
