@@ -25,6 +25,11 @@ export interface Rule {
   /** POL-02: "The configuration format shall support comments and multi-line rationale adjacent
    * to the rule." Carried as data on the rule itself, not stripped by the format. */
   rationale?: string;
+  /** POL-07 (S6): when true, no later layer may redefine this rule id — rejected outright,
+   * unconditionally, even for a byte-identical redefinition (no field-by-field diff). See
+   * src/policy/rule/precedence.ts's `mergeLayersWithMandatoryLock` for the enforcement mechanism;
+   * this field itself is pure data — the kernel purity boundary is unaffected (no I/O, no logic). */
+  mandatory?: boolean;
 }
 
 export interface RuleSet {

@@ -30,6 +30,7 @@
     "qa:gate-matcher-drift": "node src/qa/gate-matcher-drift-check.ts",
     "qa:gate-manifest": "node src/qa/gate-manifest-check.ts",
     "qa:gate-latency-budget": "node src/qa/gate-latency-budget-check.ts",
+    "policy:print": "node src/policy/config/print-cli.ts",
     "oss:secret-scan": "node src/secret-scan/history-scan.ts"
   },
   "devDependencies": {

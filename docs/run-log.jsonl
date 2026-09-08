@@ -15,3 +15,5 @@
 {"at":"2026-09-06T11:57:49.994Z","event":"tier-ratified","scope":"s5","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"Plane-B-milestone-text-first-live-enforcement-mechanism"}
 {"at":"2026-09-06T12:52:04.466Z","event":"council","scope":"s5","trigger":"rule-16b","verdict":"GO","rounds":"2","note":"split-budget-model-for-T11-timeout-canary-fixture-for-issue89"}
 {"at":"2026-09-08T02:29:39.371Z","event":"council","scope":"s5","trigger":"rule-16c","verdict":"GO","rounds":"2"}
+{"at":"2026-09-08T15:42:45.324Z","event":"tier-ratified","scope":"s6","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"first out-of-repo policy-source loader, trust-boundary mechanism, same stakes class as S5"}
+{"at":"2026-09-08T18:25:28.641Z","event":"council","scope":"s6","trigger":"rule-16c","rounds":"2","verdict":"pending","reason":"red-team no-go twice consecutively (round1: Issue #106 HIGH reg.exe PATH hijack; round2: Issue #114 HIGH mandatory-lock trust-model flaw)"}

@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0-fixture",
+  "rules": [
+    {
+      "id": "shipped-baseline-deny-secrets",
+      "effect": "deny",
+      "targets": ["secrets/"],
+      "mandatory": true,
+      "rationale": "Shipped-defaults baseline: secrets access is denied by default and mandatory-locked so no downstream layer can silently relax it."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0-fixture-project",
+  "rules": [
+    {
+      "id": "project-allow-readonly-status",
+      "effect": "allow",
+      "verbs": ["status"],
+      "rationale": "Project override: read-only status checks are allowed in this repo's own dev workflow."
+    },
+    {
+      "id": "shared-override-example",
+      "effect": "allow",
+      "rationale": "Project's version wins over central's same-id rule (an ordinary, non-mandatory override) -- the printer must report THIS origin+line as the winner, not central's."
+    }
+  ]
+}

@@ -676,17 +676,17 @@
       }
     ]
   },
-  "scope": "s5",
+  "scope": "s6",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 0,
+  "reviewRoundsSinceClean": 2,
   "humanRulingRequired": false,
-  "councilHeld": true,
-  "councilVerdict": "GO (2026-09-07 post-build Stage-3 council on the central-classification fixture mechanism, rule 16(c) trigger; Path A targeted-patch ratified: remove env-var fixture override, pin expiresOn value, fix misdirecting post-expiry unlock hint, fix cross-session reconciliation bug)",
-  "roundsSinceLastGo": 0,
+  "councilHeld": false,
+  "councilVerdict": null,
+  "roundsSinceLastGo": 2,
   "priorScope": {
-    "scope": "s4",
+    "scope": "s5",
     "tier": "CRITICAL",
     "councilHeld": true,
-    "councilVerdict": "GO (round 6 re-confirm, Issue #84 closed)"
+    "councilVerdict": "GO (2026-09-07 post-build Stage-3 council on the central-classification fixture mechanism, rule 16(c) trigger; Path A targeted-patch ratified: remove env-var fixture override, pin expiresOn value, fix misdirecting post-expiry unlock hint, fix cross-session reconciliation bug)"
   }
 }

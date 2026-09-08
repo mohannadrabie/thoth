@@ -9,7 +9,7 @@
 // (src/policy/kernel/**) — the kernel never validates configuration itself (POL-11).
 import type { ValidationError } from "../kernel/rule-types.ts";
 
-const RULE_KEYS = ["id", "effect", "verbs", "targets", "environments", "rationale"] as const;
+const RULE_KEYS = ["id", "effect", "verbs", "targets", "environments", "rationale", "mandatory"] as const;
 const RULE_SET_KEYS = ["version", "rules"] as const;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -18,6 +18,73 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+
+// === Stage-3 round-1 fix-now (2026-09-08), Issue #105 + red-team's extension [MED] ===
+//
+// Two silent-acceptance gaps in one family: `validateRuleSet` previously reported ZERO errors for
+// (a) two rules sharing the same `id` inside one layer's `rules` array, and (b) a raw JSON document
+// with a DUPLICATE top-level `"rules"` key (`JSON.parse` silently keeps only the LAST occurrence —
+// there is no way to detect this from the parsed value alone, only from the raw source text).
+// Both let `printer.ts`'s `findIndex()`-based origin-line lookup report the WRONG line for the
+// winning rule (red-team's demonstrated B2/B3 attacks). Rejecting both here, at the schema-
+// validation layer, closes the gap at its root: `loader.ts`'s `parseLayerText` never reaches
+// `position-parser.ts`'s tokenizer for a document either of these checks rejects.
+
+/**
+ * Detects duplicate TOP-LEVEL keys in a raw JSON object's source text — before `JSON.parse` has a
+ * chance to silently collapse them to last-write-wins. A minimal, purpose-built scanner (not a
+ * general JSON parser, and deliberately NOT `position-parser.ts`'s tokenizer: that module lives in
+ * `src/policy/config/`, one layer above `src/policy/rule/`, and importing it here would invert this
+ * codebase's established layering — config consumes rule validation, not the other way around).
+ * Walks the text once, tracking `{}`/`[]` nesting depth and quoted-string state (respecting `\"`
+ * escapes so a brace/bracket/quote INSIDE a string value is never mistaken for structure), and
+ * records every `"key"` token immediately followed by `:` while at depth 1 (directly inside the
+ * outermost `{}`). Returns the list of key names that appear more than once at that level.
+ */
+export function findDuplicateTopLevelKeys(text: string): string[] {
+  let depth = 0;
+  let i = 0;
+  const topLevelKeyCounts = new Map<string, number>();
+
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"') {
+      let j = i + 1;
+      let raw = "";
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") {
+          raw += (text[j] ?? "") + (text[j + 1] ?? "");
+          j += 2;
+        } else {
+          raw += text[j];
+          j++;
+        }
+      }
+      i = j + 1; // past the closing quote
+      if (depth === 1) {
+        let k = i;
+        while (k < text.length && /\s/.test(text[k] ?? "")) k++;
+        if (text[k] === ":") {
+          topLevelKeyCounts.set(raw, (topLevelKeyCounts.get(raw) ?? 0) + 1);
+        }
+      }
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      depth--;
+      i++;
+      continue;
+    }
+    i++;
+  }
+
+  return [...topLevelKeyCounts.entries()].filter(([, count]) => count > 1).map(([key]) => key);
 }
 
 /**
@@ -62,13 +129,26 @@ export function validateRule(input: unknown, pathPrefix = ""): ValidationError[]
     errors.push({ message: "rationale must be a string", field: at("rationale"), expected: "string" });
   }
 
+  // POL-07 (S6): the mandatory-lock flag. Boolean only — a truthy-but-non-boolean value (e.g. the
+  // string "true") is rejected by name, same discipline as every other typed field here.
+  if ("mandatory" in input && input.mandatory !== undefined && typeof input.mandatory !== "boolean") {
+    errors.push({ message: "mandatory must be a boolean", field: at("mandatory"), expected: "boolean" });
+  }
+
   return errors;
 }
 
 /**
  * POL-06: validates a whole rule set — versioned, schema-checked, every rule validated in turn.
+ *
+ * `rawText` (Stage-3 round-1 fix-now, Issue #105 + red-team's extension [MED]): OPTIONAL — when the
+ * caller has the original, unparsed source text in hand (loader.ts's `parseLayerText` always does),
+ * pass it here so a duplicate TOP-LEVEL key (e.g. two `"rules"` arrays in one document — see
+ * `findDuplicateTopLevelKeys`'s own header) is rejected by name rather than silently resolved by
+ * `JSON.parse`'s own last-write-wins behavior. Omitted by every existing direct-object-literal
+ * caller in this file's own tests — that check simply doesn't run without it, same as before.
  */
-export function validateRuleSet(input: unknown): ValidationError[] {
+export function validateRuleSet(input: unknown, rawText?: string): ValidationError[] {
   if (!isRecord(input)) {
     return [{ message: "rule set must be an object", field: "<root>", expected: "object" }];
   }
@@ -85,6 +165,16 @@ export function validateRuleSet(input: unknown): ValidationError[] {
     }
   }
 
+  if (rawText !== undefined) {
+    for (const dupKey of findDuplicateTopLevelKeys(rawText)) {
+      errors.push({
+        message: `duplicate top-level key "${dupKey}" — JSON.parse silently keeps only the LAST occurrence; rejected outright rather than silently resolved`,
+        field: dupKey,
+        expected: "each top-level key to appear at most once",
+      });
+    }
+  }
+
   if (typeof input.version !== "string" || input.version.length === 0) {
     errors.push({ message: "version is required and must be a non-empty string", field: "version", expected: "non-empty string" });
   }
@@ -94,8 +184,21 @@ export function validateRuleSet(input: unknown): ValidationError[] {
     return errors;
   }
 
+  const firstIndexById = new Map<string, number>();
   input.rules.forEach((rule: unknown, i: number) => {
     errors.push(...validateRule(rule, `rules[${i}]`));
+    if (isRecord(rule) && typeof rule.id === "string" && rule.id.length > 0) {
+      const firstIndex = firstIndexById.get(rule.id);
+      if (firstIndex !== undefined) {
+        errors.push({
+          message: `duplicate rule id "${rule.id}" (first defined at rules[${firstIndex}], repeated at rules[${i}])`,
+          field: `rules[${i}].id`,
+          expected: "a unique id within this rule set",
+        });
+      } else {
+        firstIndexById.set(rule.id, i);
+      }
+    }
   });
 
   return errors;
