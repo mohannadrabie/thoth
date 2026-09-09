@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
-import { partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
+import { loadAllowlist, partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
 import { redact } from "./patterns.ts";
 import { readFile } from "node:fs/promises";
 
@@ -65,6 +65,47 @@ test("OSS-01 allowlist: a match NOT on the allowlist still fails the gate even i
   ]);
   assert.equal(result.ok, false);
   assert.match(result.summary, /1 secret-shaped match/);
+});
+
+test("OSS-01 allowlist loader: an entry WITH a non-empty reason is accepted (positive control, red-team finding 4)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-allowlist-reason-"));
+  try {
+    const p = join(dir, "allowlist.json");
+    await writeFile(p, JSON.stringify([
+      { path: "src/foo.ts", patternId: "aws-access-key-id", reason: "documented test fixture" },
+    ]));
+    const loaded = await loadAllowlist(p);
+    assert.equal(loaded.length, 1, "an entry with a real reason must be honored");
+    assert.equal(loaded[0]?.reason, "documented test fixture");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("OSS-01 allowlist loader: an entry WITHOUT a reason (missing, or whitespace-only) is REJECTED, not silently honored (regression — GitHub Issue #135 finding 4 / red-team round-3 finding 4: `history-scan.ts`'s own header claims 'every entry is a reviewed, reasoned exception,' but the type-guard previously enforced only path+patternId)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-allowlist-noreason-"));
+  try {
+    const p = join(dir, "allowlist.json");
+    await writeFile(p, JSON.stringify([
+      { path: "src/foo.ts", patternId: "aws-access-key-id" }, // no `reason` field at all
+      { path: "src/bar.ts", patternId: "aws-access-key-id", reason: "   " }, // whitespace-only
+      { path: "src/baz.ts", patternId: "aws-access-key-id", reason: "real, non-empty reason" },
+    ]));
+    const loaded = await loadAllowlist(p);
+    assert.equal(loaded.length, 1, "only the entry with a real, non-empty reason may survive");
+    assert.equal(loaded[0]?.path, "src/baz.ts");
+
+    // End-to-end: a match against the reason-less entry's own (path, patternId) must now BLOCK
+    // the gate, not pass silently — this is the actual security property red-team's finding
+    // demonstrated was missing.
+    const matches = [
+      { commit: "a", path: "src/foo.ts", patternId: "aws-access-key-id", description: "x", redacted: "r" },
+    ];
+    const result = summarizeMatches(matches, loaded);
+    assert.equal(result.ok, false, "a match against a reason-less (rejected) entry must fail the gate");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("OSS-01 (dogfood): the real repo, scanned with the real allowlist, is a clean (blocking) pass", async () => {

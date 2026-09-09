@@ -37,7 +37,111 @@ jobs:
           # QA-02, QA-14 (git diff) and OSS-01 (full history scan) all need real history, not a
           # shallow clone.
           fetch-depth: 0
-          submodules: recursive
+          # submodules is deliberately NOT set here (was `recursive` until 2026-09-09, Issue #27):
+          # the `adr` submodule is a PRIVATE repo (mohannadrabie/adr) and this step's own token
+          # (the default, repo-scoped GITHUB_TOKEN) cannot read it — every push/PR run died here,
+          # silently, from 2026-09-01 onward until this fix (100% failure rate across every run in
+          # that window, confirmed via `gh run list --repo mohannadrabie/thoth`; deliberately no
+          # hardcoded run count here — that figure only ever climbs while this bug is live, and is
+          # not a fact about the fix itself, CLAUDE.md's "no hand-derived completeness claims" rule
+          # applied to a comment that would otherwise go stale on every single CI invocation).
+          # Submodule init is a separate, later step below, authenticated with a narrower,
+          # adr-repo-only credential instead of widening this checkout's own default token's scope.
+
+      # Scopes a SEPARATE credential (ADR_REPO_PAT, a fine-grained PAT with read-only access to
+      # ONLY mohannadrabie/adr) to the one URL the `adr` submodule fetch needs — never widens the
+      # `Checkout` step's own default GITHUB_TOKEN, which stays scoped to `thoth` itself only.
+      #
+      # The credential is passed via GIT_CONFIG_COUNT/GIT_CONFIG_KEY_0/GIT_CONFIG_VALUE_0 env vars,
+      # SCOPED TO THIS STEP ONLY — never `git config --global`, which would write the token in
+      # cleartext into `$HOME/.gitconfig` and leave it there, on disk, for every later step in this
+      # job (including `npm ci`'s own install-script execution over every third-party package) to
+      # read (Issue #125, infra-security-reviewer, MED). Deliberately no hardcoded step count here
+      # — this file's own step list changes shape over time (measured today via a real parse of
+      # this file: 25 `- name:` steps in this job total, 23 of them after this one — but that
+      # number is exactly the kind of hand-derived claim CLAUDE.md's completeness rule warns
+      # against pinning in a comment nothing re-checks; the load-bearing fact is "every later step
+      # in this job", which needs no count to stay true). The env-var form
+      # also never appears in the rendered `run:` script body on disk — the token lives only in
+      # process env for this step, closing the second disk-residency path the same finding named.
+      - name: Init adr submodule (private repo, adr-only credential, scoped to this step only)
+        env:
+          ADR_REPO_PAT: ${{ secrets.ADR_REPO_PAT }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ADR_REPO_PAT }}@github.com/mohannadrabie/adr.git.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/mohannadrabie/adr.git
+        run: |
+          set -euo pipefail
+
+          # Issue #128 finding 6 (red-team, LOW, not separately filed per this project's
+          # LOW-findings convention): an empty/missing ADR_REPO_PAT must fail HERE, by name — not
+          # one step later with a generic "Could not read from remote repository" message that
+          # reads identically to an expired PAT, a revoked PAT, or the gitlink race checked below.
+          if [ -z "${ADR_REPO_PAT:-}" ]; then
+            echo "::error::ADR_REPO_PAT secret is not set (or is empty) -- create it: gh secret set ADR_REPO_PAT --repo mohannadrabie/thoth (fine-grained, mohannadrabie/adr only, Contents: Read-only, 90-day expiry). This step cannot proceed without it."
+            exit 1
+          fi
+
+          # Issue #127 (red-team, MED): `thoth`'s own `adr` gitlink can point at a commit that
+          # exists locally (an agent commits + bumps the gitlink) but was never pushed to the real
+          # `adr` remote — pushing to `adr`'s own default branch is human-only (CLAUDE.md), and
+          # this repo's own history did exactly this once (commit 79a6ab4, "local, unpushed").
+          # Left unchecked, that state fails the submodule clone below with a message
+          # indistinguishable from a bad credential. Check reachability FIRST, by name.
+          #
+          # MEASURED (not assumed, PRINCIPLES rule 18): a fetch of the exact pinned commit
+          # (`git fetch <url> <sha>`) was tried first and rejected — verified directly against a
+          # real public GitHub repo (torvalds/linux) that GitHub's server refuses to fetch a
+          # reachable-but-non-ref-tip commit by bare SHA ("not our ref", exit 128) without
+          # `uploadpack.allowReachableSHA1InWant`, which is not enabled here. So this check instead
+          # compares against `git ls-remote`'s ref tips, matching this project's own actual
+          # practice (every historical `adr` gitlink bump in this repo's own log has pinned the new
+          # tip of `adr`'s `main` at acceptance time, never an older non-tip commit) — same
+          # mechanism red-team's own report verified working against this exact repo/SHA. Disclosed
+          # limitation, not silently assumed complete: a legitimate pin to an OLDER, non-tip-but-
+          # still-reachable `adr` commit would misreport as unreachable here (see docs/backlog.md).
+          PINNED_SHA="$(git ls-tree HEAD adr | awk '{print $3}')"
+          if [ -z "$PINNED_SHA" ]; then
+            echo "::error::no gitlink found for path 'adr' at HEAD -- .gitmodules or the tree entry is missing/misconfigured."
+            exit 1
+          fi
+
+          # Issue #132 (red-team round 2, MED): the ls-remote CALL and the SHA-tip GREP are two
+          # separate failure modes that were previously conflated into one `if !` branch under
+          # `set -euo pipefail` -- a failed `ls-remote` (bad/expired/revoked ADR_REPO_PAT, or a
+          # network/throttle failure) took the SAME branch as "ls-remote succeeded but the pinned
+          # SHA isn't a ref tip", and the shared message unconditionally asserted "This is NOT a
+          # credential problem" -- which is exactly wrong on the day-91-expired-PAT case. Split:
+          # capture ls-remote's own output AND exit status first, attribute a call failure to the
+          # credential/network cause by name; only once ls-remote itself succeeded does an absent
+          # SHA get attributed to the gitlink-reachability cause instead.
+          if ! LS_REMOTE_OUTPUT="$(git ls-remote https://github.com/mohannadrabie/adr.git 2>&1)"; then
+            echo "::error::git ls-remote itself FAILED against the adr remote (github.com/mohannadrabie/adr) -- this IS a credential or network problem, not a gitlink-reachability question. Likely causes: ADR_REPO_PAT is invalid, expired (90-day expiry per docs/decisions.md's 2026-09-09 ruling), revoked, or under-scoped; or a network/throttle failure reaching github.com. Unlock: regenerate and reset the secret (gh secret set ADR_REPO_PAT --repo mohannadrabie/thoth). Raw ls-remote output: $LS_REMOTE_OUTPUT"
+            exit 1
+          fi
+          if ! echo "$LS_REMOTE_OUTPUT" | grep -q "$PINNED_SHA"; then
+            echo "::error::adr gitlink $PINNED_SHA is NOT reachable on the adr remote (github.com/mohannadrabie/adr) -- the adr submodule's own commit needs to be pushed there first (pushing to adr's default branch is human-only, CLAUDE.md). This is NOT a credential problem: ls-remote itself SUCCEEDED above (using the exact same ADR_REPO_PAT credential the submodule init below uses) -- it just didn't list this SHA among its ref tips. (Known limitation: this compares against ref TIPS only -- a legitimate pin to an older, non-tip-but-reachable adr commit would also fail this check; see docs/backlog.md.)"
+            exit 1
+          fi
+
+          git submodule update --init --recursive
+          git submodule status
+
+          # Issue #128 (red-team, MED): `git submodule status` above exits 0 and prints NOTHING
+          # when the submodule isn't actually registered/populated -- a vacuous pass, the exact
+          # defense Issue #27 proved silently does not work. Assert real, non-empty content
+          # instead of trusting the diagnostic line above.
+          if [ -z "$(ls -A adr/devops 2>/dev/null)" ] || [ -z "$(ls -A adr/software-engineering 2>/dev/null)" ]; then
+            echo "::error::adr submodule did not populate -- adr/devops and/or adr/software-engineering is empty after 'git submodule update --init --recursive'. QA-14 would run against an EMPTY ADR catalog (a vacuous pass), not a real one."
+            exit 1
+          fi
+
+          # Issue #125 (infra-security-reviewer, MED): re-confirm the GIT_CONFIG_* env-var form
+          # above never wrote ADR_REPO_PAT to disk -- assert it, don't just trust the mechanism.
+          if grep -rq "x-access-token" "$HOME/.gitconfig" 2>/dev/null; then
+            echo "::error::ADR_REPO_PAT credential residue found in \$HOME/.gitconfig -- this should be structurally impossible with the GIT_CONFIG_* env-var form used above."
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

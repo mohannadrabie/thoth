@@ -139,17 +139,31 @@ export function summarizeMatches(matches: HistoryMatch[], allowlist: AllowlistEn
   };
 }
 
-async function loadAllowlist(path: string): Promise<AllowlistEntry[]> {
+// Red-team finding 4 (cifix round 3, LOW): this module's own header (above) states the
+// invariant — "every entry is a reviewed, reasoned exception ... a deliberate, auditable act" —
+// but the type-guard previously enforced only `path`+`patternId`, so a reason-less entry was
+// silently HONORED (documentation, not enforcement). A non-empty `reason` is now a real,
+// structural precondition: an entry missing it, or carrying only whitespace, is REJECTED (dropped
+// from the effective allowlist, so its match falls through to `blocking` — fails loud, not
+// silently), not merely warned about. Exported so this precondition is independently testable
+// (`history-scan.test.ts`) without going through the CLI's file-based `main()`.
+export function isValidAllowlistEntry(x: unknown): x is AllowlistEntry {
+  if (typeof x !== "object" || x === null) return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.path === "string" &&
+    typeof o.patternId === "string" &&
+    typeof o.reason === "string" &&
+    o.reason.trim().length > 0
+  );
+}
+
+export async function loadAllowlist(path: string): Promise<AllowlistEntry[]> {
   try {
     const raw = await readFile(path, "utf8");
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (x): x is AllowlistEntry =>
-        typeof x === "object" && x !== null &&
-        typeof (x as Record<string, unknown>).path === "string" &&
-        typeof (x as Record<string, unknown>).patternId === "string",
-    );
+    return parsed.filter(isValidAllowlistEntry);
   } catch {
     return [];
   }
