@@ -1,0 +1,1 @@
+﻿{"version":"1.0.0-fixture-project-bom","rules":[{"id":"project-bom-example","effect":"allow","rationale":"Project fixture saved with a leading UTF-8 BOM (Issue #108 round-4 repro: PowerShell 5.1 Out-File -Encoding utf8 / Notepad UTF-8-with-BOM) -- proves a PROJECT-layer parse failure must never be attributed to the central channel."}]}

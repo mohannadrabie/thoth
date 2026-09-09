@@ -11,7 +11,7 @@
 // loader/precedence/pin unit tests exercise directly — not a second, parallel implementation of
 // the merge/validation logic (architecture-reviewer S6 pre-build finding 1's "one merge core"
 // concern, applied one layer up: one load pipeline, one renderer on top of it).
-import { loadEffectivePolicy, type LoadFailureReasonKind, type LoadSuccess } from "./loader.ts";
+import { loadEffectivePolicy, type FailedLayerName, type LoadFailureReasonKind, type LoadSuccess } from "./loader.ts";
 import type { CentralPolicySource } from "./central-source.ts";
 import type { PolicyPin } from "./pin.ts";
 
@@ -58,13 +58,18 @@ function centralStatusLine(centralStatus: "absent" | "unsupported" | "present" |
   return `central-channel status=${centralStatus}`;
 }
 
+// Issue #108 [MED] fix (Stage-3 round-4 residual, test-writer's amended/RED-CONFIRMED
+// printer.test.ts): `failedLayer` names WHICHEVER layer actually produced the failure — never
+// hardcoded to "central" regardless of the true offender. See loader.ts's own header for the full
+// history of why this half of the fix landed separately from the mandatory-lock (voidedLayers) half.
 function renderRejection(
   reasonKind: LoadFailureReasonKind,
   message: string,
+  failedLayer: FailedLayerName,
   centralStatus: "absent" | "unsupported" | "present" | undefined,
   centralChannel: string | undefined,
 ): PrinterResult {
-  const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: central policy load failed (${reasonKind}): ${message}`].join(
+  const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: ${failedLayer} policy load failed (${reasonKind}): ${message}`].join(
     "\n",
   );
   return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE, inertMandatoryDeclarations: [] };
@@ -102,13 +107,16 @@ export function printEffectivePolicy(input: PrinterInput): PrinterResult {
   try {
     const result = loadEffectivePolicy(input);
     if (!result.ok) {
-      return renderRejection(result.reasonKind, result.message, result.centralStatus, result.centralChannel);
+      return renderRejection(result.reasonKind, result.message, result.failedLayer, result.centralStatus, result.centralChannel);
     }
     return renderSuccess(result);
   } catch (err) {
-    // Never throw (test-writer's own contract): an unexpected exception anywhere in the pipeline
-    // (e.g. a shipped-defaults/project file that cannot be read at all) is caught here and turned
-    // into a read-error-shaped rejection, the same uniform failure shape as every other bucket.
-    return renderRejection("read-error", (err as Error).message, undefined, undefined);
+    // Never throw (test-writer's own contract): a genuinely unexpected exception outside every
+    // named failure shape loader.ts itself already catches (Issue #108 fix: shipped-defaults/
+    // project readFileSync and centralSource.read() are now all wrapped there) is caught here as a
+    // last resort and turned into a read-error-shaped rejection. `failedLayer` defaults to
+    // "central" in this backstop only, since the true origin is genuinely unknown at this point —
+    // every NAMED failure shape (the common case) is already attributed correctly by loader.ts.
+    return renderRejection("read-error", (err as Error).message, "central", undefined, undefined);
   }
 }

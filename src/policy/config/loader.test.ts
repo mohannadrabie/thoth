@@ -96,6 +96,7 @@ test("AC5b: central present, syntactically INVALID JSON -- whole load rejected, 
       assert.equal(result.reasonKind, "json-parse-error");
       assert.equal(result.centralStatus, "present");
       assert.equal(result.centralChannel, "test:chan");
+      assert.equal(result.failedLayer, "central", "Issue #108: a central-layer parse failure must name 'central' as the failed layer");
     }
   });
 });
@@ -123,6 +124,7 @@ test("AC5b: central present, syntactically VALID JSON but fails schema validatio
       // Both AC5b sub-shapes are "structurally identical in kind" -- same top-level result shape
       // (ok:false, a message, a reasonKind), never a different-shaped outcome for one vs. the other.
       assert.equal(typeof result.message, "string");
+      assert.equal(result.failedLayer, "central", "Issue #108: a central-layer schema failure must name 'central' as the failed layer");
     }
   });
 });
@@ -147,6 +149,102 @@ test("AC5c: centralSource.read() itself THROWS -- whole load rejected, reasonKin
       assert.equal(result.reasonKind, "read-error");
       assert.equal(result.centralStatus, undefined, "a read-error means the status was never actually learned");
       assert.match(result.message, /simulated subprocess timeout/);
+      assert.equal(result.failedLayer, "central", "Issue #108: centralSource.read() itself throwing must name 'central' as the failed layer");
+    }
+  });
+});
+
+// --- Stage-3 round-4 residual fix-now (2026-09-08), Issue #108 [MED] REOPENED, test-writer's ------
+// amended/RED-CONFIRMED printer.test.ts (docs/reviews/s6-printer-test-writer-fixnow-2026-09-08.md):
+// `failedLayer` names the layer that ACTUALLY failed on the shipped-defaults/project side too --
+// previously untested at the loader level (only printer.test.ts's black-box fixtures exercised the
+// real repro; these are story-implementer's own white-box unit tests for the same underlying fix).
+
+test("Issue #108: shipped-defaults present but malformed JSON -- failedLayer='shipped-defaults', central's own (innocent) status is still reported, never lost", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeFileSync(shippedPath, "{ not valid json", "utf8");
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [] });
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reasonKind, "json-parse-error");
+      assert.equal(result.failedLayer, "shipped-defaults");
+      assert.equal(result.centralStatus, "absent", "central's own status must still be reported even though a different layer is the true offender");
+    }
+  });
+});
+
+test("Issue #108: project present but fails schema validation -- failedLayer='project', central's own (present, valid) status is still reported, never lost", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+    writeFileSync(projectPath, JSON.stringify({ version: "1.0.0", rules: [{ id: "x", effect: "MAYBE" }] }), "utf8");
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "present", raw: '{"version":"1.0.0","rules":[]}', channel: "c" }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reasonKind, "schema-invalid");
+      assert.equal(result.failedLayer, "project");
+      assert.equal(result.centralStatus, "present");
+      assert.equal(result.centralChannel, "c");
+    }
+  });
+});
+
+test("Issue #108: shipped-defaults file cannot be read at all (missing file) -- returns a typed LoadFailure with failedLayer='shipped-defaults' and reasonKind='read-error', NEVER throws (the readFileSync wrapping this round adds)", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "does-not-exist-shipped.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [] });
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "absent" }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reasonKind, "read-error");
+      assert.equal(result.failedLayer, "shipped-defaults");
+      assert.equal(result.centralStatus, "absent");
+      assert.match(result.message, /does-not-exist-shipped\.json/);
+    }
+  });
+});
+
+test("Issue #108: project file cannot be read at all (missing file) -- returns a typed LoadFailure with failedLayer='project' and reasonKind='read-error', NEVER throws, central's own valid load is not blamed", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "does-not-exist-project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+
+    const result = loadEffectivePolicy({
+      shippedDefaultsPath: shippedPath,
+      projectPolicyPath: projectPath,
+      centralSource: centralSourceReturning({ status: "present", raw: '{"version":"1.0.0","rules":[]}', channel: "c" }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reasonKind, "read-error");
+      assert.equal(result.failedLayer, "project");
+      assert.equal(result.centralStatus, "present");
+      assert.match(result.message, /does-not-exist-project\.json/);
     }
   });
 });

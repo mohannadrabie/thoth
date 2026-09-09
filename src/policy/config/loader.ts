@@ -26,6 +26,16 @@
 // carries which layer(s), if any, were dropped and why, so printer.ts can name the OFFENDING
 // layer directly rather than misattributing it to "central policy load failed" when central itself
 // was innocent (or absent).
+//
+// The SAME "never misattribute to central" bar applies to the FAIL-CLOSED path too, and that half
+// was not actually built until this later fix-now round (Stage-3 round-4 residual, Issue #108
+// [MED] REOPENED, red-team round 4 — test-writer's amended, RED-CONFIRMED `printer.test.ts`,
+// docs/reviews/s6-printer-test-writer-fixnow-2026-09-08.md): a project/shipped-defaults parse
+// failure previously produced a `LoadFailure` with no layer field at all, so `printer.ts` defaulted
+// to the literal string "central" unconditionally — exactly the misattribution this file's own
+// comment above already warned against, just not yet closed on this path. `LoadFailure.failedLayer`
+// (set on every one of this function's return sites, including the two now-wrapped
+// shipped-defaults/project `readFileSync` calls, which previously could throw uncaught) closes it.
 import { readFileSync } from "node:fs";
 import type { RuleSet } from "../kernel/rule-types.ts";
 import { validateRuleSet } from "../rule/schema.ts";
@@ -52,12 +62,23 @@ export interface LoadedLayer {
 
 export type LoadFailureReasonKind = "json-parse-error" | "schema-invalid" | "read-error";
 
+// Stage-3 fix-now (2026-09-08), Issue #108 [MED], test-writer amendment RED-CONFIRMED
+// (docs/reviews/s6-printer-test-writer-fixnow-2026-09-08.md): the layer that ACTUALLY produced a
+// LoadFailure, so printer.ts can name it directly instead of defaulting to "central" regardless of
+// the true offender.
+export type FailedLayerName = "central" | "shipped-defaults" | "project";
+
 export interface LoadFailure {
   ok: false;
   reasonKind: LoadFailureReasonKind;
   message: string;
-  /** The central channel's own status, when known. Absent ONLY for reasonKind "read-error" — the
-   * one failure shape where `centralSource.read()` itself never returned a status at all. */
+  /** Issue #108 fix: the layer whose file/channel actually caused this failure — set on every one
+   * of this type's return sites, never left to be inferred/guessed by the caller. */
+  failedLayer: FailedLayerName;
+  /** The central channel's own status, when known. Absent ONLY for reasonKind "read-error" AND
+   * `failedLayer === "central"` — the one failure shape where `centralSource.read()` itself never
+   * returned a status at all. When a NON-central layer is the one that failed, central's own
+   * (innocent) status is still reported here, never lost. */
   centralStatus?: CentralPolicyResult["status"];
   /** Populated only when `centralStatus === "present"`. */
   centralChannel?: string | undefined;
@@ -122,7 +143,7 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
   try {
     centralResult = input.centralSource.read();
   } catch (err) {
-    return { ok: false, reasonKind: "read-error", message: (err as Error).message };
+    return { ok: false, reasonKind: "read-error", message: (err as Error).message, failedLayer: "central" };
   }
 
   let centralRuleSet: RuleSet = { version: "0.0.0", rules: [] };
@@ -139,6 +160,7 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
         ok: false,
         reasonKind: parsed.error,
         message: parsed.message,
+        failedLayer: "central",
         centralStatus: "present",
         centralChannel,
       };
@@ -149,16 +171,44 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
   // status "absent"/"unsupported": centralRuleSet stays empty, contributes zero rules -- NOT a
   // rejection (AC5a).
 
-  const shippedText = readFileSync(input.shippedDefaultsPath, "utf8");
+  // Issue #108 fix: shipped-defaults/project readFileSync wrapped in try/catch, returning a typed
+  // LoadFailure (failedLayer set, central's own already-known status/channel preserved) instead of
+  // letting an unhandled exception propagate up to printer.ts's own last-resort catch, which had no
+  // way to recover which layer -- or central's own innocent status -- was actually involved.
+  let shippedText: string;
+  try {
+    shippedText = readFileSync(input.shippedDefaultsPath, "utf8");
+  } catch (err) {
+    return {
+      ok: false,
+      reasonKind: "read-error",
+      message: `${input.shippedDefaultsPath}: ${(err as Error).message}`,
+      failedLayer: "shipped-defaults",
+      centralStatus: centralResult.status,
+      centralChannel,
+    };
+  }
   const shippedParsed = parseLayerText(input.shippedDefaultsPath, shippedText);
   if (isParseFailure(shippedParsed)) {
-    return { ok: false, reasonKind: shippedParsed.error, message: shippedParsed.message, centralStatus: centralResult.status, centralChannel };
+    return { ok: false, reasonKind: shippedParsed.error, message: shippedParsed.message, failedLayer: "shipped-defaults", centralStatus: centralResult.status, centralChannel };
   }
 
-  const projectText = readFileSync(input.projectPolicyPath, "utf8");
+  let projectText: string;
+  try {
+    projectText = readFileSync(input.projectPolicyPath, "utf8");
+  } catch (err) {
+    return {
+      ok: false,
+      reasonKind: "read-error",
+      message: `${input.projectPolicyPath}: ${(err as Error).message}`,
+      failedLayer: "project",
+      centralStatus: centralResult.status,
+      centralChannel,
+    };
+  }
   const projectParsed = parseLayerText(input.projectPolicyPath, projectText);
   if (isParseFailure(projectParsed)) {
-    return { ok: false, reasonKind: projectParsed.error, message: projectParsed.message, centralStatus: centralResult.status, centralChannel };
+    return { ok: false, reasonKind: projectParsed.error, message: projectParsed.message, failedLayer: "project", centralStatus: centralResult.status, centralChannel };
   }
 
   const namedLayers: NamedRuleLayer[] = [

@@ -75,13 +75,24 @@
 //                      "not mandatory" or "printer forgot to say."
 //
 //   Fail-closed rejection (central status is "present" but content is invalid, OR
-//   `centralSource.read()` itself threw; exitCode 1; AC5b/AC5c — "whole load rejected", so NO
-//   `rule id=` line ever appears, regardless of how many rules shipped-defaults/project alone
-//   would otherwise have resolved):
-//     Line 1:      `central-channel status=present channel=<channel>`   (malformed-JSON / schema-invalid)
+//   `centralSource.read()` itself threw, OR the shipped-defaults/project file itself fails to
+//   parse/validate; exitCode 1; AC5b/AC5c — "whole load rejected", so NO `rule id=` line ever
+//   appears, regardless of how many rules the other layers alone would otherwise have resolved):
+//     Line 1:      `central-channel status=present channel=<channel>`   (malformed-JSON / schema-invalid
+//                                                                         IN THE CENTRAL layer)
 //                  `central-channel status=read-error`                  (`.read()` itself threw —
 //                                                                         no channel is ever known)
-//     Line 2:      `REJECTED: central policy load failed (<reason-kind>): <message>`
+//                  `central-channel status=<absent|unsupported|present...>` (unchanged/whatever the
+//                                                                         real central status was,
+//                                                                         when a NON-central layer
+//                                                                         is the one that failed)
+//     Line 2:      `REJECTED: <layer> policy load failed (<reason-kind>): <message>`
+//                  <layer> in {"central", "shipped-defaults", "project"} — names WHICHEVER layer
+//                  actually failed to read/parse/validate. AMENDED 2026-09-08 (Issue #108 [MED],
+//                  test-writer): the ORIGINAL locked answer key hardcoded the literal "central"
+//                  here for every reason kind, including shipped-defaults/project failures — see
+//                  INTERPRETATION CHOICE 6 below for the full history and why this is a test-file
+//                  fix, not a code-side second bug.
 //                  <reason-kind> in {"json-parse-error", "schema-invalid", "read-error"} — three
 //                  distinct, nameable causes (AC5b/AC5c's own "distinguishable... asserted
 //                  structurally identical in kind" bar: same exitCode, same 2-line shape, same
@@ -161,6 +172,53 @@
 //    displays it correctly on the ordinary SUCCESS path — it deliberately does NOT test a
 //    mandatory-lock REJECTION scenario, which is `precedence.test.ts`'s own scope (AC9, ratified
 //    to story-implementer's own unit tests by §7's dispatch check, not this file's).
+//
+// 6. AMENDMENT, 2026-09-08 (Issue #108 [MED], red-team round 4 — test-writer, per this project's
+//    DoD: only test-writer may amend a locked answer key, and only when the test itself pins a
+//    bug rather than the code being wrong). The ORIGINAL version of this file's fail-closed
+//    rejection grammar (INTERPRETATION CHOICE point above, and `buildExpectedRejectionStdout`)
+//    hardcoded the literal prefix `REJECTED: central policy load failed (<reason-kind>): ...` for
+//    ALL THREE reason kinds, regardless of which of the three layers (central / shipped-defaults /
+//    project) actually produced the failure. Verified against `src/policy/config/printer.ts`
+//    (`renderRejection`, then at line 67) and `loader.ts` (the three separate `return { ok: false,
+//    ... }` branches for central-parse-failure, shipped-defaults-parse-failure, and
+//    project-parse-failure) before amending: the ORIGINAL 9/9-passing test suite was genuinely
+//    pinning printer.ts's bug, not exposing a second loader.ts defect — `loader.ts`'s `message`
+//    field already embeds the correct failing file's own origin path/channel (via
+//    `parseLayerText`'s `${origin}: ${...}` prefix), so the layer information IS available at the
+//    call site; `printer.ts`'s `renderRejection` simply never used it, defaulting to "central" in
+//    the literal string unconditionally. This is a printer.ts fix, not a loader.ts fix.
+//
+//    Real-world repro reproduced verbatim before amending (a UTF-8-BOM'd PROJECT-layer file,
+//    Windows PowerShell 5.1 `Out-File -Encoding utf8` / Notepad "UTF-8 with BOM"): central absent
+//    and wholly uninvolved, yet the original grammar rendered `REJECTED: central policy load
+//    failed (json-parse-error): ...project-bom....json: Unexpected token...` — misnaming the
+//    offending layer. `docs/qa/s6-policy-loader-fixtures/printer-project-bom-malformed.json`
+//    (added by this amendment) is that exact fixture: a real 3-byte EF BB BF BOM prefix (not an
+//    escaped `﻿` string — proving this against the SAME on-disk byte shape a real Windows
+//    save produces, through printer.ts's own real `readFileSync` call, not a simulated string).
+//
+//    Two named regression tests were requested for this Issue: (a) "a rejection caused by the
+//    PROJECT layer never claims the central channel failed" — added below, immediately after the
+//    AC5c test. (b) a loader-level "a UTF-8 BOM on any layer file is either tolerated or rejected
+//    with that layer named" test in `loader.test.ts` — confirmed NOT separately needed:
+//    `loader.test.ts` is story-implementer's own white-box unit-test file (plain `node:test`
+//    unit tests against temp-dir fixtures, no test-writer header/lock language — out of this
+//    file's ownership per this project's "two layers, two authors" rule), and (a)'s own fixture
+//    already exercises the REAL (non-BOM-tolerant) `loadEffectivePolicy` code path end-to-end
+//    through the real printer, satisfying (b)'s own disjunctive text ("either tolerated OR
+//    rejected with that layer named" — it is rejected, and named) without a second file. Reading
+//    `loader.ts` directly confirms it never strips a BOM (`readFileSync(path, "utf8")` feeds the
+//    raw text, BOM included, straight into `JSON.parse`) — BOM-tolerance itself (stripping it
+//    instead of rejecting) is a separate, NOT-currently-broken design choice this amendment does
+//    not take a position on; noted here rather than silently expanded into.
+//
+//    A third, symmetric shipped-defaults-layer misattribution case is added alongside (a) for the
+//    same reason (a), not the loader-level case, sits in this file's scope: the defect as described
+//    to test-writer names all three layers ("central / shipped-defaults / project"), and leaving
+//    the shipped-defaults branch of `renderRejection`/`loader.ts` completely unverified by this
+//    suite would leave a real gap in the very fix this Issue asks for — this is completing the
+//    fix's own stated scope, not scope creep beyond it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -174,6 +232,12 @@ const REPO_ROOT = path.resolve(THIS_DIR, "..", "..", "..");
 const FIXTURES_DIR = path.join(REPO_ROOT, "docs", "qa", "s6-policy-loader-fixtures");
 const SHIPPED_DEFAULTS_PATH = path.join(FIXTURES_DIR, "printer-shipped-defaults.json");
 const PROJECT_POLICY_PATH = path.join(FIXTURES_DIR, "printer-project.json");
+// Issue #108 [MED] amendment fixtures (see INTERPRETATION CHOICE 6 above) — a PROJECT-layer file
+// with a real leading UTF-8 BOM (the exact repro), and a SHIPPED-DEFAULTS-layer file with plain
+// malformed JSON (no BOM needed to prove this branch; the defect is the same regardless of WHY
+// the layer failed to parse).
+const PROJECT_BOM_MALFORMED_PATH = path.join(FIXTURES_DIR, "printer-project-bom-malformed.json");
+const SHIPPED_DEFAULTS_MALFORMED_PATH = path.join(FIXTURES_DIR, "printer-shipped-defaults-malformed.json");
 
 // Sanity check on this file's OWN fixtures (fails loudly here, not silently downstream, if a
 // future edit to the committed fixture files disagrees with this file's hand-verified line
@@ -262,15 +326,18 @@ function buildExpectedSuccessStdout(centralStatusLine: string, rules: ExpectedRu
   return [...header, ...ruleLines].join("\n");
 }
 
-function buildExpectedRejectionStdout(centralStatusLine: string, reasonKind: string, messagePattern: RegExp): (actual: string) => void {
+// `layer` (Issue #108 [MED] amendment, see INTERPRETATION CHOICE 6): the layer name the REJECTED
+// line must attribute the failure to — "central", "shipped-defaults", or "project" — WHICHEVER
+// one actually produced this failure, never hardcoded regardless of the true offender.
+function buildExpectedRejectionStdout(centralStatusLine: string, layer: "central" | "shipped-defaults" | "project", reasonKind: string, messagePattern: RegExp): (actual: string) => void {
   return (actual: string) => {
     const lines = actual.split("\n");
     assert.equal(lines.length, 2, `expected EXACTLY 2 lines on a fail-closed rejection (no rule lines may leak through); got:\n${actual}`);
     assert.equal(lines[0], centralStatusLine, `expected line 1 to be the central-channel status line; got:\n${actual}`);
     assert.match(
       lines[1] ?? "",
-      new RegExp(`^REJECTED: central policy load failed \\(${reasonKind}\\): `),
-      `expected line 2 to start with the exact "REJECTED: central policy load failed (${reasonKind}):" prefix; got:\n${actual}`,
+      new RegExp(`^REJECTED: ${layer} policy load failed \\(${reasonKind}\\): `),
+      `expected line 2 to start with the exact "REJECTED: ${layer} policy load failed (${reasonKind}):" prefix -- naming the layer that ACTUALLY failed, not hardcoded to "central" regardless of the true offender (Issue #108 [MED]); got:\n${actual}`,
     );
     assert.match(lines[1] ?? "", messagePattern, `expected the rejection message to match ${messagePattern}; got:\n${actual}`);
     assert.doesNotMatch(actual, /rule id=/, `expected NO rule data to leak through a fail-closed rejection (AC5b/AC5c "whole load rejected"); got:\n${actual}`);
@@ -336,7 +403,7 @@ test("AC5b: central channel PRESENT but syntactically invalid JSON -- whole load
     baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL })),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 for malformed-JSON central content (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "json-parse-error", /./)(result.stdout);
+  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "json-parse-error", /./)(result.stdout);
 });
 
 test("AC5b: central channel PRESENT, syntactically valid JSON, but fails schema validation (effect=\"MAYBE\", per src/policy/rule/schema.ts's real validateRuleSet) -- whole load rejected, exit code 1 (SAME exit code as the JSON-parse-error case above -- 'structurally identical in kind'), distinct schema-invalid reason", () => {
@@ -344,7 +411,7 @@ test("AC5b: central channel PRESENT, syntactically valid JSON, but fails schema 
     baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_SCHEMA_INVALID_RAW, channel: CENTRAL_CHANNEL })),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 for schema-invalid central content (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "schema-invalid", /./)(result.stdout);
+  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "schema-invalid", /./)(result.stdout);
 });
 
 // --- AC5c: CentralPolicySource.read() itself throws (simulated subprocess/timeout failure) ---
@@ -354,7 +421,33 @@ test("AC5c: centralSource.read() itself THROWS (simulated reg-query subprocess f
     baseInput(centralSourceThrowing("simulated: reg query exited with code 1 (subprocess failure fixture)")),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 when the injected CentralPolicySource itself throws (fail-closed, never silently absent); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout("central-channel status=read-error", "read-error", /./)(result.stdout);
+  buildExpectedRejectionStdout("central-channel status=read-error", "central", "read-error", /./)(result.stdout);
+});
+
+// --- Issue #108 [MED] amendment (2026-09-08, red-team round 4): a rejection caused by a NON- ---
+// central layer must never claim the central channel failed. Two new regression tests below,
+// immediately after the existing AC5c test (see INTERPRETATION CHOICE 6 above for full history).
+
+test("ISSUE-108(a): central channel ABSENT and wholly uninvolved, but the PROJECT layer itself fails to parse (a real UTF-8 BOM, this Issue's own repro: PowerShell 5.1 Out-File -Encoding utf8 / Notepad 'UTF-8 with BOM') -- the rejection must name the PROJECT layer, NEVER claim 'central policy load failed'; exit code 1, fail-closed, no rule data leaks", () => {
+  const result: PrinterResult = printEffectivePolicy({
+    shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
+    projectPolicyPath: PROJECT_BOM_MALFORMED_PATH,
+    centralSource: centralSourceReturning({ status: "absent" }),
+  });
+  assert.equal(result.exitCode, 1, `expected exit code 1 for a PROJECT-layer parse failure (fail-closed); stdout=${result.stdout}`);
+  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", /./)(result.stdout);
+  assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the PROJECT layer is the true offender; got:\n${result.stdout}`);
+});
+
+test("ISSUE-108(b): central channel ABSENT and wholly uninvolved, but the SHIPPED-DEFAULTS layer itself fails to parse -- the rejection must name the SHIPPED-DEFAULTS layer, NEVER claim 'central policy load failed'; exit code 1, fail-closed, no rule data leaks (symmetric case completing this Issue's own 'central / shipped-defaults / project' scope -- see INTERPRETATION CHOICE 6 above)", () => {
+  const result: PrinterResult = printEffectivePolicy({
+    shippedDefaultsPath: SHIPPED_DEFAULTS_MALFORMED_PATH,
+    projectPolicyPath: PROJECT_POLICY_PATH,
+    centralSource: centralSourceReturning({ status: "absent" }),
+  });
+  assert.equal(result.exitCode, 1, `expected exit code 1 for a SHIPPED-DEFAULTS-layer parse failure (fail-closed); stdout=${result.stdout}`);
+  buildExpectedRejectionStdout("central-channel status=absent", "shipped-defaults", "json-parse-error", /./)(result.stdout);
+  assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the SHIPPED-DEFAULTS layer is the true offender; got:\n${result.stdout}`);
 });
 
 // --- AC5a/AC5b/AC5c table test: every state pairwise distinguishable, none collapses into the --
