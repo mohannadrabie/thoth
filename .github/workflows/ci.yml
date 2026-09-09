@@ -37,6 +37,25 @@ jobs:
           # QA-02, QA-14 (git diff) and OSS-01 (full history scan) all need real history, not a
           # shallow clone.
           fetch-depth: 0
+          # persist-credentials: false -- measured live (first real post-cifix CI run,
+          # 2026-09-09): the default `true` writes a LOCAL `http.https://github.com/.extraheader`
+          # config entry into THIS checkout's own `.git/config`, carrying the default GITHUB_TOKEN.
+          # Git's `http.<url>.extraheader` matching strips userinfo before comparing URLs, so that
+          # leftover header still applied to the later `git ls-remote https://github.com/
+          # mohannadrabie/adr.git` call below (Issue #127's gitlink-reachability precheck, which
+          # runs directly in THIS checkout's context, not inside the submodule) -- alongside our
+          # own GIT_CONFIG_*-scoped ADR_REPO_PAT credential. GitHub ended up authenticating with
+          # the wrong (default) token, which has zero access to the private `adr` repo, and
+          # returned "Repository not found" -- reproduced directly: a bogus extraheader breaks
+          # even a public-repo `ls-remote`, and still wins when our exact insteadOf mechanism is
+          # active alongside it. Nothing later in this job pushes/fetches/pulls against `thoth`
+          # itself (only local `git diff`/`git log`), so persisting this credential was never
+          # needed -- confirmed via a full grep of this file. This is distinct from, and closes a
+          # gap in, the 3 prior review rounds' own testing: they confirmed the superproject's LOCAL
+          # config does NOT reach the SUBMODULE's own separate git directory during `git submodule
+          # update --init` (still true) -- nobody tested this standalone precheck, which runs in
+          # the superproject's own context and does inherit it.
+          persist-credentials: false
           # submodules is deliberately NOT set here (was `recursive` until 2026-09-09, Issue #27):
           # the `adr` submodule is a PRIVATE repo (mohannadrabie/adr) and this step's own token
           # (the default, repo-scoped GITHUB_TOKEN) cannot read it — every push/PR run died here,
