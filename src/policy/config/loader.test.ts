@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
 import { loadEffectivePolicy } from "./loader.ts";
+import { computePin } from "./pin.ts";
 import type { CentralPolicySource, CentralPolicyResult } from "./central-source.ts";
 
 function withTempDir(fn: (root: string) => void): void {
@@ -402,9 +402,18 @@ test("AC2 (design-challenger Attack F): centralSource.read() is called EXACTLY O
         ["first-read"],
         "the merge must reflect the ONE value read, not a later/different read",
       );
-      // Recompute what the pin WOULD be over the first response's raw bytes, and confirm it
-      // matches -- proving the pin was computed from the SAME single read, not a second one.
-      const rehash = createHash("sha256").update(FIRST_RAW, "utf8").digest("hex");
+      // Recompute what the pin WOULD be over the first response's raw bytes (via the SAME
+      // computePin loader.ts itself calls, not a re-implementation of its hashing logic), and
+      // confirm it matches -- proving the pin was computed from the SAME single central read, not
+      // a second one. Issue #110: the pin now also covers shipped-defaults+project bytes, so the
+      // rehash reads those same two on-disk files rather than assuming central alone.
+      const rehash = computePin({
+        centralStatus: "present",
+        centralChannel: "c",
+        centralRaw: FIRST_RAW,
+        shippedRaw: readFileSync(shippedPath, "utf8"),
+        projectRaw: readFileSync(projectPath, "utf8"),
+      }).digest;
       assert.equal(first.pin.digest, rehash);
     }
   });
@@ -435,4 +444,72 @@ test("AC6: real shipped-defaults.json + real project.json files + injected fixtu
       assert.equal(baseline?.mandatory, true);
     }
   });
+});
+
+// --- Stage-3 fix-now (2026-09-08), Issue #110: pin covers ALL THREE layers, not central alone ----
+
+test("Issue #110: two effective policies differing ONLY in the PROJECT layer produce DIFFERENT pin digests -- the exact gap this Issue named (REQUIREMENTS.md's own POL-09 text warns against closing on the delivery half alone)", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPathA = join(root, "project-a.json");
+    const projectPathB = join(root, "project-b.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [] });
+    writeRuleSetFile(projectPathA, { version: "1.0.0", rules: [{ id: "a", effect: "allow" }] });
+    writeRuleSetFile(projectPathB, { version: "1.0.0", rules: [{ id: "b", effect: "allow" }] });
+
+    const central = centralSourceReturning({ status: "absent" });
+    const resultA = loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPathA, centralSource: central });
+    const resultB = loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPathB, centralSource: central });
+
+    assert.equal(resultA.ok, true);
+    assert.equal(resultB.ok, true);
+    if (resultA.ok && resultB.ok) {
+      assert.notEqual(resultA.pin.digest, resultB.pin.digest, "Issue #110: two effective policies differing only in the project layer must no longer share one pin digest");
+    }
+  });
+});
+
+test("Issue #110: two effective policies differing ONLY in the SHIPPED-DEFAULTS layer produce DIFFERENT pin digests -- symmetric case completing this Issue's own scope", () => {
+  withTempDir((root) => {
+    const shippedPathA = join(root, "shipped-a.json");
+    const shippedPathB = join(root, "shipped-b.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPathA, { version: "1.0.0", rules: [{ id: "a", effect: "deny" }] });
+    writeRuleSetFile(shippedPathB, { version: "1.0.0", rules: [{ id: "b", effect: "deny" }] });
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [] });
+
+    const central = centralSourceReturning({ status: "absent" });
+    const resultA = loadEffectivePolicy({ shippedDefaultsPath: shippedPathA, projectPolicyPath: projectPath, centralSource: central });
+    const resultB = loadEffectivePolicy({ shippedDefaultsPath: shippedPathB, projectPolicyPath: projectPath, centralSource: central });
+
+    assert.equal(resultA.ok, true);
+    assert.equal(resultB.ok, true);
+    if (resultA.ok && resultB.ok) {
+      assert.notEqual(resultA.pin.digest, resultB.pin.digest, "Issue #110: two effective policies differing only in the shipped-defaults layer must no longer share one pin digest");
+    }
+  });
+});
+
+test("Issue #110: identical three-layer content still produces an IDENTICAL pin digest -- the fix adds coverage, it does not break reproducibility (POL-09's own 'byte-for-byte reproducible from identical content' bar)", () => {
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeRuleSetFile(shippedPath, { version: "1.0.0", rules: [{ id: "a", effect: "deny" }] });
+    writeRuleSetFile(projectPath, { version: "1.0.0", rules: [{ id: "b", effect: "allow" }] });
+
+    const central = centralSourceReturning({ status: "present", raw: '{"version":"1.0.0","rules":[]}', channel: "c" });
+    const load = () => loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource: central });
+    const first = load();
+    const second = load();
+
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    if (first.ok && second.ok) assert.equal(first.pin.digest, second.pin.digest);
+  });
+});
+
+test("Issue #110: no concatenation-boundary collision -- a (shipped, project) content split that WOULD collide under naive concatenation ('ab'+'' and 'a'+'b' both concatenate to the identical string 'ab') produces a DIFFERENT digest, because each layer's frame is length-prefixed and labeled rather than bare-concatenated", () => {
+    const digestA = computePin({ centralStatus: "absent", shippedRaw: "ab", projectRaw: "" }).digest;
+    const digestB = computePin({ centralStatus: "absent", shippedRaw: "a", projectRaw: "b" }).digest;
+    assert.notEqual(digestA, digestB, "labeled, length-prefixed frames must not let a (shipped='ab', project='') pin collide with a (shipped='a', project='b') pin, even though a naive concatenation of both pairs is the identical 2-byte string 'ab'");
 });

@@ -175,7 +175,15 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
     { name: "project", ruleSet: projectParsed.ruleSet, origin: input.projectPolicyPath, ruleLines: projectParsed.ruleLines },
   ];
 
-  const pin = computePin({ centralStatus: centralResult.status, centralChannel, centralRaw: centralRawForPin });
+  // Issue #110 fix: the pin now covers shipped-defaults+central+project bytes, not central alone
+  // — `shippedText`/`projectText` are already in hand from the reads above (zero new reads).
+  const pin = computePin({
+    centralStatus: centralResult.status,
+    centralChannel,
+    centralRaw: centralRawForPin,
+    shippedRaw: shippedText,
+    projectRaw: projectText,
+  });
 
   return {
     ok: true,
