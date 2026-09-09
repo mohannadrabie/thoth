@@ -611,3 +611,21 @@ test("Issue #110: no concatenation-boundary collision -- a (shipped, project) co
     const digestB = computePin({ centralStatus: "absent", shippedRaw: "a", projectRaw: "b" }).digest;
     assert.notEqual(digestA, digestB, "labeled, length-prefixed frames must not let a (shipped='ab', project='') pin collide with a (shipped='a', project='b') pin, even though a naive concatenation of both pairs is the identical 2-byte string 'ab'");
 });
+
+// Issue #122 (red-team round-5 re-confirm): the (shipped, project) split above is NON-ADJACENT --
+// the central frame always sits between them in the fixed hash order (shipped-defaults, central,
+// project), so that split cannot collide even with the framing entirely deleted. The two
+// boundaries that actually matter are the ADJACENT ones -- shipped|central and central|project.
+test("Issue #122: neither ADJACENT frame boundary (shipped|central, central|project) admits a collision", () => {
+    // shipped|central boundary: ("ab","c","") vs ("a","bc","") -- project held constant/empty.
+    // Naive concatenation of both: "ab"+"c"+"" === "a"+"bc"+"".
+    const shippedCentralA = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "c", shippedRaw: "ab", projectRaw: "" }).digest;
+    const shippedCentralB = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "bc", shippedRaw: "a", projectRaw: "" }).digest;
+    assert.notEqual(shippedCentralA, shippedCentralB, "labeled, length-prefixed frames must not let a (shipped='ab', central='c') pin collide with a (shipped='a', central='bc') pin");
+
+    // central|project boundary: ("","c","ab") vs ("","cab","") -- shipped held constant/empty.
+    // Naive concatenation of both: ""+"c"+"ab" === ""+"cab"+"".
+    const centralProjectA = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "c", shippedRaw: "", projectRaw: "ab" }).digest;
+    const centralProjectB = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "cab", shippedRaw: "", projectRaw: "" }).digest;
+    assert.notEqual(centralProjectA, centralProjectB, "labeled, length-prefixed frames must not let a (central='c', project='ab') pin collide with a (central='cab', project='') pin");
+});

@@ -34,6 +34,25 @@ test("Issue #110: no concatenation-boundary collision between two different (shi
   assert.notEqual(a.digest, b.digest, "labeled, length-prefixed frames must rule out this exact class of boundary collision");
 });
 
+// Issue #122 (red-team round-5 re-confirm): the (shipped, project) split above is NON-ADJACENT --
+// the central frame always sits between them in the fixed hash order (shipped-defaults, central,
+// project), so that split cannot collide even with the framing entirely deleted (proved by
+// mutation: see the fix-now build receipt). The two boundaries that actually matter are the
+// ADJACENT ones -- shipped|central and central|project -- which this test targets directly.
+test("Issue #122: neither ADJACENT frame boundary (shipped|central, central|project) admits a collision", () => {
+  // shipped|central boundary: ("ab","c","") vs ("a","bc","") -- project held constant/empty so
+  // only the shipped/central split varies. Naive concatenation of both: "ab"+"c"+"" === "a"+"bc"+"".
+  const shippedCentralA = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "c", shippedRaw: "ab", projectRaw: "" });
+  const shippedCentralB = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "bc", shippedRaw: "a", projectRaw: "" });
+  assert.notEqual(shippedCentralA.digest, shippedCentralB.digest, "labeled, length-prefixed frames must not let a (shipped='ab', central='c') pin collide with a (shipped='a', central='bc') pin");
+
+  // central|project boundary: ("","c","ab") vs ("","cab","") -- shipped held constant/empty so
+  // only the central/project split varies. Naive concatenation of both: ""+"c"+"ab" === ""+"cab"+"".
+  const centralProjectA = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "c", shippedRaw: "", projectRaw: "ab" });
+  const centralProjectB = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "cab", shippedRaw: "", projectRaw: "" });
+  assert.notEqual(centralProjectA.digest, centralProjectB.digest, "labeled, length-prefixed frames must not let a (central='c', project='ab') pin collide with a (central='cab', project='') pin");
+});
+
 test("AC2: an absent central channel produces a distinguishable pin state -- never the digest of an empty string", () => {
   const absent = computePin({ centralStatus: "absent", shippedRaw: "s", projectRaw: "p" });
   const emptyStringDigest = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "", shippedRaw: "s", projectRaw: "p" });

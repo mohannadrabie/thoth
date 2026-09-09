@@ -1,0 +1,10 @@
+﻿{
+  "version": "1.0.0-fixture-project-bom-pretty",
+  "rules": [
+    {
+      "id": "project-bom-pretty-example",
+      "effect": "allow",
+      "rationale": "Project fixture saved PRETTY-PRINTED with a leading UTF-8 BOM (red-team round-5 finding 2 / Issue #123 repro: the realistic PowerShell 5.1 Out-File -Encoding utf8 / Notepad UTF-8-with-BOM shape on a normal, human-readable policy file, not a minified one) -- proves the fail-closed rejection contract holds (exit 1, PROJECT layer named, no rule data leaked) even when the JSON.parse error snippet itself spans multiple lines."
+    }
+  ]
+}

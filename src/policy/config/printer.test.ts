@@ -97,8 +97,25 @@
 //                  distinct, nameable causes (AC5b/AC5c's own "distinguishable... asserted
 //                  structurally identical in kind" bar: same exitCode, same 2-line shape, same
 //                  "REJECTED:" prefix, across all three).
-//     Total stdout is EXACTLY these two lines — asserted by exact string equality below, not
-//     merely "contains", so nothing from a partially-parsed rule can leak through.
+//     Total stdout is AT LEAST these two lines. AMENDED 2026-09-08 (Issue #123 [MED], red-team
+//     round-5 finding 2 -- test-writer, per this project's DoD: only test-writer may amend a
+//     locked answer key). The ORIGINAL text here said "EXACTLY these two lines" and
+//     `buildExpectedRejectionStdout` asserted `lines.length === 2` by exact string equality. That
+//     held only for the `ISSUE-108(a)` fixture's accidental shape: a single-line MINIFIED JSON
+//     document. `JSON.parse`'s own thrown error message embeds a short snippet of the source text
+//     it was parsing, and on a PRETTY-PRINTED document (the realistic PowerShell 5.1
+//     `Out-File -Encoding utf8` / Notepad "UTF-8 with BOM" shape this test file's own Issue #108
+//     comment already names as the production trigger) that snippet itself contains a literal
+//     newline -- yielding 3 stdout lines for the IDENTICAL 3-byte EF BB BF BOM prefix, on
+//     otherwise-correct enforcement (exit 1, correct layer named, no rule data leaked). "Exactly 2
+//     lines" was never a stated acceptance criterion; it was an artifact of one fixture's shape,
+//     not a property POL-10/AC5b/AC5c ask for. The two properties that DO matter, and remain
+//     asserted below regardless of line count: (1) line 1 is still the central-channel status
+//     line; (2) the content from line 2 onward, when rejoined, starts with the exact
+//     `REJECTED: <layer> policy load failed (<reason-kind>):` prefix and matches the expected
+//     message pattern; (3) no `rule id=` line ever appears anywhere in stdout (the actual leak
+//     concern, via `assert.doesNotMatch`), asserted against the FULL string, not per-line, so it
+//     is immune to however many lines the message snippet spans.
 //
 // ============================================================================================
 // INTERPRETATION CHOICES made explicitly here (flagged per this project's convention, since the
@@ -220,6 +237,23 @@
 //    the shipped-defaults branch of `renderRejection`/`loader.ts` completely unverified by this
 //    suite would leave a real gap in the very fix this Issue asks for — this is completing the
 //    fix's own stated scope, not scope creep beyond it.
+//
+// 7. AMENDMENT, 2026-09-08 (Issue #123 [MED], red-team round-5 finding 2 -- test-writer). See the
+//    "Total stdout is AT LEAST these two lines" paragraph above (STDOUT GRAMMAR section) for the
+//    full history: `buildExpectedRejectionStdout`'s line-count assertion relaxed from
+//    `lines.length === 2` to `lines.length >= 2`, with the layer/reason-kind prefix and message
+//    pattern now matched against the REJOINED tail (`lines.slice(1).join("\n")`) rather than
+//    against `lines[1]` alone, so a message snippet that itself spans multiple lines is still
+//    checked in full rather than truncated at the first embedded newline. `printer.ts` itself is
+//    UNCHANGED by this amendment -- red-team's own finding confirmed the substantive guarantees
+//    (exit 1, correct `failedLayer` named, `assert.doesNotMatch(actual, /rule id=/)`) already hold
+//    on the pretty-printed-fixture shape; only the test's line-count proxy for "no leak" was wrong.
+//    New regression fixture: `docs/qa/s6-policy-loader-fixtures/printer-project-bom-pretty-malformed.json`
+//    -- the identical 3-byte EF BB BF BOM prefix applied to a PRETTY-PRINTED, multi-line project
+//    file (mirroring `printer-project.json`'s own shape) instead of the `ISSUE-108(a)` fixture's
+//    single-line minified one. New test `ISSUE-108(c)` below, immediately after `ISSUE-108(b)`,
+//    proves this fixture would have FAILED the old exact-2-lines contract (its rejection is 3
+//    lines) while passing the revised one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -239,6 +273,10 @@ const PROJECT_POLICY_PATH = path.join(FIXTURES_DIR, "printer-project.json");
 // the layer failed to parse).
 const PROJECT_BOM_MALFORMED_PATH = path.join(FIXTURES_DIR, "printer-project-bom-malformed.json");
 const SHIPPED_DEFAULTS_MALFORMED_PATH = path.join(FIXTURES_DIR, "printer-shipped-defaults-malformed.json");
+// Issue #123 [MED] amendment fixture (see INTERPRETATION CHOICE 7 above): the identical BOM byte
+// prefix as PROJECT_BOM_MALFORMED_PATH, but on a PRETTY-PRINTED, multi-line project file -- the
+// realistic shape red-team's round-5 finding 2 demonstrated the old exact-2-lines contract failed.
+const PROJECT_BOM_PRETTY_MALFORMED_PATH = path.join(FIXTURES_DIR, "printer-project-bom-pretty-malformed.json");
 
 // Sanity check on this file's OWN fixtures (fails loudly here, not silently downstream, if a
 // future edit to the committed fixture files disagrees with this file's hand-verified line
@@ -330,17 +368,25 @@ function buildExpectedSuccessStdout(centralStatusLine: string, rules: ExpectedRu
 // `layer` (Issue #108 [MED] amendment, see INTERPRETATION CHOICE 6): the layer name the REJECTED
 // line must attribute the failure to — "central", "shipped-defaults", or "project" — WHICHEVER
 // one actually produced this failure, never hardcoded regardless of the true offender.
+// AMENDED 2026-09-08 (Issue #123 [MED], red-team round-5 finding 2 -- see INTERPRETATION CHOICE 7
+// above): line-count relaxed from `=== 2` (exact) to `>= 2` (at least), and the layer/reason-kind
+// prefix + message pattern are now matched against the REJOINED tail of the string (everything
+// after line 1), not against `lines[1]` alone -- so a `JSON.parse` error snippet that itself spans
+// multiple lines (the realistic pretty-printed-fixture shape) is checked in full, not truncated at
+// its first embedded newline. The actual leak guarantee (`doesNotMatch(/rule id=/)`) is unchanged
+// and is still asserted against the FULL string, so it is immune to line count either way.
 function buildExpectedRejectionStdout(centralStatusLine: string, layer: "central" | "shipped-defaults" | "project", reasonKind: string, messagePattern: RegExp): (actual: string) => void {
   return (actual: string) => {
     const lines = actual.split("\n");
-    assert.equal(lines.length, 2, `expected EXACTLY 2 lines on a fail-closed rejection (no rule lines may leak through); got:\n${actual}`);
+    assert.ok(lines.length >= 2, `expected AT LEAST 2 lines on a fail-closed rejection (status line + REJECTED line; a JSON.parse error snippet on a pretty-printed fixture may legitimately embed further newlines -- Issue #123); got:\n${actual}`);
     assert.equal(lines[0], centralStatusLine, `expected line 1 to be the central-channel status line; got:\n${actual}`);
+    const rejectionTail = lines.slice(1).join("\n");
     assert.match(
-      lines[1] ?? "",
+      rejectionTail,
       new RegExp(`^REJECTED: ${layer} policy load failed \\(${reasonKind}\\): `),
-      `expected line 2 to start with the exact "REJECTED: ${layer} policy load failed (${reasonKind}):" prefix -- naming the layer that ACTUALLY failed, not hardcoded to "central" regardless of the true offender (Issue #108 [MED]); got:\n${actual}`,
+      `expected the content from line 2 onward to start with the exact "REJECTED: ${layer} policy load failed (${reasonKind}):" prefix -- naming the layer that ACTUALLY failed, not hardcoded to "central" regardless of the true offender (Issue #108 [MED]); got:\n${actual}`,
     );
-    assert.match(lines[1] ?? "", messagePattern, `expected the rejection message to match ${messagePattern}; got:\n${actual}`);
+    assert.match(rejectionTail, messagePattern, `expected the rejection message to match ${messagePattern}; got:\n${actual}`);
     assert.doesNotMatch(actual, /rule id=/, `expected NO rule data to leak through a fail-closed rejection (AC5b/AC5c "whole load rejected"); got:\n${actual}`);
   };
 }
@@ -449,6 +495,30 @@ test("ISSUE-108(b): central channel ABSENT and wholly uninvolved, but the SHIPPE
   assert.equal(result.exitCode, 1, `expected exit code 1 for a SHIPPED-DEFAULTS-layer parse failure (fail-closed); stdout=${result.stdout}`);
   buildExpectedRejectionStdout("central-channel status=absent", "shipped-defaults", "json-parse-error", /./)(result.stdout);
   assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the SHIPPED-DEFAULTS layer is the true offender; got:\n${result.stdout}`);
+});
+
+// --- Issue #123 [MED] amendment (2026-09-08, red-team round-5 finding 2): the identical BOM byte
+// prefix as ISSUE-108(a), but on a PRETTY-PRINTED (multi-line) project fixture -- the realistic
+// shape a real PowerShell 5.1 Out-File -Encoding utf8 / Notepad save of a normal, human-readable
+// policy file actually produces, per this file's own ISSUE-108(a) comment. This is the exact case
+// that would have FAILED the old "EXACTLY 2 lines" contract (its rejection is 3 lines, because the
+// JSON.parse error snippet itself embeds a newline from the pretty-printed source) -- see
+// INTERPRETATION CHOICE 7 above for the full history.
+
+test("ISSUE-108(c): a UTF-8 BOM on a PRETTY-PRINTED (multi-line) project file still names the PROJECT layer, exits 1, and leaks no rule data -- even though its rejection spans MORE than 2 stdout lines (the JSON.parse error snippet embeds a newline from the pretty-printed source), the shape red-team round-5 finding 2 showed the ORIGINAL exact-2-lines contract would have wrongly failed on", () => {
+  const result: PrinterResult = printEffectivePolicy({
+    shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
+    projectPolicyPath: PROJECT_BOM_PRETTY_MALFORMED_PATH,
+    centralSource: centralSourceReturning({ status: "absent" }),
+  });
+  assert.equal(result.exitCode, 1, `expected exit code 1 for a PROJECT-layer parse failure (fail-closed); stdout=${result.stdout}`);
+  // The property this test exists to prove: this fixture's rejection is MORE than 2 lines (the
+  // exact shape the old contract could not tolerate) -- asserted explicitly here, not just relied
+  // on implicitly, so this test would itself have failed loudly (a wrong `=== 2`) rather than
+  // silently passing had the relaxation in INTERPRETATION CHOICE 7 not been made.
+  assert.ok(result.stdout.split("\n").length > 2, `expected this PRETTY-PRINTED BOM fixture's rejection to span MORE than 2 lines (proving it exercises the shape the old exact-2-lines contract could not tolerate); got:\n${result.stdout}`);
+  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", /./)(result.stdout);
+  assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the PROJECT layer is the true offender; got:\n${result.stdout}`);
 });
 
 // --- AC5a/AC5b/AC5c table test: every state pairwise distinguishable, none collapses into the --

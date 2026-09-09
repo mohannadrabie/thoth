@@ -154,3 +154,93 @@ Verified after the edit:
 - `node --test src/policy/config/printer.test.ts` → `tests 11`, `pass 11`, `fail 0`, `cancelled 0`, `skipped 0` — same 11-test suite, all green, identical to the suite's state immediately before this lint fix (printer.ts's Issue #108 fix had already landed in production code prior to this pass, so both new ISSUE-108(a)/(b) regression tests were already passing green going into this edit and remain green after it — this was never re-run as a new red/green cycle, only checked for outcome-neutrality).
 
 No verdict change. This is a lint correction on already-landed, already-green test content, not a new RED-CONFIRMED cycle.
+
+---
+
+## Addendum (2026-09-08, Issue #123 [MED] fix-now — locked-contract relaxation, test-writer amendment)
+
+Source: `gh issue view 123`, and `docs/reviews/s6-policy-centralization-red-team-round5-2026-09-08.md` finding 2 (full repro and exposure analysis there; this addendum records only test-writer's own decision and evidence).
+
+### The gap
+
+`buildExpectedRejectionStdout` asserted `lines.length === 2` on every fail-closed rejection. That held only because the `ISSUE-108(a)` BOM fixture is a single-line minified JSON file. The identical 3-byte `EF BB BF` BOM applied to this repo's own pretty-printed `printer-project.json` — the realistic PowerShell 5.1 `Out-File -Encoding utf8` / Notepad shape the test's own comment names — produces 3 lines, because `JSON.parse`'s thrown-error snippet embeds a newline pulled from the pretty-printed source. No enforcement gap: exit code, layer naming, and no-leak all hold on that input.
+
+### The call: relax the contract (option a), not fix the printer (option b)
+
+Read `src/policy/config/printer.ts`'s `renderRejection` (lines 65-76) directly before deciding. It joins exactly two parts — the status line and one `REJECTED: ...` string — with a single `"\n"`. The printer never introduces a second newline; `message` is `loader.ts`'s `parseLayerText` output, i.e. `JSON.parse`'s own thrown message verbatim. V8's `JSON.parse` error messages embed a source snippet, which legitimately contains `\n` whenever the failure lands inside a multi-line document — confirmed directly, not assumed (command below).
+
+"Exactly 2 lines" was never a stated acceptance criterion. POL-10/AC5b/AC5c ask for "whole load rejected, no rule data leaked" — exactly what `assert.doesNotMatch(actual, /rule id=/)` already checks, independent of line count. Option (b) would require the printer to normalize/collapse an upstream `JSON.parse` error message — a real but unrelated feature nothing in this Issue or any AC asks for, existing only to satisfy a test artifact. No `printer.ts` change requested.
+
+```
+$ node -e "const fs=require('fs'); const p='docs/qa/s6-policy-loader-fixtures/printer-project-bom-pretty-malformed.json'; const t=fs.readFileSync(p,'utf8'); try{JSON.parse(t)}catch(e){console.log('message lines:', (p+': '+e.message).split(String.fromCharCode(10)).length)}"
+message lines: 2
+```
+
+The message itself carries 1 embedded newline; joined with the status line, full stdout is 3 lines.
+
+### Changes made (test file + fixture only — no production code touched)
+
+| File | Change |
+|---|---|
+| `src/policy/config/printer.test.ts` | `buildExpectedRejectionStdout`: `assert.equal(lines.length, 2, ...)` → `assert.ok(lines.length >= 2, ...)`. Layer/reason-kind prefix and message-pattern matching moved from `lines[1]` alone to the rejoined tail (`lines.slice(1).join("\n")`), so a multi-line message is checked in full. `doesNotMatch(/rule id=/)` unchanged (already full-string). Header comment (STDOUT GRAMMAR) and a new INTERPRETATION CHOICE 7 document the amendment, per this file's own disclosure convention. |
+| `src/policy/config/printer.test.ts` | New test `ISSUE-108(c)`, after `ISSUE-108(b)`: BOM rejection on the pretty-printed fixture. Asserts `result.stdout.split("\n").length > 2` explicitly (proving it exercises the shape the old contract could not tolerate) before running the same `buildExpectedRejectionStdout` + central-misattribution checks as (a)/(b). |
+| `docs/qa/s6-policy-loader-fixtures/printer-project-bom-pretty-malformed.json` (new) | The identical 3-byte `EF BB BF` BOM prefix as `printer-project-bom-malformed.json`, applied to a pretty-printed, multi-line document (mirrors `printer-project.json`'s shape) instead of a minified one. |
+
+### Proof this is a genuine regression case, not incidentally green
+
+Ran the fixture through the real printer, outside the test file, against the OLD (`=== 2`) contract:
+
+```
+$ node -e "import('./src/policy/config/printer.ts').then(async ({printEffectivePolicy}) => { const r = printEffectivePolicy({ shippedDefaultsPath: 'docs/qa/s6-policy-loader-fixtures/printer-shipped-defaults.json', projectPolicyPath: 'docs/qa/s6-policy-loader-fixtures/printer-project-bom-pretty-malformed.json', centralSource: { read: () => ({ status: 'absent' }) } }); console.log('exitCode:', r.exitCode); console.log('line count:', r.stdout.split(String.fromCharCode(10)).length); })"
+exitCode: 1
+line count: 3
+```
+
+`=== 2` would be `false` — this fixture would have failed the old contract while remaining fail-closed and leak-free. `ISSUE-108(c)` proves the same input passes under the revised `>= 2` contract with all substantive guarantees intact.
+
+### Checks run after the edit
+
+```
+$ node --test src/policy/config/printer.test.ts
+tests 12   pass 12   fail 0   skipped 0
+
+$ node --test 'src/policy/config/*.test.ts'
+tests 73   pass 73   fail 0   skipped 0
+
+$ npm run lint       -> exit 0, no output
+$ npm run typecheck  -> exit 0, no output
+
+$ npm test
+tests 658   pass 657   fail 1   skipped 0   todo 0
+```
+
+The one `npm test` failure is `src/secret-scan/history-scan.test.ts:70` (`internal-hostname` false positive) — pre-existing, tracked as **Issue #113**, already confirmed pre-existing by red-team's round-5 report (finding 14). Not touched by this pass.
+
+### Lane discipline
+
+```
+$ git status --short
+ M src/policy/config/printer.test.ts
+?? docs/qa/s6-policy-loader-fixtures/printer-project-bom-pretty-malformed.json
+```
+
+No production code touched. (The two Issue #108 fixtures from the prior addendum are already committed; only the new pretty-printed fixture is added this pass.)
+
+### AC/tag mapping
+
+```
+$ grep -c "^test(\"ISSUE-108" src/policy/config/printer.test.ts
+3
+$ grep -c "^test(" src/policy/config/printer.test.ts
+12
+```
+
+3 `ISSUE-108`-tagged tests total (a, b, new c) — this pass adds exactly 1, the single named regression case Issue #123 asked for. This is a targeted contract relaxation plus one named regression case, not a fresh acceptance-criteria pass — no AC left untagged for this fix-now's scope, no duplicate tags.
+
+RECEIPT: verdict=RED-CONFIRMED
+scope=API
+discovery: ui-framework=n/a api-framework=found: node:test (existing convention, unchanged)
+tests="0/0/0/1" mapped to 1/1 acceptance criteria (grep-counted: 1 new ISSUE-108(c)-tagged test, Issue #123's single named regression-test ask)
+red-run: checks="1/1" (ISSUE-108(c) demonstrated, via direct printer invocation outside the test file, to fail the OLD `assert.equal(lines.length, 2)` contract before this amendment — exitCode=1, line count=3, `=== 2` is false; green under the revised `>= 2` contract, 0 unexpectedly failing/passing. This is a locked-answer-key CONTRACT RELAXATION per CLAUDE.md's "only test-writer may amend a locked answer key" rule, not a fresh red-then-implementer-turns-green cycle — no production code changed)
+adr=HIT(35)
+report=docs/reviews/s6-printer-test-writer-fixnow-2026-09-08.md (this addendum)
