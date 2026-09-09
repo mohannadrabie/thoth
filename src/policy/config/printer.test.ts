@@ -194,9 +194,10 @@
 //    and wholly uninvolved, yet the original grammar rendered `REJECTED: central policy load
 //    failed (json-parse-error): ...project-bom....json: Unexpected token...` — misnaming the
 //    offending layer. `docs/qa/s6-policy-loader-fixtures/printer-project-bom-malformed.json`
-//    (added by this amendment) is that exact fixture: a real 3-byte EF BB BF BOM prefix (not an
-//    escaped `﻿` string — proving this against the SAME on-disk byte shape a real Windows
-//    save produces, through printer.ts's own real `readFileSync` call, not a simulated string).
+//    (added by this amendment) is that exact fixture: a real 3-byte EF BB BF BOM prefix (not a
+//    literal U+FEFF BOM character embedded as a string escape — proving this against the SAME
+//    on-disk byte shape a real Windows save produces, through printer.ts's own real
+//    `readFileSync` call, not a simulated string).
 //
 //    Two named regression tests were requested for this Issue: (a) "a rejection caused by the
 //    PROJECT layer never claims the central channel failed" — added below, immediately after the

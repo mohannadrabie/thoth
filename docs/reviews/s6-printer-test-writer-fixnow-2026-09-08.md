@@ -144,3 +144,13 @@ tests="0/2/0/2" mapped to 2/2 acceptance criteria (grep-counted from ISSUE-108 t
 red-run: checks="2/11" (9 pre-existing tests pass unchanged, 2 new regression tests fail cleanly on the layer-naming assertion, 0 unexpectedly passing)
 adr=HIT(35)
 report=docs/reviews/s6-printer-test-writer-fixnow-2026-09-08.md
+
+---
+
+**Addendum (2026-09-08, lint-only correction, same day):** `npm run lint` flagged `no-irregular-whitespace` at line 198 of `printer.test.ts` — the INTERPRETATION CHOICE 6 comment block had embedded a literal UTF-8 BOM character (U+FEFF) directly inside backtick-quoted comment prose, rather than describing it in words. Replaced with the textual phrase "a literal U+FEFF BOM character embedded as a string escape" — same point, no irregular-whitespace byte. Comment-only change: no test assertion, no fixture byte, no RECEIPT content touched. The real BOM bytes this amendment's fix depends on remain correctly in the binary fixture `docs/qa/s6-policy-loader-fixtures/printer-project-bom-malformed.json`, untouched.
+
+Verified after the edit:
+- `npm run lint` → clean, exit 0, project-wide (no `no-irregular-whitespace` or any other finding).
+- `node --test src/policy/config/printer.test.ts` → `tests 11`, `pass 11`, `fail 0`, `cancelled 0`, `skipped 0` — same 11-test suite, all green, identical to the suite's state immediately before this lint fix (printer.ts's Issue #108 fix had already landed in production code prior to this pass, so both new ISSUE-108(a)/(b) regression tests were already passing green going into this edit and remain green after it — this was never re-run as a new red/green cycle, only checked for outcome-neutrality).
+
+No verdict change. This is a lint correction on already-landed, already-green test content, not a new RED-CONFIRMED cycle.
