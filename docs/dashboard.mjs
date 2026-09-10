@@ -98,7 +98,7 @@ function readGitHub() {
   out.available = true;
   try {
     const json = sh(["gh", "issue", "list", "--state", "all", "--limit", "500", "--json",
-      "number,title,state,labels,milestone"]);
+      "number,title,state,labels,milestone,createdAt,closedAt"]);
     out.issues = JSON.parse(json);
   } catch { out.note += " Issue query failed."; }
   try {
@@ -140,19 +140,33 @@ function deriveStats(rows) {
 
 function deriveGitHubStats(gh) {
   const bySeverity = new Map(); // severity:x -> count (from bug-labeled issues)
-  let open = 0, closed = 0, bugCount = 0;
+  let open = 0, closed = 0, bugCount = 0, bugOpen = 0, bugClosed = 0;
   const tracking = [];
+  const now = Date.now();
+  const ageDays = iso => iso ? Math.max(0, Math.round((now - new Date(iso).getTime()) / 86400000)) : null;
   for (const iss of gh.issues || []) {
     if (iss.state === "OPEN") open++; else closed++;
     const labelNames = (iss.labels || []).map(l => l.name);
     if (labelNames.includes("bug")) {
       bugCount++;
+      if (iss.state === "OPEN") bugOpen++; else bugClosed++;
       const sev = labelNames.find(n => n.startsWith("severity:")) || "severity:unlabeled";
       bySeverity.set(sev, (bySeverity.get(sev) || 0) + 1);
     }
-    if (labelNames.includes("current-focus")) tracking.push({ number: iss.number, title: iss.title, state: iss.state });
+    // "Needs a human right now" — current-focus, or blocked-on-owner where a project hasn't adopted
+    // current-focus yet (per /maat:init's label bootstrap, current-focus is meant to be a superset).
+    if (labelNames.includes("current-focus") || labelNames.includes("blocked-on-owner")) {
+      tracking.push({
+        number: iss.number, title: iss.title, state: iss.state,
+        ageDays: iss.state === "OPEN" ? ageDays(iss.createdAt) : null,
+      });
+    }
   }
-  return { bySeverity, open, closed, bugCount, tracking };
+  // fix-now vs deferred: a bug-labeled Issue closes only when the finding it names is actually
+  // fixed (state_reason: completed, per CLAUDE.md's Issue Discipline) — so among findings that
+  // became Issues, closed:open is the real fixed-now:deferred ratio, not a guess.
+  const deferredPct = bugCount ? Math.round((bugOpen / bugCount) * 100) : null;
+  return { bySeverity, open, closed, bugCount, bugOpen, bugClosed, deferredPct, tracking };
 }
 
 
@@ -301,7 +315,7 @@ function deriveAgentQuality(reports, runLog) {
 
 // ---------- 2c. run-log.jsonl (the Manager's judgements) ----------
 function readRunLog() {
-  const empty = { available: false, entries: 0, byEvent: {}, reopensByAgent: {}, triagedByAgent: {}, tiers: { ratified: 0, changed: 0 }, council: {}, recent: [] };
+  const empty = { available: false, entries: 0, byEvent: {}, reopensByAgent: {}, triagedByAgent: {}, tiers: { ratified: 0, changed: 0 }, council: {}, recent: [], storyShipped: [] };
   if (!existsSync(RUN_LOG)) return { ...empty, note: `${RUN_LOG} not found — no Manager-decision data yet.` };
   let text = "";
   try { text = readFileSync(RUN_LOG, "utf8"); } catch { return { ...empty, note: `${RUN_LOG} unreadable.` }; }
@@ -314,13 +328,23 @@ function readRunLog() {
   }
   const out = { ...empty, available: true, note: null, entries: rows.length, recent: rows.slice(-15).reverse() };
   out.byEvent = {}; out.reopensByAgent = {}; out.triagedByAgent = {}; out.council = {};
-  out.tiers = { ratified: 0, changed: 0 };
+  out.tiers = { ratified: 0, changed: 0 }; out.storyShipped = [];
   for (const r of rows) {
     out.byEvent[r.event] = (out.byEvent[r.event] || 0) + 1;
     if (r.event === "receipt-reopened" && r.agent) { const a = agentOf(r.agent); out.reopensByAgent[a] = (out.reopensByAgent[a] || 0) + 1; }
     if (r.event === "severity-triaged" && r.agent) { const a = agentOf(r.agent); out.triagedByAgent[a] = (out.triagedByAgent[a] || 0) + 1; }
     if (r.event === "tier-ratified") { out.tiers.ratified++; if (String(r.changed) === "true") out.tiers.changed++; }
     if (r.event === "council" && r.verdict) out.council[r.verdict] = (out.council[r.verdict] || 0) + 1;
+    // Every story-shipped event, not just the last 15 — this is the whole population the
+    // efficiency panel's distributions (rounds-to-ship median/p90) are computed over.
+    if (r.event === "story-shipped") {
+      out.storyShipped.push({
+        scope: r.scope || "", at: r.at || "",
+        rounds: Number(r.rounds) || 0, reports: Number(r.reports) || 0,
+        findings: Number(r.findings) || 0, adrTokensSaved: Number(r.adrTokensSaved) || 0,
+        councilFired: String(r.councilFired) === "true",
+      });
+    }
   }
   return out;
 }
@@ -385,13 +409,86 @@ function deriveAuditHighlights(reports) {
   };
 }
 
+// ---------- 2f. efficiency & ceremony cost ----------
+// The metric NOT to show here is a docs-vs-code ratio: this plugin's whole design assumes doc-heavy
+// output (reports, receipts, ADRs) as the EVIDENCE that review happened, so a low docs/code ratio
+// would only mean review evidence stopped being written, not that the process got more efficient.
+// What actually answers "is this ceremony earning its keep" is measured below instead: how many
+// rounds a story actually took, whether later rounds were still finding NEW things or just
+// re-confirming, how often rule 16 had to intervene, whether findings resolve or pile up as
+// backlog, and whether receipts can be trusted at face value.
+function percentile(sorted, p) {
+  if (!sorted.length) return null;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+function deriveRoundsToShip(runLog, perStory) {
+  // Primary source: docs/run-log.jsonl "story-shipped" events (mechanically logged at ship.md stage
+  // 6) — exact, final reviewRoundsTotal per story. Falls back to REVIEW_LOG.md's row-count-per-story
+  // proxy only when no story has shipped through the new logging yet, so the panel still shows
+  // something on a project mid-migration rather than an empty table.
+  const shipped = runLog.storyShipped || [];
+  if (shipped.length) {
+    const sorted = [...shipped].map(s => s.rounds).sort((a, b) => a - b);
+    return {
+      source: "run-log.jsonl story-shipped events (exact)",
+      n: shipped.length,
+      median: percentile(sorted, 50), p90: percentile(sorted, 90), max: sorted[sorted.length - 1] || 0,
+      perStory: shipped,
+    };
+  }
+  const proxyRows = [...perStory.entries()].map(([k, v]) => ({ scope: k, rounds: v.rows, reports: null, findings: null, adrTokensSaved: null, councilFired: null }));
+  const sorted = proxyRows.map(r => r.rounds).sort((a, b) => a - b);
+  return {
+    source: sorted.length ? "docs/REVIEW_LOG.md row count per story (proxy — no story-shipped events logged yet)" : "no data",
+    n: proxyRows.length,
+    median: percentile(sorted, 50), p90: percentile(sorted, 90), max: sorted[sorted.length - 1] || 0,
+    perStory: proxyRows,
+  };
+}
+// Findings-per-round trend, per story: are later rounds still finding NEW distinct issues, or just
+// re-confirming a fix with nothing new? Built from receipts (which already carry issues+suspicions
+// counts per dated report), grouped by the same story-prefix convention deriveStats() uses, ordered
+// by date. A trailing run of zero-finding rounds after at least one non-zero round is a legitimate
+// "converging" signal; a non-zero finding on the LAST round is "still finding things" — neither is
+// automatically bad, but a story that is still finding things after many rounds is the shape rule
+// 16(d) exists to catch, and this table is what makes that visible before the round count alone would.
+function deriveFindingsTrend(reports) {
+  const byStory = new Map();
+  for (const r of reports) {
+    if (r.isMetaAudit || !r.hasReceipt) continue;
+    const m = r.scope.match(/^(story\d+)/i);
+    const key = m ? m[1].toLowerCase() : r.scope || "(unscoped)";
+    if (!byStory.has(key)) byStory.set(key, []);
+    byStory.get(key).push({ date: r.date, findings: r.issues + r.suspicions, agent: r.agent });
+  }
+  const out = [];
+  for (const [story, rounds] of byStory) {
+    rounds.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const seq = rounds.map(r => r.findings);
+    const last = seq[seq.length - 1] ?? null;
+    const everFoundSomething = seq.some(n => n > 0);
+    let signal;
+    if (seq.length < 2) signal = "single round";
+    else if (last > 0) signal = "still finding things";
+    else if (everFoundSomething) signal = "converged";
+    else signal = "clean throughout";
+    out.push({ story, rounds: rounds.length, seq, signal });
+  }
+  return out.sort((a, b) => {
+    const na = parseInt((a.story.match(/\d+/) || ["999999"])[0], 10);
+    const nb = parseInt((b.story.match(/\d+/) || ["999999"])[0], 10);
+    return na - nb;
+  });
+}
+
 // ---------- 4. Render ----------
 function bar(count, max) {
   const pct = max > 0 ? Math.max(2, Math.round((count / max) * 100)) : 0;
   return `<div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>`;
 }
 
-function render({ generatedAt, reviewLogNote, rows, stats, gh, ghStats, quality, runLog, features, audit, receiptNote }) {
+function render({ generatedAt, reviewLogNote, rows, stats, gh, ghStats, quality, runLog, features, audit, receiptNote, reports, roundsToShip, findingsTrend }) {
   const totalRows = rows.length;
   const maxVerdict = Math.max(1, ...[...stats.verdictMix.values()]);
   const maxAgent = Math.max(1, ...[...stats.perAgent.values()]);
@@ -415,11 +512,33 @@ function render({ generatedAt, reviewLogNote, rows, stats, gh, ghStats, quality,
     .map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.scope)}</td><td>${esc(r.agent)}</td><td>${esc(r.verdict)}</td><td class="mono">${esc(r.report)}</td></tr>`)
     .join("\n");
 
+  // ----- efficiency & ceremony cost -----
+  const reportsWithReceipt = reports.filter(r => r.hasReceipt && !r.isMetaAudit).length;
+  const reopenedTotal = runLog.byEvent ? (runLog.byEvent["receipt-reopened"] || 0) : 0;
+  const reopenRatePct = reportsWithReceipt ? Math.round((reopenedTotal / reportsWithReceipt) * 100) : null;
+  const councilCount = runLog.council ? ((runLog.council.GO || 0) + (runLog.council["NO-GO"] || 0)) : 0;
+  const councilRatePct = roundsToShip.n ? Math.round((councilCount / roundsToShip.n) * 100) : null;
+
+  const roundsRows = roundsToShip.perStory.length
+    ? [...roundsToShip.perStory].sort((a, b) => {
+        const na = parseInt((a.scope.match(/\d+/) || ["999999"])[0], 10);
+        const nb = parseInt((b.scope.match(/\d+/) || ["999999"])[0], 10);
+        return na - nb;
+      }).map(s => `<tr><td>${esc(s.scope)}</td><td class="num">${s.rounds}</td><td class="num">${s.reports ?? "—"}</td><td class="num">${s.findings ?? "—"}</td><td class="num">${s.adrTokensSaved ?? "—"}</td><td>${s.councilFired === null ? "—" : (s.councilFired ? `<span class="flag warn">yes</span>` : "")}</td></tr>`).join("\n")
+    : `<tr><td colspan="6">No stories shipped through this logging yet.</td></tr>`;
+
+  const trendRows = findingsTrend.length
+    ? findingsTrend.map(t => {
+        const cls = t.signal === "still finding things" ? "warn" : t.signal === "converged" ? "ok" : "";
+        return `<tr><td>${esc(t.story)}</td><td class="num">${t.rounds}</td><td class="mono">${t.seq.join(" → ")}</td><td><span class="flag ${cls}">${esc(t.signal)}</span></td></tr>`;
+      }).join("\n")
+    : `<tr><td colspan="4">No receipted reports to trend yet.</td></tr>`;
+
   const ghSevRows = [...ghStats.bySeverity.entries()].sort((a, b) => b[1] - a[1])
     .map(([s, n]) => `<tr><td>${esc(s)}</td><td class="num">${n}</td></tr>`).join("\n");
 
-  const trackingRows = ghStats.tracking
-    .map(t => `<tr><td>#${t.number}</td><td>${esc(t.title)}</td><td>${esc(t.state)}</td></tr>`).join("\n");
+  const trackingRows = [...ghStats.tracking].sort((a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1))
+    .map(t => `<tr><td>#${t.number}</td><td>${esc(t.title)}</td><td>${esc(t.state)}</td><td class="num">${t.ageDays === null ? "—" : `${t.ageDays}d`}</td></tr>`).join("\n");
 
   const milestoneSection = gh.milestonesOk
     ? (gh.milestones.length
@@ -549,6 +668,26 @@ function render({ generatedAt, reviewLogNote, rows, stats, gh, ghStats, quality,
     <div class="tile"><div class="n">${milestoneTileValue}</div><div class="l">Milestones</div></div>
   </div>
 
+  <h2>Efficiency &amp; ceremony cost <span class="badge">is the process earning its keep, not just producing volume</span></h2>
+  <p class="note">Deliberately NOT a docs-vs-code ratio: this plugin's reports and receipts ARE the evidence a review happened, so fewer of them isn't automatically better. These numbers instead answer whether the ceremony a story went through was earning its keep.</p>
+  <div class="tiles">
+    <div class="tile"><div class="n">${roundsToShip.median ?? "—"}</div><div class="l">Median rounds to ship</div></div>
+    <div class="tile"><div class="n">${roundsToShip.p90 ?? "—"}</div><div class="l">P90 rounds to ship</div></div>
+    <div class="tile"><div class="n">${councilRatePct === null ? "—" : councilRatePct + "%"}</div><div class="l">Stories that hit council (rule 16)</div></div>
+    <div class="tile"><div class="n">${reopenRatePct === null ? "—" : reopenRatePct + "%"}</div><div class="l">Receipts reopened at audit</div></div>
+    <div class="tile"><div class="n">${ghStats.deferredPct === null ? "—" : ghStats.deferredPct + "%"}</div><div class="l">Bug findings still open (deferred)</div></div>
+  </div>
+  <p class="note">Rounds-to-ship source: ${esc(roundsToShip.source)}.</p>
+
+  <h3>Rounds and cost per story</h3>
+  <table><thead><tr><th>Story</th><th class="num">Rounds</th><th class="num">Reports</th><th class="num">Findings</th><th class="num">ADR tokens saved</th><th>Council fired</th></tr></thead>
+  <tbody>${roundsRows}</tbody></table>
+
+  <h3>Findings-per-round trend <span class="badge">still finding things, or converged?</span></h3>
+  <p class="note">The sequence is findings count per dated round, oldest first. "Still finding things" on the LAST round is not automatically bad — a genuinely hard story finds new things late — but a story that stays in this state for many rounds without stringing together 3 consecutive clean-adjacent rounds is exactly the shape rule 16(d) (6 total non-clean rounds) exists to catch.</p>
+  <table><thead><tr><th>Story</th><th class="num">Rounds</th><th>Findings per round</th><th>Signal</th></tr></thead>
+  <tbody>${trendRows}</tbody></table>
+
   <h2>Verdict mix (from docs/REVIEW_LOG.md)</h2>
   <table><thead><tr><th>Verdict</th><th class="num">Count</th><th></th></tr></thead>
   <tbody>${verdictRows || `<tr><td colspan="3">No rows.</td></tr>`}</tbody></table>
@@ -596,9 +735,10 @@ function render({ generatedAt, reviewLogNote, rows, stats, gh, ghStats, quality,
   <table><thead><tr><th>Bug severity label</th><th class="num">Count</th></tr></thead>
   <tbody>${ghSevRows || `<tr><td colspan="2">No bug-labeled issues found.</td></tr>`}</tbody></table>
 
-  <h2>Current-Focus tracking issues</h2>
-  <table><thead><tr><th>#</th><th>Title</th><th>State</th></tr></thead>
-  <tbody>${trackingRows || `<tr><td colspan="3">None found.</td></tr>`}</tbody></table>
+  <h2>Needs a human <span class="badge">current-focus / blocked-on-owner, open only</span></h2>
+  <p class="note">Age is how long an OPEN item has been waiting since it was filed — the number that answers "how long has this actually been sitting."</p>
+  <table><thead><tr><th>#</th><th>Title</th><th>State</th><th class="num">Age</th></tr></thead>
+  <tbody>${trackingRows || `<tr><td colspan="4">None found.</td></tr>`}</tbody></table>
 
   <h2>Milestones</h2>
   <table><thead><tr><th>Title</th><th class="num">Open issues</th><th class="num">Closed issues</th><th>State</th></tr></thead>
@@ -624,11 +764,13 @@ function main() {
   const quality = deriveAgentQuality(reports, runLog);
   const features = deriveFeatureProgress(gh);
   const audit = deriveAuditHighlights(reports);
+  const roundsToShip = deriveRoundsToShip(runLog, stats.perStory);
+  const findingsTrend = deriveFindingsTrend(reports);
 
   const html = render({
     generatedAt: new Date().toISOString(),
     reviewLogNote, receiptNote,
-    rows, stats, gh, ghStats, quality, runLog, features, audit,
+    rows, stats, gh, ghStats, quality, runLog, features, audit, reports, roundsToShip, findingsTrend,
   });
 
   const tmp = OUT + "." + process.pid + ".tmp";

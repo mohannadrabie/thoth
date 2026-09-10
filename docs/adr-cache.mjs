@@ -142,11 +142,6 @@ function parseAdr(path) {
   // --- YAML frontmatter (if present) ---
   let fmEnd = -1;
   if (lines[0] === "---") fmEnd = lines.indexOf("---", 1);
-  let pendingSupersededBy = ""; // scoped, single-purpose: folded into e.status below, never its own
-                                 // catalog field — the general supersedes/supersededBy propagation
-                                 // mechanism stays deferred (docs/backlog.md); this only makes an
-                                 // ADR's own declared *pending* (not yet accepted) supersession visible
-                                 // to a catalog-only reader, per Issue #56.
   if (fmEnd > 0) {
     const fm = lines.slice(1, fmEnd);
     for (let i = 0; i < fm.length; i++) {
@@ -156,7 +151,6 @@ function parseAdr(path) {
       if (key === "id" && val) e.id = val;
       else if (key === "title" && val) e.title = val;
       else if (key === "status" && val) e.status = val.split(/[ |]/)[0];
-      else if (key === "pendingSupersededBy" && val) pendingSupersededBy = val;
       else if (key === "applicableTo") {
         if (val.startsWith("[")) e.applicableTo = val.replace(/[[\]]/g, "").split(",").map(s => s.trim()).filter(Boolean);
         else for (let j = i + 1; j < fm.length && /^\s*-\s+/.test(fm[j]); j++) e.applicableTo.push(fm[j].replace(/^\s*-\s+/, "").replace(/#.*$/, "").trim());
@@ -170,9 +164,6 @@ function parseAdr(path) {
       }
     }
   }
-  // Fold the pending-supersession fact into the existing `status` field (no new catalog key) —
-  // e.g. "accepted" -> "accepted (pending supersession by ADR-0021)". Verbatim, catalog-visible.
-  if (pendingSupersededBy && e.status) e.status = `${e.status} (pending supersession by ${pendingSupersededBy})`;
 
   // --- MADR / markdown fallbacks (fill whatever frontmatter didn't provide) ---
   const body = fmEnd > 0 ? lines.slice(fmEnd + 1) : lines;

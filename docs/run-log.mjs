@@ -44,6 +44,14 @@ const EVENTS = {
   "deadlock-ruled":   ["scope", "agents", "decision", "row"],
   "council":          ["scope", "trigger", "verdict", "rounds"],
   "stage":            ["scope", "stage", "outcome"],
+  // Logged once by ship.md stage 6, on every SHIPPABLE handoff — this is the one mechanical record
+  // of what a whole story actually cost, so the dashboard's efficiency panel has something to
+  // aggregate instead of guessing from review-log row counts. `rounds` is the final
+  // reviewRoundsTotal (rule 16(d)'s counter) at handoff, `reports` the count of dated reports this
+  // story produced, `findings` the sum of issues+suspicions across them, `adrTokensSaved` the
+  // session's own cumulative ADR-cache HIT estimate for this story (0 if none), `councilFired`
+  // "true"/"false" for whether rule 16 convened a council on this story at all.
+  "story-shipped":    ["scope", "rounds", "reports", "findings", "adrTokensSaved", "councilFired"],
 };
 
 const soft = (msg) => { process.stdout.write(`run-log: ${msg}\n`); process.exit(0); };
