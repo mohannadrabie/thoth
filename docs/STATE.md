@@ -1,9 +1,24 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-09 (session wrap-up — `cifix` SHIPPED: CI restored, committed, awaiting human push)
+**Last updated:** 2026-09-10 (session resume — `cifix` CONFIRMED working in real CI; Issue #27 closed; next blocker is Issue #120, not yet started)
 
-## Resume point — `cifix` (CI restoration) built, reviewed (3 Stage-3 rounds + 1 design council), verified, audited. SHIPPABLE, committed, ready for the human's push.
+## Resume point — `cifix` fully validated in production CI. Issue #27 CLOSED. Current blocker: Issue #120 (QA-14/QA-15), not yet planned.
+
+**This session opened on `/maat:ship "continue where we stopped"` and found `docs/STATE.md` itself stale** — real work had happened outside any tracked session between this file's last update and now. Reconciled from real git/GitHub/CI state (not trusted from the doc), per this project's own established discipline:
+
+1. **The human had already pushed `cifix`, provisioned `ADR_REPO_PAT`, and personally iterated two more real CI-only bugs it exposed** — neither was catchable pre-push, both fixed same-day, both already on `origin/master` before this session started:
+   - `c0551ca` — empty retrigger commit, after independently confirming (real local `git ls-remote`) the PAT's Contents permission needed to be Read-only.
+   - `187e4f4` — `persist-credentials: false` added to the Checkout step: `actions/checkout`'s default leaves a local `.extraheader` carrying the default `GITHUB_TOKEN`, which still applied to the standalone `git ls-remote` precheck (Issue #127's own mechanism) and collided with `cifix`'s `ADR_REPO_PAT`-based `insteadOf` rewrite, authenticating with the wrong (no-access) token. Reproduced directly, not assumed. Logged `docs/decisions.md`'s 2026-09-09 row (human explicitly chose to skip a fresh reviewer pass — small, narrowly scoped, empirically reproduced, and the triggering real CI run is itself the verification).
+   - `89c7acd` — one more OSS-01 allowlist entry, for a false positive on `docs/STATE.md`'s own prose (a backtick sitting between the match and the hyphen defeated the negative-lookahead) — same disclosed, human-accepted allowlist-residual shape as Issue #136.
+2. **Real CI now confirmed green past `Checkout` → submodule init → `typecheck` → `lint` → `npm test`** — the first time since 2026-09-01 — on two independent runs (`89c7acd` run 34419359295, and today's `3b8d3eb` run 34539865175). Both fail at the same, already-named place: **QA-14 (`reference-resolver.ts`)**, exactly as `cifix`'s own build receipt predicted (Issue #120). No new failure introduced by either run.
+3. **Issue #27 CLOSED this session** (`completed`, comment cites both confirming run IDs) — its own closure criterion ("closes once a real post-push CI run is confirmed green past Checkout/npm-test") is now met.
+4. **`docs/decisions.md`'s 5 due rows archived** (`node docs/decisions-archive.mjs --apply`) — all 5 read in full before archiving (Manager backstop per rule 14/Stage 5.5 discipline), content confirmed accurate, no discrepancy found. Active log now bounded to genuinely open/recent decisions.
+5. **A routine, unrelated commit also landed this session by direct human action**, outside `/maat:ship`: `3b8d3eb`, `/maat:init --update` pulling forward 4 plugin-managed files with genuine template drift (`docs/PRINCIPLES.md`, `docs/adr-cache.mjs`, `docs/dashboard.mjs`, `docs/run-log.mjs`) — TRIVIAL tier, self-verified (all 6 refreshed scripts run cleanly, ADR cache fingerprint unchanged). Its own CI run (34539865175) is the second of the two QA-14 confirmations above.
+
+**No new story has been planned or built this session** — this was reconciliation/bookkeeping (confirm real state, close what's actually done, archive what's actually resolved), not new build work.
+
+## Prior resume point (superseded above, kept for continuity) — `cifix` shipped, awaiting human push
 
 **This session picked up the prior session's own single next action** ("human decides CI's security posture," see the superseded resume point below) via `/maat:ship "fix the broken CI"`. Full arc:
 
@@ -25,7 +40,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - Issue #89's old exemplar — human rotation-call needed, not resolved this session.
 - The two architecture-reviewer prose findings (CLAUDE.md's stale sensitive-area paths; no SECRET_PATTERNS-provisioning-reminder) — backlogged, small, whenever `CLAUDE.md` is next touched.
 
-**Single next action:** human provisions `ADR_REPO_PAT` (exact steps in the PR description / build receipt), sets it via `gh secret set ADR_REPO_PAT --repo mohannadrabie/thoth`, then `git push` this commit and triggers a real CI run — expect it to reach and likely fail at QA-14/QA-15 (Issue #120), not at Checkout. That failure, if it happens, is progress (CI finally telling the truth for the first time since 2026-09-01), not a regression.
+**Single next action (superseded by this session's resume point above):** ~~human provisions `ADR_REPO_PAT`...~~ — done; see above. The live next action is now planning Issue #120 (QA-14/QA-15) — see this file's own "Next" section.
 
 ## Prior resume point (superseded above, kept for continuity) — S6's own residual Issues (#108/#110/#122/#123) all genuinely closed; CI has been silently dead since 2026-09-01, STOPPED for a human decision
 
@@ -111,14 +126,14 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 **Single next action:** human reviews and runs `git commit` (the Manager commits at handoff below) then `git push` — no further agent work is gating this. Separately, whenever convenient, run the five-minute `CLAUDE_PROJECT_DIR` precedence drill above before `PreToolUse` activation.
 
 ## Current state
-- **`cifix` (CI restoration, no numbered Milestone) — built, reviewed (3 Stage-3 rounds + 1 post-build council), verified, audited. SHIPPABLE, committed, ready for the human's `ADR_REPO_PAT` provisioning + push. Full arc in the resume point above.**
+- **`cifix` (CI restoration, no numbered Milestone) — built, reviewed (3 Stage-3 rounds + 1 post-build council), verified, audited, pushed, and CONFIRMED WORKING in two independent real CI runs. Issue #27 CLOSED. Full arc in the resume point above.**
   - Scope: `.github/workflows/ci.yml`'s private-submodule checkout auth, widened to Issue #113 (secret-scan false positive blocking `npm test`), 8 more small MED/LOW findings across 3 review rounds. CRITICAL tier (CLAUDE.md-named sensitive area regardless of path). Plan: `docs/plans/cifix-phase1-2026-09-09.md` (+ closing note).
   - New/edited: `.github/workflows/ci.yml`, `src/secret-scan/{patterns,history-scan}.ts` (+ tests), `docs/qa/secret-scan-allowlist.json` (5 → 26 entries), `docs/backlog.md`, `CHANGELOG.md`.
   - Design council (rule 16(c), 2 consecutive `red-team` no-go rounds): verdict **GO on Path A** (mechanical allowlist patch) over Path B (standing pre-commit dogfood check, ratified in principle, backlogged as separate STANDARD-tier story) and Path C (rejected).
   - 12 review reports persisted this session, all read in full by the Manager (Stage 5.5, CRITICAL tier) via a delegated audit pass — every receipt-check trigger resolved COSMETIC, no genuine unaddressed defect found. One foreign, unrelated file (`Claude outputs/maat-review-2026-09-09.md`, not created this session) found in the working tree during the audit — left untouched, excluded from the commit.
   - Final verification: `npm run typecheck`/`npm run lint` clean, `npm test` 664/664 pass/0 fail/0 skipped, real OSS-01 gating drill `ok=true`/`blocking=0` against the actual final tree (not a stale snapshot — one self-referential allowlist gap was found and fixed during this exact check).
   - GitHub: 16 Issues actioned this session — full breakdown in the resume point above and GitHub tracking below.
-  - **Not yet done:** human provisions `ADR_REPO_PAT`, then `git push`.
+  - **Confirmed working**, 2026-09-10: real CI green past Checkout/submodule-init/typecheck/lint/test on two independent runs; Issue #27 closed. Two more real CI-only bugs surfaced and fixed post-push (see this file's own top resume point) — normal for a "first real CI run in 8 days" story, not a defect in `cifix`'s own review.
 - **S6 (policy centralization) — built, reviewed (pre-build design-challenger+architecture-reviewer, 4 Stage-3 rounds, 1 post-build council), verified, audited. SHIPPABLE, committed (`ce5d0b8`), ready for the human's push. Full arc in the resume point above.**
   - Scope: GitHub Milestone #24 — POL-07, POL-09 pinning half, POL-10, T10 (reopened 2026-08-30, now answered). CRITICAL tier (unchanged from proposal — first out-of-repo policy-source loader, the mechanism REQUIREMENTS.md §0.4 property 2 rests on). Plans: `docs/plans/S6-phase1-2026-09-08.md` (v1) → `docs/plans/S6-phase1-v2-2026-09-08.md` (pre-build findings folded in).
   - New: `src/policy/config/{central-source,position-parser,loader,pin,printer,print-cli}.ts` (+ tests), `src/policy/rule/mandatory-lock-conformance.test.ts` (a new standing CI-gating instrument, this project's first, against a bug family that had recurred 4-5 times: Issues #65/#66/#99/#114/#115), `src/policy/config/shipped-defaults.json`, `.thoth/policy.json`, `docs/qa/s6-policy-loader-fixtures/`. Edits: `src/policy/rule/{precedence,schema}.ts`, `src/policy/kernel/rule-types.ts` (`mandatory` field), `REQUIREMENTS.md` (T10 closed in place), `package.json` (`policy:print` script).
@@ -189,27 +204,27 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
   - Toolchain established: TypeScript (native Node type-stripping, `engines.node >=22.18.0`), `node:test`, npm, ESLint flat config. License: Apache-2.0 (T9).
 
 ## Next (in order)
-1. **Human provisions `ADR_REPO_PAT` and pushes `cifix`** (see resume point above) — the real remaining blocker: the credential itself is a human-only action (must never appear in any agent transcript). Exact steps in the build receipt/PR description. Once pushed, trigger a real CI run — expect it to reach and likely fail at QA-14/QA-15 (Issue #120), not at Checkout. That's expected progress, not a regression.
-2. **Issue #120** (QA-14 `reference-resolver.ts` / QA-15 `completeness-claim-checker.ts`, both currently red — 130/317 unresolved references, 3/3 files failing) — the natural next story once `cifix`'s push confirms the checkout+test path works. Genuinely blocks a fully-green CI run, unlike anything `cifix` itself introduced.
-3. **Plan S7** (Milestone #25, "Self-protection & enforcement-layer integrity") or **the "author real baseline policy content" fast-follow** (unblocks S5's `PreToolUse` reactivation) — either is a reasonable next story; neither is gated by #1/#2 above. See the prior resume point below for the full fork.
-4. **Small, cheap housekeeping, whenever convenient:** the standing RECEIPT-checksum-arithmetic QA instrument `docs/backlog.md` recommends (6+ cosmetic occurrences across this project's history now); the durable locale-independent fix for Issue #107; Issue #124 (rejection-message content unconstrained after #123's relaxation); Path B (standing pre-commit OSS-01 dogfood check) + the Issue #136 allowlist-narrowing follow-on; Issue #89's old exemplar (human rotation call); the two architecture-reviewer prose findings (`CLAUDE.md`'s stale sensitive-area paths; no SECRET_PATTERNS-provisioning reminder).
+1. **Plan Issue #120** (QA-14 `reference-resolver.ts` / QA-15 `completeness-claim-checker.ts`, both currently red — 130/317 unresolved references, 3/3 files failing as of last measurement, due for re-measurement at intake) — the live blocker to a fully-green CI run; `cifix` confirmed nothing else stands in the way. **Not yet planned or started — needs a human go-ahead before intake.**
+2. **Plan S7** (Milestone #25, "Self-protection & enforcement-layer integrity") or **the "author real baseline policy content" fast-follow** (unblocks S5's `PreToolUse` reactivation) — either is a reasonable next story; neither is gated by #1 above. See the prior resume point below for the full fork.
+3. **Small, cheap housekeeping, whenever convenient:** the standing RECEIPT-checksum-arithmetic QA instrument `docs/backlog.md` recommends (6+ cosmetic occurrences across this project's history now); the durable locale-independent fix for Issue #107; Issue #124 (rejection-message content unconstrained after #123's relaxation); Path B (standing pre-commit OSS-01 dogfood check) + the Issue #136 allowlist-narrowing follow-on; Issue #89's old exemplar (human rotation call); the two architecture-reviewer prose findings (`CLAUDE.md`'s stale sensitive-area paths; no SECRET_PATTERNS-provisioning reminder).
 
 ## Blocked on a human
-- **`ADR_REPO_PAT` provisioning + push (see Next #1)** — mechanical now, not a policy decision (that was resolved this session). The credential itself must be created and set by the human; no agent session can do this without the token value appearing in a transcript.
-- S5's `PreToolUse` re-activation — deliberately deferred, not urgent, blocked on the not-yet-planned content-authoring story (see Next #3).
+- S5's `PreToolUse` re-activation — deliberately deferred, not urgent, blocked on the not-yet-planned content-authoring story (see Next #2).
 - Repo visibility flip to public — out of scope until OSS-02–14 (Milestone #35).
 - T6 (rehearsal account/cluster) — doesn't block S1–S6, will block S11c/S12 (Milestones #31/#32) when reached.
-- Issue #89's old exemplar rotation call (see Next #4) — a real credential-hygiene question, not resolved this session.
+- Issue #89's old exemplar rotation call (see Next #3) — a real credential-hygiene question, not resolved this session.
 
-## GitHub tracking (updated 2026-09-09, this session)
+## GitHub tracking (updated 2026-09-10, this session)
 - **Milestones:** #19 (S1) through #35 (S15), #36 (S1b) — all pre-existing, no new milestones this session; `cifix` has no numbered Milestone (a same-day CI-restoration fix, not a planned story).
-- **Issues this session (`cifix`):** #113/#125/#127/#128/#129/#130/#131/#132 closed `completed`; #133 closed as duplicate of #130; #126/#134/#135/#136 stay OPEN (disclosed residuals, not oversights); #89 (pre-existing) flagged for a human rotation call, stays OPEN; #27 stays OPEN (closes once a real post-push CI run is confirmed green past Checkout/npm-test — its own original failure mode).
-- **Prior session (2026-09-08/09, S6 + CI discovery):** #105-#124 — see the prior resume point below for the full breakdown.
+- **Issue #27 CLOSED `completed` this session** — real CI confirmed green past Checkout/submodule-init/npm-test on two independent runs (34419359295, 34539865175); comment cites both.
+- **From `cifix` (2026-09-09):** #113/#125/#127/#128/#129/#130/#131/#132 closed `completed`; #133 closed as duplicate of #130; #126/#134/#135/#136 stay OPEN (disclosed residuals, not oversights); #89 (pre-existing) flagged for a human rotation call, stays OPEN.
+- **Prior session (2026-09-08/09, S6 + CI discovery):** #105-#124 — see the prior resume point below for the full breakdown. **Issue #120 (QA-14/QA-15) is now the sole live CI blocker**, confirmed by two fresh real runs this session — not yet planned as a story.
 
 ## Open questions / pending decisions
-- All logged and ratified in `docs/decisions.md`. This session added 5 new `cifix` rows (2026-09-09): CI security-posture ruling, Phase 1 plan approval, Stage-3 round 1 scope-widening, design council GO, Stage-3 round 3 residual-acceptance (all review-back 2026-09-16). See the prior resume point below for 2026-09-08's 9 rows and the row above for autonomous-continuation authorization. Nothing new unlogged.
+- All logged and ratified in `docs/decisions.md`. **5 resolved, past-review-back rows archived to `docs/decisions-archive.md` this session** (`node docs/decisions-archive.mjs --apply`, all read in full first: the 2026-09-01 autonomous-continuation row, and 4 2026-09-06 S4-arc rows — second-stall stop, autonomous-continuation, Option-A ruling, round-6 close). Active log now holds only genuinely open/recent decisions (`cifix`'s 5 2026-09-09 rows, review-back 2026-09-16, plus older still-unarchived rows whose review-back date hasn't passed). Nothing new unlogged this session — no new decision was made, only bookkeeping.
 
 ## Session savings (ADR cache)
 - **2026-08-29 to 2026-09-08 (prior sessions, through S6's build):** ≈361,800 tokens (~$1.09) cumulative. See `docs/decisions-archive.md`/prior STATE.md history for the per-session breakdown.
-- **2026-09-08/09, this session (CLAUDE_PROJECT_DIR drill, S6 fix-now rounds 5-6, CI discovery):** every dispatched agent's own report confirmed `CACHE=HIT`/`adr=HIT(35)` with the same fingerprint (`83b2e3e`) but none restated a token figure (no fresh `SessionStart` hydration event fired mid-session) — per this project's own established convention, **no new figure to add this session.**
-- **Running cumulative (2026-08-29 to 2026-09-09):** ≈361,800 tokens (~$1.09), unchanged from the prior session's total.
+- **2026-09-08/09 (CLAUDE_PROJECT_DIR drill, S6 fix-now rounds 5-6, CI discovery, `cifix` build):** every dispatched agent's own report confirmed `CACHE=HIT`/`adr=HIT(35)` with the same fingerprint (`83b2e3e`) but none restated a token figure (no fresh `SessionStart` hydration event fired mid-session) — per this project's own established convention, no new figure added.
+- **2026-09-10, this session:** `SessionStart` reported `CACHE=HIT`, reused 35 ADR(s), ≈17,300 tokens (~$0.05) saved this pass, fingerprint unchanged (`83b2e3e`) — no ADR content drift since 2026-09-09. This session did reconciliation/bookkeeping only (no new story dispatched agents), so this is the one fresh figure to add.
+- **Running cumulative (2026-08-29 to 2026-09-10):** ≈379,100 tokens (~$1.14).
