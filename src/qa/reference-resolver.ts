@@ -18,6 +18,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
+import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
@@ -215,6 +216,57 @@ export function summarizeCitations(citations: Citation[]): InstrumentResult {
   };
 }
 
+/**
+ * Real credential-backed issue-existence check, via the injected `Runner` (never invoked directly
+ * by `scanReferences`/`classifyIssue`/`verifyLocalIssue`, which stay synchronous and pure — this
+ * lives one layer up, at `main()`'s async I/O boundary, matching `completeness-claim-checker.ts`'s
+ * `verifyMarkerClaim(claim, runner)` shape).
+ *
+ * Returns:
+ * - `null` immediately when `repoSlug` is null (no known repo to query — fails closed, same as
+ *   today's unconditional `null` stub, never silently treated as "doesn't exist").
+ * - `true` when `gh issue view <n> --repo <slug> --json state` exits 0 and prints parseable JSON
+ *   with a `state` field (an Issue or PR — GitHub's own API does not distinguish the two here).
+ * - `false` when `gh` reports the number does not resolve to an issue or PR (its own documented
+ *   "Could not resolve to an issue or pull request" message, or any 404-shaped stderr) — a real,
+ *   positively-confirmed absence, not a failure to check.
+ * - `null` for anything else (auth failure, network failure, timeout, rate limit, unparseable
+ *   stdout) — fails closed exactly like the "cannot verify" path already covered by
+ *   `verifyLocalIssue`'s existing null-handling; this function never turns an inconclusive call
+ *   into a false negative.
+ */
+export async function checkIssueViaGh(n: number, repoSlug: string | null, runner: Runner): Promise<boolean | null> {
+  if (repoSlug === null) return null;
+
+  const res = await runner("gh", ["issue", "view", String(n), "--repo", repoSlug, "--json", "state"], {
+    timeoutMs: 30_000,
+  });
+
+  if (res.code === 0) {
+    try {
+      const parsed: unknown = JSON.parse(res.stdout);
+      if (parsed !== null && typeof parsed === "object" && "state" in parsed) return true;
+      return null; // exit 0 but not the shape we expect — inconclusive, fail closed
+    } catch {
+      return null; // exit 0 but unparseable stdout — inconclusive, fail closed
+    }
+  }
+
+  // gh's own documented not-found message (GraphQL "Could not resolve to an issue or pull
+  // request ... (repository.issue)"), or an HTTP 404-shaped stderr — both are a real, confirmed
+  // absence. Measured directly against a real `gh issue view` call on a nonexistent number
+  // (this repo, this session): exit 1, stderr = `GraphQL: Could not resolve to an issue or pull
+  // request with the number of <n>. (repository.issue)`.
+  if (/could not resolve to an issue or pull request/i.test(res.stderr) || /\b404\b/.test(res.stderr)) {
+    return false;
+  }
+
+  // Any other non-zero exit (auth failure, network failure, timeout, rate limit, unrecognized
+  // repo, etc.) is inconclusive — fails closed, never silently treated as "doesn't exist" or
+  // "exists".
+  return null;
+}
+
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const base = process.argv[2] ?? process.env.QA14_BASE_REF ?? "HEAD~1";
@@ -253,7 +305,7 @@ async function main(): Promise<void> {
     adrFiles.map((f) => `ADR-${(f.split("/").pop() ?? "").slice(0, 4)}`),
   );
 
-  const deps: ReferenceResolverDeps = {
+  const baseDeps: Omit<ReferenceResolverDeps, "issueExists"> = {
     pathExists: (p) => {
       const resolved = resolveWithinRepo(repoRoot, p);
       return resolved !== null && existsSync(resolved);
@@ -269,19 +321,53 @@ async function main(): Promise<void> {
       }
     },
     knownAdrIds,
-    // No issue-tracker credential is wired into this CI job by default — fails closed (returns
-    // null -> "cannot verify") rather than silently skipping local issue citations. A future
-    // story wires a real `gh issue view` lookup here.
-    issueExists: () => null,
     repoSlug,
   };
 
-  const allCitations: Citation[] = [];
+  // Read every scanned file's text once, up front — reused across both passes below so the
+  // second (real) pass never re-reads a file whose content could theoretically change between
+  // passes (a stronger guarantee than strictly required today, but free and correct).
+  const fileTexts = new Map<string, string>();
   for (const file of changedFiles) {
     if (!shouldScanFile(file)) continue;
     if (!existsSync(resolve(repoRoot, file))) continue; // deleted file, nothing to scan
-    const text = await readFile(resolve(repoRoot, file), "utf8");
-    allCitations.push(...scanReferences(text, deps));
+    fileTexts.set(file, await readFile(resolve(repoRoot, file), "utf8"));
+  }
+
+  // Pass 1 (collector): `scanReferences`/`classifyIssue`/`verifyLocalIssue` stay synchronous and
+  // pure (never made async) — so real credential-backed lookup happens here, one layer up, by
+  // running the scan once with an `issueExists` that only RECORDS every queried issue number
+  // (returning `null` so this pass's own citation verdicts are discarded, never reported).
+  const queriedIssueNumbers = new Set<number>();
+  const collectorDeps: ReferenceResolverDeps = {
+    ...baseDeps,
+    issueExists: (n) => {
+      queriedIssueNumbers.add(n);
+      return null;
+    },
+  };
+  for (const text of fileTexts.values()) {
+    scanReferences(text, collectorDeps);
+  }
+
+  // Real lookup: one `gh issue view` call per distinct issue number found above, via the injected
+  // Runner (never a bare `child_process` call here — stays swappable/fake-able in tests).
+  const issueCache = new Map<number, boolean | null>();
+  for (const n of queriedIssueNumbers) {
+    issueCache.set(n, await checkIssueViaGh(n, repoSlug, realRunner));
+  }
+
+  // Pass 2 (real): re-run the scan for real, resolving every issue citation against the cache
+  // built above — `?? null` preserves fail-closed semantics for a number this pass somehow didn't
+  // query in pass 1 (should not happen; the same `scanReferences` logic runs both passes over the
+  // same text).
+  const realDeps: ReferenceResolverDeps = {
+    ...baseDeps,
+    issueExists: (n) => issueCache.get(n) ?? null,
+  };
+  const allCitations: Citation[] = [];
+  for (const text of fileTexts.values()) {
+    allCitations.push(...scanReferences(text, realDeps));
   }
 
   const result = summarizeCitations(allCitations);

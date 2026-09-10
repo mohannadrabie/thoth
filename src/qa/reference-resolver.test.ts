@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve as pathResolve } from "node:path";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
-import { resolveWithinRepo, scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
+import {
+  checkIssueViaGh,
+  resolveWithinRepo,
+  scanReferences,
+  shouldScanFile,
+  summarizeCitations,
+} from "./reference-resolver.ts";
 import type { Runner } from "../lib/exec.ts";
 import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 
@@ -168,4 +174,58 @@ test("QA-14 (regression, app-security SUSPICION): a `../../`-style citation path
   // A well-behaved, contained citation still resolves normally — the fix must not over-reject.
   assert.equal(resolveWithinRepo(repoRoot, "docs/STATE.md"), pathResolve(repoRoot, "docs/STATE.md"));
   assert.equal(resolveWithinRepo(repoRoot, "."), repoRoot);
+});
+
+// QA-14 Issue #120 fix: real credential-backed issue-existence lookup via `checkIssueViaGh`. Every
+// case below uses a fake `Runner` — no real `gh`/network call in this suite (matching
+// completeness-claim-checker.test.ts's own `verifyMarkerClaim(claim, runner)` fake-Runner style).
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null immediately when repoSlug is null, never calling the runner", async () => {
+  const runner: Runner = () => {
+    throw new Error("must not be called when repoSlug is null");
+  };
+  const result = await checkIssueViaGh(7, null, runner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns true when gh exits 0 with parseable {state} JSON (issue exists)", async () => {
+  const runner: Runner = (cmd, args) => {
+    assert.equal(cmd, "gh");
+    assert.deepEqual(args, ["issue", "view", "120", "--repo", "mohannadrabie/thoth", "--json", "state"]);
+    return Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
+  };
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, true);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns false on gh's documented not-found message (issue does not exist)", async () => {
+  const runner: Runner = () =>
+    Promise.resolve({
+      stdout: "",
+      stderr: "GraphQL: Could not resolve to an issue or pull request with the number of 999999. (repository.issue)",
+      code: 1,
+    });
+  const result = await checkIssueViaGh(999999, "mohannadrabie/thoth", runner);
+  assert.equal(result, false);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null on an auth failure (fails closed, not a false negative)", async () => {
+  const runner: Runner = () =>
+    Promise.resolve({ stdout: "", stderr: "gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.", code: 1 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null on a network failure / timeout (fails closed)", async () => {
+  // `realRunner` (src/lib/exec.ts) never throws — a subprocess timeout or network failure surfaces
+  // as a non-zero exit with no matching not-found stderr shape, so that's the realistic fake here.
+  const timeoutRunner: Runner = () => Promise.resolve({ stdout: "", stderr: "", code: 124 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", timeoutRunner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null when gh exits 0 but stdout is unparseable (inconclusive, fails closed)", async () => {
+  const runner: Runner = () => Promise.resolve({ stdout: "not json", stderr: "", code: 0 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, null);
 });

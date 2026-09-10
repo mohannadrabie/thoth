@@ -30,6 +30,16 @@ jobs:
     name: Lint, typecheck, test, QA/OSS instruments
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Issue #120 (QA-14 real gh-backed issue lookup): widens this JOB's own permissions, on top of
+    # the file-level `contents: read` above, to add `issues: read` — read-only GitHub Issue data
+    # for THIS repo only, via the default GITHUB_TOKEN (never a new PAT/secret; unlike
+    # ADR_REPO_PAT above, which exists to reach the separate private `adr` repo, QA-14 only needs
+    # same-repo issue data the default token can already see once granted this scope). Scoped to
+    # the `ci` job only — the scheduled `runtime-settings-drift` job below does not run QA-14 and
+    # keeps the file-level `contents: read` default, unwidened.
+    permissions:
+      contents: read
+      issues: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -213,6 +223,11 @@ jobs:
         run: node src/qa/recurring-findings-registry.ts
 
       - name: QA-14 reference-resolver
+        env:
+          # Issue #120: real `gh issue view` lookup needs a token with `issues: read` on this
+          # repo — the default GITHUB_TOKEN, widened by this job's own `permissions:` block above.
+          # `gh` reads GH_TOKEN from the environment automatically; no `gh auth login` needed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node src/qa/reference-resolver.ts "${{ steps.diff-refs.outputs.base }}" "${{ steps.diff-refs.outputs.head }}"
 
       - name: QA-15 completeness-claim-checker
