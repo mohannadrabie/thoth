@@ -676,22 +676,33 @@
       }
     ]
   },
-  "scope": "cifix",
+  "scope": "qa1415fix",
   "tier": "CRITICAL",
   "reviewRoundsSinceClean": 1,
+  "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
-  "councilHeld": true,
-  "councilVerdict": "GO (2026-09-09 council on the OSS-01 allowlist-scaling/self-break finding, rule 16(c) trigger; Path A ratified: mechanical allowlist patch for this diff's own strings, gated on impact-analyst's live 44-match re-measurement, not the stale round-2 7/11 count; Path B — standing pre-commit dogfood check, zero new exemption-grant surface — deferred to backlog as a separate STANDARD-tier follow-on, not gating cifix; Path C rejected, conflicts with rule 10/19 verbatim-evidence discipline)",
+  "councilHeld": false,
+  "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-09b": "CI security-posture ruling resolved (docs/decisions.md 2026-09-09 row): human chose Option (a) — provision a CI credential (PAT/deploy key repo secret) with real read access to the private adr submodule, keeping ci.yml's submodules: recursive checkout as designed. humanRulingRequired cleared for this scope. Tier CRITICAL carried over unchanged: .github/workflows/ci.yml is a CLAUDE.md-named sensitive area (Secret scanning / CI gates) regardless of path chosen, and this fix restores OSS-01's secret scan plus every other CI instrument that has run zero times since 2026-09-01.",
+  "note_2026-09-10": "Issue #120 (QA-14 issueExists hardcoded null / QA-15 docs/decisions.md bare-claim false positives). story-implementer proposed STANDARD (narrow read-only issues:read permission, internal-tooling per PRINCIPLES rule 20c); Manager overruled to CRITICAL for consistency with the immediately-prior cifix scope's own ruling on this exact file: .github/workflows/ci.yml is a CLAUDE.md-named sensitive area (Secret scanning / CI gates) regardless of blast radius. Reviewers: red-team + infra-security-reviewer + cross-domain-reviewer.",
   "priorScope": {
-    "scope": "s6",
+    "scope": "cifix",
     "tier": "CRITICAL",
     "reviewRoundsSinceClean": 1,
     "humanRulingRequired": false,
     "councilHeld": true,
-    "councilVerdict": "GO (2026-09-08 council on the mandatory-lock trust-model flaw, Issue #114/#115, rule 16(c) trigger; Path B ratified: trust-rank distinct from precedence order — central=trusted, shipped-defaults/project=peers/untrusted; a lock only voids a strictly-less-trusted layer; loud disclosure when a non-authoritative layer's mandatory:true is inert)",
-    "roundsSinceLastGo": 1,
-    "note_2026-09-09": "S6 fix-now round 6 (red-team final re-confirm on Issues #122/#123): verdict no-go, but NOT on #122/#123 themselves — both independently reconstructed as genuinely closed and CLOSED on GitHub. The no-go is entirely attributable to a NEW, unrelated HIGH finding: CI has been dead since 2026-09-01 (10/10 push/PR runs died at actions/checkout, private adr submodule + repo-scoped token), reopening Issue #27. Red-team's own suggested one-line fix was independently checked by the Manager and found WRONG (ci.yml's QA-14 step does read adr/ directly, via src/qa/reference-resolver.ts) — see Issue #27's Manager comment. reviewRoundsSinceClean=1 reflects this round's no-go verdict on the S6 scope generally; it is NOT yet a rule-16(c) trigger (needs 2 consecutive non-clean rounds — round 5 was clean). humanRulingRequired resolved 2026-09-09, see top-level note."
+    "councilVerdict": "GO (2026-09-09 council on the OSS-01 allowlist-scaling/self-break finding, rule 16(c) trigger; Path A ratified: mechanical allowlist patch for this diff's own strings, gated on impact-analyst's live 44-match re-measurement, not the stale round-2 7/11 count; Path B — standing pre-commit dogfood check, zero new exemption-grant surface — deferred to backlog as a separate STANDARD-tier follow-on, not gating cifix; Path C rejected, conflicts with rule 10/19 verbatim-evidence discipline)",
+    "roundsSinceLastGo": 0,
+    "note_2026-09-09b": "CI security-posture ruling resolved (docs/decisions.md 2026-09-09 row): human chose Option (a) — provision a CI credential (PAT/deploy key repo secret) with real read access to the private adr submodule, keeping ci.yml's submodules: recursive checkout as designed. humanRulingRequired cleared for this scope. Tier CRITICAL carried over unchanged: .github/workflows/ci.yml is a CLAUDE.md-named sensitive area (Secret scanning / CI gates) regardless of path chosen, and this fix restores OSS-01's secret scan plus every other CI instrument that has run zero times since 2026-09-01.",
+    "priorScope": {
+      "scope": "s6",
+      "tier": "CRITICAL",
+      "reviewRoundsSinceClean": 1,
+      "humanRulingRequired": false,
+      "councilHeld": true,
+      "councilVerdict": "GO (2026-09-08 council on the mandatory-lock trust-model flaw, Issue #114/#115, rule 16(c) trigger; Path B ratified: trust-rank distinct from precedence order — central=trusted, shipped-defaults/project=peers/untrusted; a lock only voids a strictly-less-trusted layer; loud disclosure when a non-authoritative layer's mandatory:true is inert)",
+      "roundsSinceLastGo": 1,
+      "note_2026-09-09": "S6 fix-now round 6 (red-team final re-confirm on Issues #122/#123): verdict no-go, but NOT on #122/#123 themselves — both independently reconstructed as genuinely closed and CLOSED on GitHub. The no-go is entirely attributable to a NEW, unrelated HIGH finding: CI has been dead since 2026-09-01 (10/10 push/PR runs died at actions/checkout, private adr submodule + repo-scoped token), reopening Issue #27. Red-team's own suggested one-line fix was independently checked by the Manager and found WRONG (ci.yml's QA-14 step does read adr/ directly, via src/qa/reference-resolver.ts) — see Issue #27's Manager comment. reviewRoundsSinceClean=1 reflects this round's no-go verdict on the S6 scope generally; it is NOT yet a rule-16(c) trigger (needs 2 consecutive non-clean rounds — round 5 was clean). humanRulingRequired resolved 2026-09-09, see top-level note."
+    }
   }
 }

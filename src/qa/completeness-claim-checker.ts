@@ -182,10 +182,26 @@ export async function checkCompleteness(text: string, runner: Runner): Promise<I
 }
 
 // Default set when no files are given on the CLI — the documents most likely to carry a
-// hand-typed numeric completeness claim (state, decisions, changelog). A per-changed-file wiring
-// (like QA-02/QA-14's git-diff mode) is a reasonable future extension, not required for this
-// gate to be real today: every file here is checked for real, every run.
-const DEFAULT_FILES = ["docs/STATE.md", "docs/decisions.md", "CHANGELOG.md"];
+// hand-typed numeric completeness claim (state, changelog). A per-changed-file wiring (like
+// QA-02/QA-14's git-diff mode) is a reasonable future extension, not required for this gate to be
+// real today: every file here is checked for real, every run.
+//
+// `docs/decisions.md` deliberately excluded (Issue #120, human-ratified 2026-09-10): it is an
+// append-only historical log (its own header: "Supersede in place ... keep the history, never
+// delete it" — a later ruling strikes through and appends, it never edits an old row's numbers in
+// place). Its rows narrate counts that *already happened* at decision time (e.g. "44 blocking
+// matches", "664/664 pass") — a completed historical fact, not a live, re-checkable claim about
+// this repo's CURRENT state the way STATE.md's "Resume point" and CHANGELOG.md's "Fixed" entries
+// are. Retrofitting `[[completeness: ...]]` markers onto its existing rows would require editing
+// rows this project's own convention says are permanently closed once written, and is structurally
+// impossible for many of them regardless: several cite a number from a point-in-time measurement
+// (a review's own re-run, a since-rotated/reworded diff) that no instrument in this repo can
+// re-produce today. QA-15's marker/heuristic mechanism itself is unchanged; only this file's
+// membership in the default-scanned set narrows.
+// Exported (Issue #142 fix) so a regression test can pin its exact membership — a hand-typed
+// prose claim about what this array contains is exactly the kind of unverified completeness
+// assertion this same instrument exists to catch; the array itself needs the same discipline.
+export const DEFAULT_FILES = ["docs/STATE.md", "CHANGELOG.md"];
 
 async function main(): Promise<void> {
   const paths = process.argv.slice(2).length > 0 ? process.argv.slice(2) : DEFAULT_FILES;

@@ -18,6 +18,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
+import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
@@ -27,7 +28,7 @@ export type Verdict = "resolved" | "unresolved-authority" | "cross-repo-issue" |
 
 export interface Citation {
   raw: string;
-  kind: "adr" | "issue" | "path" | "path-line" | "unparseable";
+  kind: "adr" | "issue" | "milestone" | "path" | "path-line" | "unparseable";
   verdict: Verdict;
   reason: string;
 }
@@ -52,8 +53,69 @@ export interface ReferenceResolverDeps {
 // shape (wrong digit count, non-numeric suffix) still reaches classify*() and is reported
 // unparseable there — this boundary only keeps sentence punctuation out of the raw match.
 const ADR_CANDIDATE_RE = /\bADR-[A-Za-z0-9]+/g;
-const ISSUE_CANDIDATE_RE = /\b(?:[\w.-]+\/[\w.-]+)?#\d+/g;
+// Boundary-bug fix (this round's own tracked defect): the previous `/\b(?:[\w.-]+\/[\w.-]+)?#\d+/g` put its `\b` in front of an
+// OPTIONAL group. When the group didn't participate (the common case — a bare, non-cross-repo
+// citation), `\b` could only match immediately before `#` when the PRECEDING character was a
+// word character. `#` itself is non-word, so that boundary never exists after whitespace, `(`,
+// `:`, `[`, or at start-of-line/string — exactly the shapes this project actually uses (measured
+// via `grep` across `docs/`/`CHANGELOG.md`: "Closes #N", "(#N)", "Milestone #N", a line-start
+// "#N"). Only "owner/repo#N" and an accidental word-glued "x#N" (the leading word silently
+// dropped from the match) ever worked.
+//
+// Fixed as two explicit alternatives instead of one optional group, each anchored on its OWN
+// correct side:
+//  - `\b[\w.-]+\/[\w.-]+#\d+(?!\w)` — the owner/repo#N shape, unchanged in spirit from before
+//    (still requires a real `/` and a leading word boundary so it can't start mid-token).
+//  - `#\d+(?!\w)` — a bare `#N` with NO leading-context restriction at all, so it matches
+//    regardless of what precedes it (start of line, whitespace, `(`, `:`, a preceding word char
+//    — all of these are real citation forms in this repo's own history, confirmed by grep).
+// Both alternatives share a trailing `(?!\w)` — the number must not be immediately followed by
+// another word character. This is the false-positive guard: it is what keeps a mixed-alphanumeric
+// CSS hex color literal (this repo's `docs/dashboard.mjs` inline `<style>` block has several) from
+// being torn into a bogus short digit-prefix match — the digit run stops at the first hex letter,
+// and `(?!\w)` then rejects that shorter, letter-followed prefix — while still matching every real
+// citation shape above (each is followed by whitespace or punctuation, never a word character).
+//
+// Round-3 fix (GitHub issue 144): a fully-numeric hex color (all-digit, no hex letters, e.g.
+// `background:#000`) is NOT rejected by the guard above, and one real instance exists in this tree
+// today at `docs/dashboard.mjs:646` — measured via `git ls-files` plus this regex, not asserted (an
+// earlier version of this comment claimed "none exist... checked", which was false; that claim is
+// removed rather than repeated). Every real occurrence of this shape in this repo's tracked files is
+// a CSS color literal written as `property:#digits` — a colon with NO intervening whitespace
+// directly before the `#`, a shape this project's own citation prose never uses (measured via
+// `grep -rn ':#[0-9]+'` across tracked files: every hit is a CSS declaration). A leading `(?<!:)`
+// rejects exactly that shape without touching any real citation form (which is always preceded by
+// whitespace, `(`, start-of-line, or a word character, never a bare `:`). A parallel `(?<!&)` rejects
+// an HTML numeric character entity (`&#39;`, `docs/dashboard.mjs:33`) the same way — `&#N;` is never
+// a real issue/milestone citation shape in this repo's prose.
+const ISSUE_CANDIDATE_RE = /\b[\w.-]+\/[\w.-]+#\d+(?!\w)|(?<![:&])#\d+(?!\w)/g;
 const ISSUE_WORD_CANDIDATE_RE = /\bIssue\s*#\d+/gi;
+// A GitHub Milestone number lives in a namespace entirely separate from Issue numbers (a repo's
+// milestones and issues are independently numbered) — conflating a Milestone reference with an
+// Issue citation of the same number would silently verify the WRONG entity (an issue that happens
+// to share the number, or a false failure when no issue shares it). Recognized as its own
+// citation kind so the fixed boundary
+// above (which would otherwise feed it straight into `classifyIssue`) can't do that; not verified
+// against a live milestone list in this pass (no such lookup exists in this repo yet) but no
+// longer silently invisible either — the QA-16 doctrine this file's own header names.
+//
+// Round-3 fix (GitHub issue 143, finding NEW-4): `\s` includes a newline, so this previously matched
+// "milestone" at the end of one line joined to a real, unrelated "#N" issue citation starting the
+// next line, silently mis-kinding a genuine Issue citation as an unverified Milestone and
+// auto-resolving it. `[ \t]*` (same-line whitespace only) keeps the real "Milestone #N" same-line
+// shape working while refusing to span a line break.
+const MILESTONE_CANDIDATE_RE = /\bMilestone[ \t]*#\d+/gi;
+// Round-3 fix (GitHub issue 143, finding NEW-1): a bare `#N` immediately preceded (same line,
+// ignoring only spaces/tabs) by one of these ordinal/count words is a plain English ordinal —
+// "Finding #2", "Build task #1", "suspicion #4", "round #3", "attempt #1", "step #2", a mutation's
+// "M1"-style "mutant #1" — never a GitHub Issue citation, even though it is syntactically identical
+// in shape to a real one ("Closes #N"). This is a denylist, not a completeness claim: it is calibrated
+// against this repo's own measured usage (`grep -rnoiE` across tracked `.md`/`.ts`/`.mjs` files for
+// "<word> #N", cross-checked against `docs/reviews/*`, `CHANGELOG.md`, and this file's own test
+// suite) and is expected to need new entries if this repo starts using a new ordinal word before a
+// bare `#N` — it does not claim to be exhaustive over English ordinals in general.
+const NON_ISSUE_ORDINAL_WORD_RE =
+  /\b(?:finding|findings|task|tasks|suspicion|suspicions|attack|attacks|round|rounds|attempt|attempts|mutant|mutants|mutation|mutations|step|steps)[ \t]*$/i;
 const BACKTICK_PATH_RE = /`([^`\n]+)`/g;
 
 function classifyAdr(raw: string, deps: ReferenceResolverDeps): Citation {
@@ -65,6 +127,15 @@ function classifyAdr(raw: string, deps: ReferenceResolverDeps): Citation {
     return { raw, kind: "adr", verdict: "resolved", reason: "found in ADR catalog" };
   }
   return { raw, kind: "adr", verdict: "unresolved-authority", reason: "no ADR with this id exists in the tree" };
+}
+
+function classifyMilestone(raw: string): Citation {
+  return {
+    raw,
+    kind: "milestone",
+    verdict: "resolved",
+    reason: "GitHub Milestone reference (separate numbering namespace from Issues) — recognized, not verified against a live milestone list in this pass",
+  };
 }
 
 function classifyIssue(raw: string, deps: ReferenceResolverDeps): Citation {
@@ -144,10 +215,57 @@ function classifyPath(raw: string, deps: ReferenceResolverDeps): Citation | null
   return null;
 }
 
+interface OrdinalListGuardState {
+  /** End index (in `text`) of the most recently excluded ordinal/count-word match, or -1. */
+  lastOrdinalListEnd: number;
+}
+
+/**
+ * Decides whether a BARE (non-cross-repo) `#N` candidate match must be excluded entirely — not
+ * classified as any kind of citation. Same-line only (does not cross a `\n`). Three reasons, in
+ * order:
+ *
+ * (a) It is immediately preceded by "Issue"/"Milestone" — already recorded by that word-form pass
+ *     above, this bare match is the same citation seen a second time (round-2 guard, GitHub issue
+ *     139).
+ * (b) It is immediately preceded by a plain-English ordinal/count word ("Finding #N", "Build task
+ *     #N", "suspicion #N") — never a GitHub Issue citation despite being syntactically identical
+ *     to a real one (round-3 fix, GitHub issue 143, finding NEW-1).
+ * (c) It is a LIST CONTINUATION of reason (b) — "Findings #N, #N, #N" (or the slash-joined
+ *     "Findings #N/#N" shorthand this repo's own review reports also use) only has the ordinal
+ *     word in front of the FIRST number; every later number in the same list is separated from the
+ *     excluded item before it only by punctuation (a comma, slash, "and", `&`, or whitespace),
+ *     never by a new word, so it inherits the same exclusion (found during this round's own
+ *     re-measurement, not part of the originally-filed finding text, but the same underlying
+ *     defect).
+ *
+ * Mutates `state.lastOrdinalListEnd` so a later match can detect reason (c).
+ */
+function shouldExcludeBareIssueMatch(text: string, idx: number, matchLength: number, state: OrdinalListGuardState): boolean {
+  const lineStart = text.lastIndexOf("\n", idx - 1) + 1;
+  const sameLineBefore = text.slice(lineStart, idx);
+
+  if (/\b(?:issue|milestone)[ \t]*$/i.test(sameLineBefore)) {
+    return true;
+  }
+  if (NON_ISSUE_ORDINAL_WORD_RE.test(sameLineBefore)) {
+    state.lastOrdinalListEnd = idx + matchLength;
+    return true;
+  }
+  const betweenPreviousAndThis = state.lastOrdinalListEnd >= 0 ? text.slice(state.lastOrdinalListEnd, idx) : null;
+  if (betweenPreviousAndThis !== null && /^(?:[ \t,/]|and|&)*$/i.test(betweenPreviousAndThis)) {
+    state.lastOrdinalListEnd = idx + matchLength;
+    return true;
+  }
+  state.lastOrdinalListEnd = -1;
+  return false;
+}
+
 /** Scans `text` for every citation-shaped candidate and classifies each. Pure — no I/O. */
 export function scanReferences(text: string, deps: ReferenceResolverDeps): Citation[] {
   const citations: Citation[] = [];
   const seen = new Set<string>();
+  const ordinalListState: OrdinalListGuardState = { lastOrdinalListEnd: -1 };
 
   function record(raw: string, classify: () => Citation): void {
     const key = raw;
@@ -163,8 +281,26 @@ export function scanReferences(text: string, deps: ReferenceResolverDeps): Citat
     const normalized = m[0].replace(/\s+/g, "");
     record(normalized, () => classifyIssue(normalized, deps));
   }
+  // Milestone candidates are scanned BEFORE the general issue-shaped candidates below, and the
+  // bare-issue loop skips anything immediately preceded by "Milestone"/"Issue" text (its own
+  // word-form pass already recorded it) — see the `precedingWord` guard — so a "Milestone #N"
+  // occurrence is never double-recorded as both a milestone AND a bare issue citation.
+  for (const m of text.matchAll(MILESTONE_CANDIDATE_RE)) {
+    const normalized = m[0].replace(/\s+/g, " ").trim();
+    record(normalized, () => classifyMilestone(normalized));
+  }
   for (const m of text.matchAll(ISSUE_CANDIDATE_RE)) {
     if (m[0].startsWith("ADR-")) continue;
+    const idx = m.index ?? 0;
+    // Round-3 fix (GitHub issue 143, finding NEW-3): the cross-repo `owner/repo#N` shape must
+    // NEVER go through `shouldExcludeBareIssueMatch` — that guard's premise only holds for the
+    // BARE `#N` alternative. `ISSUE_WORD_CANDIDATE_RE` (`/\bIssue\s*#\d+/gi`) cannot match across
+    // an intervening `owner/repo` slug, so "Issue owner/repo#N" would otherwise be silently
+    // dropped entirely: never recorded by the word-form pass (nothing there to match it) AND
+    // skipped here (wrongly assumed already recorded). Detected structurally (the match itself
+    // contains `/`), not by re-deriving the cross-repo regex.
+    const isCrossRepo = m[0].includes("/");
+    if (!isCrossRepo && shouldExcludeBareIssueMatch(text, idx, m[0].length, ordinalListState)) continue;
     record(m[0], () => classifyIssue(m[0], deps));
   }
   for (const m of text.matchAll(BACKTICK_PATH_RE)) {
@@ -215,6 +351,162 @@ export function summarizeCitations(citations: Citation[]): InstrumentResult {
   };
 }
 
+/**
+ * Real credential-backed issue-existence check, via the injected `Runner` (never invoked directly
+ * by `scanReferences`/`classifyIssue`/`verifyLocalIssue`, which stay synchronous and pure — this
+ * lives one layer up, at `main()`'s async I/O boundary, matching `completeness-claim-checker.ts`'s
+ * `verifyMarkerClaim(claim, runner)` shape).
+ *
+ * Returns:
+ * - `null` immediately when `repoSlug` is null (no known repo to query — fails closed, same as
+ *   today's unconditional `null` stub, never silently treated as "doesn't exist").
+ * - `true` when `gh issue view <n> --repo <slug> --json state` exits 0 and prints parseable JSON
+ *   with a `state` field (an Issue or PR — GitHub's own API does not distinguish the two here).
+ * - `false` when `gh` reports the number does not resolve to an issue or PR (its own documented
+ *   "Could not resolve to an issue or pull request" message, or any 404-shaped stderr) — a real,
+ *   positively-confirmed absence, not a failure to check.
+ * - `null` for anything else (auth failure, network failure, timeout, rate limit, unparseable
+ *   stdout) — fails closed exactly like the "cannot verify" path already covered by
+ *   `verifyLocalIssue`'s existing null-handling; this function never turns an inconclusive call
+ *   into a false negative.
+ */
+export async function checkIssueViaGh(n: number, repoSlug: string | null, runner: Runner): Promise<boolean | null> {
+  if (repoSlug === null) return null;
+
+  const res = await runner("gh", ["issue", "view", String(n), "--repo", repoSlug, "--json", "state"], {
+    timeoutMs: 30_000,
+  });
+
+  if (res.code === 0) {
+    try {
+      const parsed: unknown = JSON.parse(res.stdout);
+      if (parsed !== null && typeof parsed === "object" && "state" in parsed) return true;
+      return null; // exit 0 but not the shape we expect — inconclusive, fail closed
+    } catch {
+      return null; // exit 0 but unparseable stdout — inconclusive, fail closed
+    }
+  }
+
+  // gh's own documented not-found message (GraphQL "Could not resolve to an issue or pull
+  // request ... (repository.issue)"), or an HTTP 404-shaped stderr — both are a real, confirmed
+  // absence. Measured directly against a real `gh issue view` call on a nonexistent number
+  // (this repo, this session): exit 1, stderr = `GraphQL: Could not resolve to an issue or pull
+  // request with the number of <n>. (repository.issue)`.
+  if (/could not resolve to an issue or pull request/i.test(res.stderr) || /\b404\b/.test(res.stderr)) {
+    return false;
+  }
+
+  // Any other non-zero exit (auth failure, network failure, timeout, rate limit, unrecognized
+  // repo, etc.) is inconclusive — fails closed, never silently treated as "doesn't exist" or
+  // "exists".
+  return null;
+}
+
+// Rate-limit/batching fix (this round's own tracked defect): a per-run cap on distinct issue
+// numbers this run will look up via `gh issue view` (one call each — dedup is exact, see
+// `resolveIssueCitations` below). GITHUB_TOKEN's documented per-repo REST budget is ~1,000/hr;
+// measured directly against this repo before this round's own boundary-bug fix: 71 distinct
+// numbers on this diff's own changed-file scope, 101 full-tree. 300 leaves a wide margin above
+// both measured figures (including the increase the boundary fix itself causes, since more real
+// citations are now classified at all) while still catching a future diff that would genuinely
+// risk exhausting the budget — e.g. several concurrent CI runs sharing the same token — with a
+// loud, actionable failure instead of letting rate-limiting silently degrade every further lookup
+// into the same "cannot verify" `null` this story exists to eliminate. Overridable via
+// `QA14_MAX_ISSUES` for a repo with a different real citation volume.
+//
+// Round-3 fix (GitHub issue 143, finding NEW-5): the override was previously read as `Number(env ?? 300)` with
+// no validation. A malformed `QA14_MAX_ISSUES` (a typo, non-numeric text) produced `NaN`, and
+// `size > NaN` is always `false` — the cap this comment describes would have silently never
+// fired, the exact silent-degradation failure mode it exists to prevent. An empty-string override
+// (how GitHub Actions renders an unset `vars.X`/`secrets.X` interpolation) produced `0`, failing
+// the cap shut on every run instead. `parseMaxDistinctIssues` accepts the override only when it
+// parses to a finite positive integer, and falls back to `fallback` with a loud console warning
+// otherwise — exported so this parsing behavior is unit-tested directly, without needing to
+// mutate `process.env` and re-import this module.
+export function parseMaxDistinctIssues(rawEnvValue: string | undefined, fallback = 300): number {
+  if (rawEnvValue === undefined) return fallback;
+  const n = Number(rawEnvValue);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    console.warn(
+      `[QA-14 reference-resolver] WARNING: QA14_MAX_ISSUES="${rawEnvValue}" is not a positive ` +
+        `integer — falling back to the default cap of ${fallback}. (A malformed value must never ` +
+        `silently disable or silently over-tighten this rate-limit cap.)`,
+    );
+    return fallback;
+  }
+  return n;
+}
+export const DEFAULT_MAX_DISTINCT_ISSUES = parseMaxDistinctIssues(process.env.QA14_MAX_ISSUES);
+
+export interface IssueResolution {
+  /** Every citation the scanned text set contains, of every kind — not issue citations alone. */
+  citations: Citation[];
+  /** How many distinct issue numbers pass 1 found across every scanned file. */
+  distinctIssueNumbers: number;
+  /** `true` when `distinctIssueNumbers` exceeded `maxDistinctIssues` — pass 2 did NOT run. */
+  capExceeded: boolean;
+}
+
+/**
+ * The real two-pass wiring (collect -> gh-resolve -> real re-scan), extracted out of `main()` so
+ * it has its own exported, `Runner`-injected test seam (this round's own wiring-coverage fix).
+ * Before this, only
+ * `checkIssueViaGh` itself was unit-tested in isolation; a mutation that broke the WIRING around
+ * it (e.g. `issueExists: () => true`, a total fail-open) was invisible to the suite because
+ * nothing exercised this function end-to-end with a fake `Runner`.
+ */
+export async function resolveIssueCitations(
+  fileTexts: Map<string, string>,
+  baseDeps: Omit<ReferenceResolverDeps, "issueExists">,
+  repoSlug: string | null,
+  runner: Runner,
+  maxDistinctIssues: number = DEFAULT_MAX_DISTINCT_ISSUES,
+): Promise<IssueResolution> {
+  // Pass 1 (collector): `scanReferences`/`classifyIssue`/`verifyLocalIssue` stay synchronous and
+  // pure (never made async) — so real credential-backed lookup happens here, one layer up, by
+  // running the scan once with an `issueExists` that only RECORDS every queried issue number
+  // (returning `null` so this pass's own citation verdicts are discarded, never reported).
+  const queriedIssueNumbers = new Set<number>();
+  const collectorDeps: ReferenceResolverDeps = {
+    ...baseDeps,
+    issueExists: (n) => {
+      queriedIssueNumbers.add(n);
+      return null;
+    },
+  };
+  for (const text of fileTexts.values()) {
+    scanReferences(text, collectorDeps);
+  }
+
+  if (queriedIssueNumbers.size > maxDistinctIssues) {
+    return { citations: [], distinctIssueNumbers: queriedIssueNumbers.size, capExceeded: true };
+  }
+
+  // Real lookup: one `gh issue view` call per DISTINCT issue number found above, via the injected
+  // Runner (never a bare `child_process` call here — stays swappable/fake-able in tests). The
+  // `issueCache` Map below IS the dedup mechanism: a number cited many times in the scanned text
+  // still costs exactly one `gh` call and one cache entry.
+  const issueCache = new Map<number, boolean | null>();
+  for (const n of queriedIssueNumbers) {
+    issueCache.set(n, await checkIssueViaGh(n, repoSlug, runner));
+  }
+
+  // Pass 2 (real): re-run the scan for real, resolving every issue citation against the cache
+  // built above — `?? null` preserves fail-closed semantics for a number this pass somehow didn't
+  // query in pass 1 (should not happen; the same `scanReferences` logic runs both passes over the
+  // same text).
+  const realDeps: ReferenceResolverDeps = {
+    ...baseDeps,
+    issueExists: (n) => issueCache.get(n) ?? null,
+  };
+  const citations: Citation[] = [];
+  for (const text of fileTexts.values()) {
+    citations.push(...scanReferences(text, realDeps));
+  }
+
+  return { citations, distinctIssueNumbers: queriedIssueNumbers.size, capExceeded: false };
+}
+
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const base = process.argv[2] ?? process.env.QA14_BASE_REF ?? "HEAD~1";
@@ -253,7 +545,7 @@ async function main(): Promise<void> {
     adrFiles.map((f) => `ADR-${(f.split("/").pop() ?? "").slice(0, 4)}`),
   );
 
-  const deps: ReferenceResolverDeps = {
+  const baseDeps: Omit<ReferenceResolverDeps, "issueExists"> = {
     pathExists: (p) => {
       const resolved = resolveWithinRepo(repoRoot, p);
       return resolved !== null && existsSync(resolved);
@@ -269,22 +561,31 @@ async function main(): Promise<void> {
       }
     },
     knownAdrIds,
-    // No issue-tracker credential is wired into this CI job by default — fails closed (returns
-    // null -> "cannot verify") rather than silently skipping local issue citations. A future
-    // story wires a real `gh issue view` lookup here.
-    issueExists: () => null,
     repoSlug,
   };
 
-  const allCitations: Citation[] = [];
+  // Read every scanned file's text once, up front — reused across both passes below so the
+  // second (real) pass never re-reads a file whose content could theoretically change between
+  // passes (a stronger guarantee than strictly required today, but free and correct).
+  const fileTexts = new Map<string, string>();
   for (const file of changedFiles) {
     if (!shouldScanFile(file)) continue;
     if (!existsSync(resolve(repoRoot, file))) continue; // deleted file, nothing to scan
-    const text = await readFile(resolve(repoRoot, file), "utf8");
-    allCitations.push(...scanReferences(text, deps));
+    fileTexts.set(file, await readFile(resolve(repoRoot, file), "utf8"));
   }
 
-  const result = summarizeCitations(allCitations);
+  const issueResolution = await resolveIssueCitations(fileTexts, baseDeps, repoSlug, realRunner);
+  if (issueResolution.capExceeded) {
+    printInstrumentResult("QA-14 reference-resolver", {
+      ok: false,
+      vacuous: false,
+      summary: `${issueResolution.distinctIssueNumbers} distinct issue citation(s) this run, cap is ${DEFAULT_MAX_DISTINCT_ISSUES} \`gh issue view\` calls — increase QA14_MAX_ISSUES or reduce/batch citations. Failing loud rather than silently rate-limiting GITHUB_TOKEN's ~1,000/hr/repo budget into "cannot verify" nulls.`,
+      details: [],
+    });
+    process.exit(1);
+  }
+
+  const result = summarizeCitations(issueResolution.citations);
   printInstrumentResult("QA-14 reference-resolver", result);
   process.exit(exitCodeFor(result));
 }

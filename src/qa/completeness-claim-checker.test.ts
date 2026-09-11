@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCompleteness, findBareClaims, findMarkerClaims, verifyMarkerClaim } from "./completeness-claim-checker.ts";
+import { DEFAULT_FILES, checkCompleteness, findBareClaims, findMarkerClaims, verifyMarkerClaim } from "./completeness-claim-checker.ts";
 import type { Runner } from "../lib/exec.ts";
 
 function fakeRunner(stdout: string): Runner {
@@ -92,4 +92,20 @@ test("QA-15: a claim WITH a marker on the same line is not double-flagged as bar
 test("QA-15: N-of-M phrasing ('46 of 39') is caught as a bare claim", () => {
   const claims = findBareClaims("Header said 46 of 39 fixtures.");
   assert.equal(claims.length, 1);
+});
+
+// Issue #142 (round 2, red-team no-go): a mutation test (`DEFAULT_FILES = []`) survived the full
+// suite untouched — nothing pinned that the `docs/decisions.md` exclusion is a deliberate, single,
+// narrow scoping decision rather than an accidentally-emptied gate. This ratchets it: an
+// accidental full-list wipe, or a silent re-widening/re-narrowing of the set, now fails here.
+test("QA-15 (Issue #142): DEFAULT_FILES contains exactly the two live-state files this gate scans by default, no more, no fewer", () => {
+  assert.deepEqual(DEFAULT_FILES, ["docs/STATE.md", "CHANGELOG.md"]);
+});
+
+test("QA-15 (Issue #142): DEFAULT_FILES deliberately excludes docs/decisions.md (append-only historical log, not a live re-checkable claim) — an accidental re-inclusion is caught here", () => {
+  assert.equal(DEFAULT_FILES.includes("docs/decisions.md"), false);
+});
+
+test("QA-15 (Issue #142): DEFAULT_FILES is never accidentally emptied — the mutant `DEFAULT_FILES = []` this Issue was filed against would fail this assertion", () => {
+  assert.ok(DEFAULT_FILES.length > 0, "DEFAULT_FILES must not be empty — an empty scope is a silent no-op gate, not a passing one");
 });

@@ -2,7 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve as pathResolve } from "node:path";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
-import { resolveWithinRepo, scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
+import {
+  checkIssueViaGh,
+  parseMaxDistinctIssues,
+  resolveIssueCitations,
+  resolveWithinRepo,
+  scanReferences,
+  shouldScanFile,
+  summarizeCitations,
+} from "./reference-resolver.ts";
 import type { Runner } from "../lib/exec.ts";
 import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 
@@ -168,4 +176,311 @@ test("QA-14 (regression, app-security SUSPICION): a `../../`-style citation path
   // A well-behaved, contained citation still resolves normally — the fix must not over-reject.
   assert.equal(resolveWithinRepo(repoRoot, "docs/STATE.md"), pathResolve(repoRoot, "docs/STATE.md"));
   assert.equal(resolveWithinRepo(repoRoot, "."), repoRoot);
+});
+
+// QA-14 Issue #120 fix: real credential-backed issue-existence lookup via `checkIssueViaGh`. Every
+// case below uses a fake `Runner` — no real `gh`/network call in this suite (matching
+// completeness-claim-checker.test.ts's own `verifyMarkerClaim(claim, runner)` fake-Runner style).
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null immediately when repoSlug is null, never calling the runner", async () => {
+  const runner: Runner = () => {
+    throw new Error("must not be called when repoSlug is null");
+  };
+  const result = await checkIssueViaGh(7, null, runner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns true when gh exits 0 with parseable {state} JSON (issue exists)", async () => {
+  const runner: Runner = (cmd, args) => {
+    assert.equal(cmd, "gh");
+    assert.deepEqual(args, ["issue", "view", "120", "--repo", "mohannadrabie/thoth", "--json", "state"]);
+    return Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
+  };
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, true);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns false on gh's documented not-found message (issue does not exist)", async () => {
+  const runner: Runner = () =>
+    Promise.resolve({
+      stdout: "",
+      stderr: "GraphQL: Could not resolve to an issue or pull request with the number of 999999. (repository.issue)",
+      code: 1,
+    });
+  const result = await checkIssueViaGh(999999, "mohannadrabie/thoth", runner);
+  assert.equal(result, false);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null on an auth failure (fails closed, not a false negative)", async () => {
+  const runner: Runner = () =>
+    Promise.resolve({ stdout: "", stderr: "gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.", code: 1 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null on a network failure / timeout (fails closed)", async () => {
+  // `realRunner` (src/lib/exec.ts) never throws — a subprocess timeout or network failure surfaces
+  // as a non-zero exit with no matching not-found stderr shape, so that's the realistic fake here.
+  const timeoutRunner: Runner = () => Promise.resolve({ stdout: "", stderr: "", code: 124 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", timeoutRunner);
+  assert.equal(result, null);
+});
+
+test("QA-14 (Issue #120): checkIssueViaGh returns null when gh exits 0 but stdout is unparseable (inconclusive, fails closed)", async () => {
+  const runner: Runner = () => Promise.resolve({ stdout: "not json", stderr: "", code: 0 });
+  const result = await checkIssueViaGh(120, "mohannadrabie/thoth", runner);
+  assert.equal(result, null);
+});
+
+// --- Issue #139 (round 2, red-team no-go): ISSUE_CANDIDATE_RE's leading `\b` sat in front of an
+// OPTIONAL group, so it could only match immediately before `#` when the PRECEDING character was
+// a word character — every real citation form this repo actually uses ("Closes #N", "(#N)", a
+// line-start "#N", "Milestone #N") was silently never classified at all. These pin the fix.
+
+test("QA-14 (Issue #139): a 'Closes #N' citation reaches classification, not silently skipped", () => {
+  const citations = scanReferences("Closes #120 in this changelog entry.", deps({ issueExists: () => true }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "#120");
+  assert.equal(citations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #139): a parenthetical '(#N)' citation reaches classification, not silently skipped", () => {
+  const citations = scanReferences("A parenthetical reference (#120) mid-sentence.", deps({ issueExists: () => true }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "#120");
+  assert.equal(citations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #139): a line-start '#N' citation reaches classification, not silently skipped", () => {
+  const citations = scanReferences("#120 is the first thing on this line.", deps({ issueExists: () => true }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "#120");
+  assert.equal(citations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #139): the owner/repo#N cross-repo shape still resolves correctly (already worked, must not regress)", () => {
+  const citations = scanReferences("Fixed in owner/repo#120 upstream.", deps({ repoSlug: "mohannadrabie/thoth" }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "owner/repo#120");
+  assert.equal(citations[0]?.verdict, "cross-repo-issue");
+});
+
+test("QA-14 (Issue #139): a word-glued bare citation ('GH#57'-style shorthand this repo's own reviewers have used) still resolves via its trailing #N, not lost by the fix", () => {
+  const citations = scanReferences("GH#57 shorthand.", deps({ issueExists: (n) => n === 57 }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "#57");
+  assert.equal(citations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #139): a 'Milestone #N' citation is recognized as its own kind — captured, not silently dropped, and NOT misclassified as an Issue citation of the same number (a different GitHub namespace)", () => {
+  const citations = scanReferences(
+    "See Milestone #23 for the plan.",
+    deps({
+      issueExists: () => {
+        throw new Error("must not query issueExists for a milestone number — different namespace");
+      },
+    }),
+  );
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.kind, "milestone");
+  assert.equal(citations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #139, no new false positive): a mixed-alphanumeric CSS hex color literal is never torn into a bogus digit-prefix citation", () => {
+  const citations = scanReferences("--bg:#0f1115; --panel:#171a21; --accent:#5b8cff;", deps());
+  assert.equal(citations.length, 0);
+});
+
+// --- Issue #140 (round 2): the two-pass wiring in `main()` had zero test coverage of its own —
+// only `checkIssueViaGh` was unit-tested in isolation. These exercise the real, exported
+// `resolveIssueCitations` wiring end-to-end with a fake `Runner`.
+
+function wiringBaseDeps(): Omit<ReferenceResolverDeps, "issueExists"> {
+  return {
+    pathExists: () => true,
+    lineCount: () => 100,
+    knownAdrIds: new Set(),
+    repoSlug: "mohannadrabie/thoth",
+  };
+}
+
+test("QA-14 (Issue #140): resolveIssueCitations' real end-to-end wiring rejects a fabricated issue citation, not just checkIssueViaGh in isolation", async () => {
+  const fileTexts = new Map([["docs/example.md", "Closes #999999 in this repo."]]);
+  const runner: Runner = () =>
+    Promise.resolve({
+      stdout: "",
+      stderr: "GraphQL: Could not resolve to an issue or pull request with the number of 999999. (repository.issue)",
+      code: 1,
+    });
+  const { citations, capExceeded } = await resolveIssueCitations(fileTexts, wiringBaseDeps(), "mohannadrabie/thoth", runner);
+  assert.equal(capExceeded, false);
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, false, "a fabricated issue citation must fail the real end-to-end wiring, not just checkIssueViaGh in isolation");
+  assert.match(result.details.join(" "), /does not exist/);
+});
+
+test("QA-14 (Issue #140): resolveIssueCitations' real end-to-end wiring PASSES a genuinely-existing issue citation (the positive control for the test above)", async () => {
+  const fileTexts = new Map([["docs/example.md", "Closes #120 in this repo."]]);
+  const runner: Runner = () => Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
+  const { citations } = await resolveIssueCitations(fileTexts, wiringBaseDeps(), "mohannadrabie/thoth", runner);
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, true);
+});
+
+// --- Issue #141 (round 2): unbatched, uncached, uncapped `gh` calls risk exhausting GITHUB_TOKEN's
+// ~1,000/hr/repo budget, degrading straight back into the "cannot verify" nulls this story exists
+// to eliminate. These confirm the cap fails loud, and that the existing in-memory cache really
+// dedupes (not just claimed) rather than issuing one call per citation OCCURRENCE.
+
+test("QA-14 (Issue #141): resolveIssueCitations enforces the maxDistinctIssues cap loudly, spending ZERO gh calls once exceeded", async () => {
+  const fileTexts = new Map([["docs/example.md", "Closes #1, #2, and #3 all in one file."]]);
+  let calls = 0;
+  const runner: Runner = () => {
+    calls++;
+    return Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
+  };
+  const result = await resolveIssueCitations(fileTexts, wiringBaseDeps(), "mohannadrabie/thoth", runner, 2);
+  assert.equal(result.capExceeded, true);
+  assert.equal(result.distinctIssueNumbers, 3);
+  assert.equal(calls, 0, "no gh call should run once the cap is exceeded — fail loud before spending any of the rate-limit budget");
+  assert.equal(result.citations.length, 0);
+});
+
+test("QA-14 (Issue #141): the same issue number cited multiple times, across multiple files, triggers exactly ONE gh call — the in-memory cache dedup is real, not just claimed", async () => {
+  const fileTexts = new Map([
+    ["docs/a.md", "Closes #7. Also see #7 again in the same file."],
+    ["docs/b.md", "And once more, #7, in a second file."],
+  ]);
+  let calls = 0;
+  const runner: Runner = (_cmd, args) => {
+    calls++;
+    assert.deepEqual(args, ["issue", "view", "7", "--repo", "mohannadrabie/thoth", "--json", "state"]);
+    return Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
+  };
+  const { citations } = await resolveIssueCitations(fileTexts, wiringBaseDeps(), "mohannadrabie/thoth", runner);
+  assert.equal(calls, 1, "the in-memory issueCache must dedupe repeated citations to the same number");
+  const bad = citations.filter((c) => c.verdict !== "resolved");
+  assert.deepEqual(bad, []);
+});
+
+// --- Round 3 (red-team round-2 re-confirm, `docs/reviews/qa1415fix-red-team-round2-2026-09-10.md`):
+// two new MED findings (Issues #143, #144) and four LOW items, all introduced by round 2's own
+// regex fix. Fixed in this round; pinned here.
+
+// NEW-1 / Issue #143 (MED): non-citation hash-N ordinals must not be classified as issue citations.
+test("QA-14 (Issue #143, NEW-1): an ordinal shorthand ('Finding #2', 'Build task #1', 'suspicion #4') is NOT classified as an issue citation", () => {
+  const cases = [
+    "design-challenger Finding #2 was addressed.",
+    "Scheduled as build task #1 for this round.",
+    "the architecture's suspicion #4 was confirmed.",
+    "round-1 attack #5 was re-applied.",
+    "M3 mutation #2 was caught.",
+  ];
+  for (const text of cases) {
+    const citations = scanReferences(text, deps({ issueExists: () => true }));
+    const issueCitations = citations.filter((c) => c.kind === "issue");
+    assert.equal(issueCitations.length, 0, `expected no issue citation in: ${JSON.stringify(text)}, got: ${JSON.stringify(issueCitations)}`);
+  }
+});
+
+test("QA-14 (Issue #143, NEW-1): an HTML numeric character entity ('&#39;') is NOT classified as an issue citation", () => {
+  const citations = scanReferences("the escape map renders an apostrophe as &#39;.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #143, NEW-1 non-regression): a real 'Closes #N' citation immediately after an ordinal-shaped sentence still resolves", () => {
+  const citations = scanReferences("Finding #2 is fixed. Closes #120.", deps({ issueExists: (n) => n === 120 }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 1);
+  assert.equal(issueCitations[0]?.raw, "#120");
+  assert.equal(issueCitations[0]?.verdict, "resolved");
+});
+
+// Residual gap found during this round's own re-measurement (not part of the originally-filed
+// NEW-1 text): a comma/"and"-separated LIST of ordinals only has the word in front of the FIRST
+// number — later list members must inherit the same exclusion, not resolve as real citations.
+test("QA-14 (Issue #143, NEW-1 list-continuation): 'Findings #3, #4, #6' excludes ALL three numbers, not just the one directly after the word", () => {
+  const citations = scanReferences("design-challenger's Findings #3, #4, #6 are residual.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0, `expected none of the list to classify as an issue, got: ${JSON.stringify(issueCitations)}`);
+});
+
+test("QA-14 (Issue #143, NEW-1 list-continuation, 'and'-joined): 'attack #4 and #5' excludes both numbers", () => {
+  const citations = scanReferences("round-1 attack #4 and #5 both apply here.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #143, NEW-1 list-continuation non-regression): a real citation list is unaffected — 'Closes #7, #8' still resolves both", () => {
+  const citations = scanReferences("Closes #7, #8 in one sweep.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 2);
+  assert.deepEqual(
+    issueCitations.map((c) => c.raw).sort(),
+    ["#7", "#8"],
+  );
+});
+
+// NEW-2 / Issue #144 (MED): an all-digit CSS hex colour literal must not be classified as an issue.
+test("QA-14 (Issue #144, NEW-2): an all-digit CSS hex colour literal ('#000', '#333') in a style declaration is NOT classified as an issue citation", () => {
+  const citations = scanReferences(".bar-track{background:#000; border-radius:4px;} .x{color:#333;}", deps());
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #144, non-regression): the mixed-alphanumeric hex guard from round 2 still holds alongside the new all-digit guard", () => {
+  const citations = scanReferences("--bg:#0f1115; --panel:#171a21; --accent:#5b8cff;", deps());
+  assert.equal(citations.length, 0);
+});
+
+// NEW-3 (LOW): the `precedingWord` guard must not silently drop a word-prefixed cross-repo citation.
+test("QA-14 (NEW-3): 'Issue owner/repo#N' (word-prefixed cross-repo) still classifies, not silently dropped by the same-word guard", () => {
+  const citations = scanReferences("Issue anthropics/claude-code#18846 tracks this upstream.", deps({ repoSlug: "mohannadrabie/thoth" }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "anthropics/claude-code#18846");
+  assert.equal(citations[0]?.verdict, "cross-repo-issue");
+});
+
+// NEW-4 (LOW): MILESTONE_CANDIDATE_RE and the guard must not span a line boundary.
+test("QA-14 (NEW-4): a line ending in the word 'milestone' followed by a line starting with a real Issue citation classifies the citation as an ISSUE, not a mis-kinded milestone", () => {
+  const citations = scanReferences("Tied to this milestone\n#120 is the issue that closes it.", deps({ issueExists: (n) => n === 120 }));
+  const milestoneCitations = citations.filter((c) => c.kind === "milestone");
+  assert.equal(milestoneCitations.length, 0, "must not span the newline into a bogus milestone match");
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 1);
+  assert.equal(issueCitations[0]?.raw, "#120");
+  assert.equal(issueCitations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (NEW-4, non-regression): a same-line 'Milestone #N' citation still classifies as milestone, unaffected by the line-boundary fix", () => {
+  const citations = scanReferences("See Milestone #23 for the plan.", deps({ issueExists: () => { throw new Error("must not query issueExists for a milestone"); } }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.kind, "milestone");
+});
+
+// NEW-5 (LOW): DEFAULT_MAX_DISTINCT_ISSUES' env override must validate, not silently fail open/shut.
+test("QA-14 (NEW-5): parseMaxDistinctIssues falls back to the default on a malformed (non-numeric) override, never NaN", () => {
+  const result = parseMaxDistinctIssues("not-a-number", 300);
+  assert.equal(result, 300);
+  assert.ok(Number.isFinite(result));
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues falls back to the default on an empty-string override, never silently zero", () => {
+  const result = parseMaxDistinctIssues("", 300);
+  assert.equal(result, 300);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues rejects a non-positive or non-integer override", () => {
+  assert.equal(parseMaxDistinctIssues("0", 300), 300);
+  assert.equal(parseMaxDistinctIssues("-5", 300), 300);
+  assert.equal(parseMaxDistinctIssues("12.5", 300), 300);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues accepts a well-formed positive integer override", () => {
+  assert.equal(parseMaxDistinctIssues("50", 300), 50);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues returns the fallback when no override is set at all", () => {
+  assert.equal(parseMaxDistinctIssues(undefined, 300), 300);
 });
