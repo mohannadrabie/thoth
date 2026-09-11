@@ -163,25 +163,33 @@ const TIGHT_DASH_CONTINUATION_RE = /^[–—-]$/;
 // COMMA/whitespace-joined continuation (the class above) cannot be narrowed the same way — this
 // repo's own real comma-joined citation lists genuinely do carry surrounding whitespace (a marked
 // citation, comma, space, next number), so a comma-adjacent hex-shaped or ordinal-shaped token
-// immediately after a real marker still inherits marked status today. CORRECTED 2026-09-11
-// (round-2 fix-now, GitHub issue 154 re-opened by red-team's/cross-domain-reviewer's own round-2
-// re-confirm): the round-1 close-out's "0 real occurrences" claim was itself false, independently
-// re-measured by both reviewers and confirmed a third time here, mechanically, not reused — an
-// instrumented copy of this file's own classifier (this round's build receipt has the exact
-// command/diff) counted every continuation-marked bare match full-tree, then checked each
-// distinct number for real existence via the shipped `checkIssueViaGh`: 400 continuation-marked
-// occurrences, 10 of which (5 distinct file/number pairs) fail real-issue existence and become a
-// loud, blocking gate failure — not a silent false-pass, the safe direction this project's own
-// design already prefers, but real and non-zero. Small and contained relative to the corpus
-// (2.5% of the continuation-marked population; 5 of this branch's own 33 real blocking gate
-// failures), and closing it fully still requires either a word list (reintroducing the exact
-// denylist failure mode R3-R6 eliminated) or dropping comma continuation entirely (silently
-// un-verifying every genuine comma-joined citation list — the far larger and silent harm) — so it
-// stays open, disclosed, pinned by a regression test, not fixed in code this round either. Any
-// "never"/"0 occurrences" claim about this residual must say so plainly and be re-measured before
-// being repeated, not asserted from memory — this project has now had to correct this exact shape
-// of claim on this file three rounds running. Real digit examples deliberately avoided here — see
-// this file's own header dogfood note.
+// immediately after a real marker still inherits marked status today.
+//
+// STRUCTURAL NOTE (round-3 fix-now, 2026-09-11, `docs/decisions.md`'s round-3 row): rounds 1 and 2
+// each froze an exact "N of M" occurrence count into this comment, and each was already stale by
+// the commit that shipped it — the corpus this residual is measured against is this repo's whole
+// tracked tree, which changes on nearly every commit (including the review report that measured
+// the prior figure). An exact count is therefore not a fact that stays true here; it is described
+// qualitatively instead, and these qualities ARE stable:
+//   - real and non-zero — not eliminated by this round's design;
+//   - small relative to the continuation-marked population (single-digit percent, every
+//     measurement to date, none of which are repeated here — see below);
+//   - fails LOUD, never silent — every instance surfaces as a blocking `unresolved-authority` in
+//     the real gate run, never a false-verify;
+//   - the CURRENT count is whatever `node src/qa/reference-resolver.ts <base> <head>` (or the
+//     full-tree form) reports right now — run it for the live number. A number written here, or in
+//     any other permanently-rescanned file, is not trustworthy the moment the corpus moves; only a
+//     dated `docs/reviews/` report (point-in-time by this project's own convention, and so allowed
+//     to go stale) may state one.
+// Closing it fully still requires either a word list (reintroducing the exact denylist failure
+// mode R3-R6 eliminated) or dropping comma continuation entirely (silently un-verifying every
+// genuine comma-joined citation list — the far larger and silent harm) — so it stays open,
+// disclosed, pinned by a regression test, not fixed in code. Any "never"/"0 occurrences"/"N of M"
+// claim about this residual's SIZE must not be typed into a permanently-rescanned file — this
+// project has now had to correct a frozen count of this exact residual on this file four rounds
+// running, including once where the "corrected" figure was itself already stale at the commit that
+// shipped it. Real digit examples deliberately avoided here — see this file's own header dogfood
+// note.
 function isListContinuationGap(between: string): boolean {
   return LIST_CONTINUATION_RE.test(between) || TIGHT_DASH_CONTINUATION_RE.test(between);
 }

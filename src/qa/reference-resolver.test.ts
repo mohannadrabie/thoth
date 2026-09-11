@@ -779,18 +779,16 @@ test("QA-14 (Issue #154, dash leak CLOSED): a space-padded dash after a marked c
   assert.equal(three?.verdict, "unclassified");
 });
 
-// Honest, disclosed residual (NOT closed this round either — see the comment above
-// TIGHT_DASH_CONTINUATION_RE in reference-resolver.ts): a comma/whitespace-joined continuation
-// still carries marked status onto a hex-shaped or ordinal-shaped token immediately after it,
-// because this repo's own real comma-joined citation lists genuinely need surrounding whitespace
-// to stay matched. CORRECTED 2026-09-11 (round-2 fix-now, GitHub issue 154): the round-1 close-out
-// "0/316 real occurrences" claim above this line was false — re-measured independently by
-// red-team, cross-domain-reviewer and this round's own build (three separate methodologies, same
-// answer): 400 continuation-marked occurrences full-tree, 10 of which (5 distinct file/number
-// pairs) fail real-issue existence and become a loud blocking gate failure, not a silent false
-// resolve. See reference-resolver.ts's own comment for the full corrected figure and the reasoning
-// for staying disclosed rather than code-fixed. Pinned here so a future change to this behavior is
-// a deliberate, reviewed decision, not a silent drift either direction.
+// Honest, disclosed residual (NOT closed — see reference-resolver.ts's STRUCTURAL NOTE comment
+// above TIGHT_DASH_CONTINUATION_RE for the full reasoning, and for why no exact count is frozen
+// here after two rounds of freezing one that went stale before it shipped): a comma/whitespace-
+// joined continuation still carries marked status onto a hex-shaped or ordinal-shaped token
+// immediately after it, because this repo's own real comma-joined citation lists genuinely need
+// surrounding whitespace to stay matched. Real, small relative to the continuation-marked
+// population, and fails loud (a blocking `unresolved-authority`, never a silent false resolve) —
+// run `node src/qa/reference-resolver.ts <base> <head>` for the live count. Pinned here so a
+// future change to this behavior is a deliberate, reviewed decision, not a silent drift either
+// direction.
 test("QA-14 (Issue #154, disclosed residual, NOT fixed this round): a comma-joined token right after a marked citation still inherits marked status, even when it is hex/ordinal-shaped", () => {
   const citations = scanReferences("Closes #7, #000 is the palette token.", deps({ issueExists: (n) => n === 7 }));
   const relevant = citations.find((c) => c.raw === "#000");

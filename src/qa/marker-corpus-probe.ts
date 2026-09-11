@@ -137,7 +137,14 @@ async function main(): Promise<void> {
         summary:
           stats.total === 0
             ? "0 bare #N citations found in the scanned tree — vacuous."
-            : `marked=${stats.marked} unmarked=${stats.unmarked} total=${stats.total} — approx ${pct}% of this repo's bare #N occurrences (${stats.filesScanned} files scanned) carry no explicit citation marker.`,
+            // Round-3 fix-now (Issue #156-adjacent LOW, red-team round-3 finding 5): this counts
+            // DISTINCT (file, raw-citation) pairs (scanReferences dedupes per file), not raw text
+            // occurrences of a bare #N shape — the label previously said "occurrences", which is a
+            // different, larger quantity (measured full-tree: raw occurrences run materially higher
+            // than this distinct-pair total). "Distinct per-file citations" is also the more useful
+            // metric for this instrument's actual purpose: it mirrors what the shipped QA-14
+            // classifier itself treats as one citation event, not a text-search hit count.
+            : `marked=${stats.marked} unmarked=${stats.unmarked} total=${stats.total} — approx ${pct}% of this repo's distinct per-file bare #N citations (${stats.filesScanned} files scanned) carry no explicit citation marker.`,
         details: [],
       };
   printInstrumentResult("QA-14 marker-corpus-probe", result);

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { computeMarkerCorpusStats, parseMarkerCorpusField } from "./marker-corpus-probe.ts";
+import { realRunner } from "../lib/exec.ts";
 
 // GitHub Issue #150: this instrument replaces an uncommitted scratchpad probe. These tests pin
 // its own counting behavior directly (marked vs. unmarked vs. excluded populations), independent
@@ -63,4 +64,31 @@ test("QA-14 marker-corpus-probe: parseMarkerCorpusField accepts marked|unmarked|
 
 test("QA-14 marker-corpus-probe: parseMarkerCorpusField throws (fails loud) on an unrecognized field value", () => {
   assert.throws(() => parseMarkerCorpusField(["--field=bogus"]), /--field must be one of marked\|unmarked\|total/);
+});
+
+// GitHub Issue #156 (red-team round-3, MED): the pre-existing end-to-end test in
+// completeness-claim-checker.test.ts only proves `--field=total` mismatches a deliberately wrong
+// `expect=0` — a comparison that is true whether stdout genuinely ends in the field's own number or
+// (under a regression that silently drops `--field` handling, falling back to the round-1 default
+// summary) in `filesScanned`. Neither value is ever 0 on this repo's real corpus, so that test
+// cannot distinguish the fixed code from the mutation red-team demonstrated (M1: suppress the
+// `--field` branch entirely) leaves the full suite green. This test distinguishes on OUTPUT SHAPE,
+// not a numeric value, so it fails under M1 regardless of what the live corpus currently measures:
+// `--field=total` mode must print ONLY `total=<N>` and must NEVER contain the default mode's own
+// `marked=... unmarked=...`/`files scanned` text, which is exactly what M1's fallback would emit.
+test("QA-14 marker-corpus-probe (Issue #156): --field=total emits ONLY that field, never the default multi-number summary — mutation-catching for the exact regression round 2 fixed and round 3 left untested", async () => {
+  const fieldRun = await realRunner("node", ["src/qa/marker-corpus-probe.ts", "--field=total"]);
+  assert.equal(fieldRun.code, 0, `probe must exit 0; stderr: ${fieldRun.stderr}`);
+  assert.match(fieldRun.stdout, /total=\d+/, "field mode must print the field=<N> shape");
+  assert.doesNotMatch(
+    fieldRun.stdout,
+    /marked=\d+ unmarked=\d+/,
+    "field mode must NOT contain the default mode's marked=/unmarked= summary — if it does, --field " +
+      "emission has silently fallen back to the round-1 default output (the exact regression this pins)",
+  );
+  assert.doesNotMatch(
+    fieldRun.stdout,
+    /files scanned/,
+    "field mode must NOT contain the default mode's '(<N> files scanned)' clause either",
+  );
 });
