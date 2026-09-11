@@ -1,9 +1,9 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-10 (session resume — `qa1415fix` (Issue #120) built, reviewed across 3 rounds, verified, audited. SHIPPABLE, committed locally, not yet pushed. Issue #120 CLOSED.)
+**Last updated:** 2026-09-11 (session resume — human pushed and merged `qa1415fix` via **PR #148** into `master`, merge commit `c944362`. Issue #120 stays CLOSED. No new build work this session; confirming real state and naming the next story.)
 
-## Resume point — `qa1415fix` (Issue #120: QA-14/QA-15 CI gates) shippable, awaiting human push. CI will still show QA-14 red post-merge — for a separate, disclosed, now-consolidated precision gap (Issue #137 + reopened #143/#144/#145), not for anything this story fixed.
+## Resume point — `qa1415fix` (Issue #120: QA-14/QA-15 CI gates) SHIPPED — PR #148 merged 2026-09-11T16:35:26Z, `master` HEAD = `c944362`. Post-merge CI run (id `34622874378`, push on `master`) was in-progress at last check; expect it to still show QA-14 red — for the separate, disclosed, consolidated precision gap (Issue #137 + reopened #143/#144/#145), not for anything this story fixed. The PR's own pre-merge `pull_request` CI run (`34622423231`) already completed `failure` for that same expected, disclosed reason.
 
 **This session ran `/maat:ship "plan Issue #120 and fix the ci"` end-to-end, autonomously through 3 review rounds after the human authorized continuation mid-loop ("I'll go to bed, keep working and I trust and preapprove your decisions").**
 
@@ -22,7 +22,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - Issue #137 + reopened #143/#144 + #145 — the citation-classification-precision gap (false positives on ordinals/hex-literals-in-prose, a false negative on ordinal-adjacent real citations). `red-team`'s own structural recommendation (docs/reviews/qa1415fix-red-team-round3-2026-09-10.md): don't extend the denylist further; change the signal requirement instead (classify only on an explicit citation marker, report everything else as a loud "unclassified" bucket rather than silently including or excluding it). This is why QA-14 cannot go fully green on any branch yet — a fact now disclosed plainly, not hidden.
 - The infra-security LOW hardening item (an uncapped `gh`-call fan-out with no per-run limit beyond the #141 circuit-breaker, no job `timeout-minutes`) — near-zero exposure today (private repo), named, not filed.
 
-**Single next action:** human reviews and pushes `qa1415fix` (branch `fix/qa1415-issue-existence-and-decisions-scope`, local commits only) — exact command in this session's Manager Summary. Separately, whenever picked up: plan the Issue #137 fast-follow (citation-classification signal redesign) as its own CRITICAL-tier story.
+**Single next action:** ~~human reviews and pushes `qa1415fix`~~ — done, PR #148 merged into `master`. The live next action is planning the **Issue #137 fast-follow** (citation-classification signal redesign — `red-team`'s own round-3 structural recommendation: stop extending the denylist, require an explicit citation marker instead, and report everything else as a loud "unclassified" bucket) as its own CRITICAL-tier story via `/maat:ship "plan Issue #137"`. Not gating: `git branch -d fix/qa1415-issue-existence-and-decisions-scope` (local branch, fully merged, nothing to lose) whenever convenient.
 
 ## Prior resume point (superseded above, kept for continuity) — `cifix` fully validated in production CI. Issue #27 CLOSED. Current blocker: Issue #120 (QA-14/QA-15), not yet planned.
 
