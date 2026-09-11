@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve as pathResolve } from "node:path";
-import type { ReferenceResolverDeps } from "./reference-resolver.ts";
+import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import {
   checkIssueViaGh,
   parseMaxDistinctIssues,
@@ -244,18 +244,31 @@ test("QA-14 (Issue #139): a 'Closes #N' citation reaches classification, not sil
   assert.equal(citations[0]?.verdict, "resolved");
 });
 
-test("QA-14 (Issue #139): a parenthetical '(#N)' citation reaches classification, not silently skipped", () => {
+// AMENDED 2026-09-11 (QA-14 marker redesign, docs/plans/qa14-marker-redesign-phase1-2026-09-11.md
+// §5.1): this is a DELIBERATE, ruled behavior change, not silent test-doctoring. §5.1 measured that
+// ~73% of this repo's own bare-#N occurrences carry no explicit marker, and that a bare, unmarked
+// `#N` — parenthesized or not — is structurally indistinguishable from an ordinal false positive
+// ("Two findings (#1, #2)" vs. "findings (#118, #119)" are byte-identical in shape). Asserting
+// "resolved" for an unmarked bare citation was never actually safe; this now asserts the honest,
+// non-blocking "unclassified" instead of guessing in either direction. Originally asserted
+// `verdict: "resolved"` (Issue #139, round 2).
+test("QA-14 (Issue #139, AMENDED 2026-09-11 marker redesign): a parenthetical '(#N)' citation with NO explicit marker is unclassified, not silently resolved", () => {
   const citations = scanReferences("A parenthetical reference (#120) mid-sentence.", deps({ issueExists: () => true }));
   assert.equal(citations.length, 1);
   assert.equal(citations[0]?.raw, "#120");
-  assert.equal(citations[0]?.verdict, "resolved");
+  assert.equal(citations[0]?.verdict, "unclassified");
+  assert.equal(citations[0]?.kind, "issue-candidate");
 });
 
-test("QA-14 (Issue #139): a line-start '#N' citation reaches classification, not silently skipped", () => {
+// AMENDED 2026-09-11 (QA-14 marker redesign) — same rationale as the parenthetical case above: a
+// bare line-start `#N` carries no explicit marker either, so it is now `unclassified`, not
+// silently `resolved`. Originally asserted `verdict: "resolved"` (Issue #139, round 2).
+test("QA-14 (Issue #139, AMENDED 2026-09-11 marker redesign): a line-start '#N' citation with NO explicit marker is unclassified, not silently resolved", () => {
   const citations = scanReferences("#120 is the first thing on this line.", deps({ issueExists: () => true }));
   assert.equal(citations.length, 1);
   assert.equal(citations[0]?.raw, "#120");
-  assert.equal(citations[0]?.verdict, "resolved");
+  assert.equal(citations[0]?.verdict, "unclassified");
+  assert.equal(citations[0]?.kind, "issue-candidate");
 });
 
 test("QA-14 (Issue #139): the owner/repo#N cross-repo shape still resolves correctly (already worked, must not regress)", () => {
@@ -346,10 +359,19 @@ test("QA-14 (Issue #141): resolveIssueCitations enforces the maxDistinctIssues c
   assert.equal(result.citations.length, 0);
 });
 
+// AMENDED 2026-09-11 (QA-14 marker redesign, docs/plans/qa14-marker-redesign-phase1-2026-09-11.md
+// §5.1): docs/b.md's text was originally a bare, unmarked "#7" ("And once more, #7, in a second
+// file."), relying on the pre-redesign assumption that any bare #N resolves. Under this redesign
+// that shape is `unclassified` (see the two AMENDED Issue #139 tests above), which is correct but
+// no longer exercises this test's actual purpose (Issue #141: the in-memory `gh` cache dedupes a
+// number cited across multiple FILES). Reworded to carry an explicit marker so the dedup path this
+// test targets is still genuinely exercised end-to-end. Same already-ruled principle as the two
+// named amendments above, applied here to a third occurrence found during this round's own build
+// verification — not a new design decision.
 test("QA-14 (Issue #141): the same issue number cited multiple times, across multiple files, triggers exactly ONE gh call — the in-memory cache dedup is real, not just claimed", async () => {
   const fileTexts = new Map([
     ["docs/a.md", "Closes #7. Also see #7 again in the same file."],
-    ["docs/b.md", "And once more, #7, in a second file."],
+    ["docs/b.md", "Fixes #7 in a second file."],
   ]);
   let calls = 0;
   const runner: Runner = (_cmd, args) => {
@@ -443,14 +465,29 @@ test("QA-14 (NEW-3): 'Issue owner/repo#N' (word-prefixed cross-repo) still class
 });
 
 // NEW-4 (LOW): MILESTONE_CANDIDATE_RE and the guard must not span a line boundary.
-test("QA-14 (NEW-4): a line ending in the word 'milestone' followed by a line starting with a real Issue citation classifies the citation as an ISSUE, not a mis-kinded milestone", () => {
-  const citations = scanReferences("Tied to this milestone\n#120 is the issue that closes it.", deps({ issueExists: (n) => n === 120 }));
+// AMENDED 2026-09-11 (QA-14 marker redesign, docs/plans/qa14-marker-redesign-phase1-2026-09-11.md
+// §5.1): this test's second line ("#120 is the issue that closes it.") is a bare, unmarked
+// line-start #N — the same now-intentionally-changed shape as the two AMENDED Issue #139 tests
+// above. The regression this test actually guards (a same-line-ending "milestone" must not absorb
+// the NEXT line's #N as "already recorded", silently mis-kinding or dropping it) is unaffected and
+// still asserted below via `milestoneCitations.length === 0` plus the presence check: #120 is
+// neither silently absorbed into a milestone nor silently dropped — it is reported, loud and
+// non-blocking, as `unclassified`. Originally asserted `kind: "issue"` / `verdict: "resolved"`.
+test("QA-14 (NEW-4): a line ending in the word 'milestone' followed by a line starting with a bare #N is neither mis-kinded as a milestone nor silently dropped — it is unclassified (no marker on its own line)", () => {
+  const citations = scanReferences(
+    "Tied to this milestone\n#120 is the issue that closes it.",
+    deps({
+      issueExists: () => {
+        throw new Error("must not query issueExists for a marker-less line-start #N");
+      },
+    }),
+  );
   const milestoneCitations = citations.filter((c) => c.kind === "milestone");
   assert.equal(milestoneCitations.length, 0, "must not span the newline into a bogus milestone match");
-  const issueCitations = citations.filter((c) => c.kind === "issue");
-  assert.equal(issueCitations.length, 1);
-  assert.equal(issueCitations[0]?.raw, "#120");
-  assert.equal(issueCitations[0]?.verdict, "resolved");
+  const candidateCitations = citations.filter((c) => c.raw === "#120");
+  assert.equal(candidateCitations.length, 1, "must not be silently dropped either");
+  assert.equal(candidateCitations[0]?.kind, "issue-candidate");
+  assert.equal(candidateCitations[0]?.verdict, "unclassified");
 });
 
 test("QA-14 (NEW-4, non-regression): a same-line 'Milestone #N' citation still classifies as milestone, unaffected by the line-boundary fix", () => {
@@ -483,4 +520,153 @@ test("QA-14 (NEW-5): parseMaxDistinctIssues accepts a well-formed positive integ
 
 test("QA-14 (NEW-5): parseMaxDistinctIssues returns the fallback when no override is set at all", () => {
   assert.equal(parseMaxDistinctIssues(undefined, 300), 300);
+});
+
+// ============================================================================================
+// Marker redesign, 2026-09-11 (docs/plans/qa14-marker-redesign-phase1-2026-09-11.md). Closes
+// GitHub issues 143, 144 and 145 (this time via a structural fix, not a bigger denylist) plus
+// issue 137's finding (c). Deletes the ordinal-word denylist entirely and replaces it with a
+// positive citation-marker requirement; anything without a marker is a new, non-blocking
+// "unclassified" verdict — reported, never silently resolved, never silently dropped.
+// ============================================================================================
+
+// AC1 / R3: a bare "reponame#N" citation with no "owner/" prefix classifies unclassified, never
+// cross-repo-issue (asserting cross-repo for an owner-less shape is itself a directional guess),
+// and never reaches issueExists/verifyLocalIssue as a local number either.
+test("QA-14 (R3, marker redesign): a bare 'reponame#N' citation (real in-tree shape, docs/reviews/userpromptsubmit-halt-relay-debug-2026-09-07.md:91 — 'claude-mem#2604') classifies unclassified, never cross-repo-issue, and never queries issueExists", () => {
+  const citations = scanReferences(
+    "Tracked upstream as claude-mem#2604 for now.",
+    deps({
+      issueExists: () => {
+        throw new Error("must not query issueExists for an owner-less reponame#N shape");
+      },
+    }),
+  );
+  const relevant = citations.filter((c) => c.raw.includes("2604"));
+  assert.equal(relevant.length, 1, `expected exactly one #2604-related citation, got: ${JSON.stringify(citations)}`);
+  assert.equal(relevant[0]?.raw, "#2604", "the match should be the bare #2604 — 'claude-mem' is not attached to the regex match, same as before this redesign");
+  assert.equal(relevant[0]?.verdict, "unclassified");
+  assert.notEqual(relevant[0]?.verdict, "cross-repo-issue");
+  assert.equal(relevant[0]?.kind, "issue-candidate");
+});
+
+// AC2 / R4: every ordinal/count-word-adjacent bare #N shape — the original 9-word denylist's own
+// words, red-team round-3's >=12 named residual shapes, AND one NOVEL never-before-named ordinal
+// word — classifies unclassified, never resolved. Achieved structurally (no word is ever
+// enumerated as "excluded" anywhere in the implementation), proven here by including a shape that
+// was never on any list.
+test("QA-14 (R4, marker redesign): every ordinal/count-word-adjacent bare #N shape classifies unclassified, never resolved — the original denylist words, red-team's named residual shapes, and one NOVEL unlisted ordinal word", () => {
+  const cases: Array<[string, string]> = [
+    ["original denylist word (finding)", "design-challenger Finding #2 was addressed."],
+    ["original denylist word (task)", "Scheduled as build task #1 for this round."],
+    ["residual shape: items", "residuals=3 (items #3, #4, #6 above)."],
+    ["residual shape: rule", "ADR-0021 entry, rule #2, verbatim."],
+    ["residual shape: criterion", "criterion #6 was met."],
+    ["residual shape: Next", "see Next #2 in STATE.md."],
+    ["residual shape: recommendation", "recommendation #4 stands."],
+    ["residual shape: residual", "residual #3 remains open."],
+    ["residual shape: Coverage gap", "This CORRECTS Coverage gap #1 above."],
+    ["residual shape: HIGH #N", "round 1's HIGH #1 recurred."],
+    ["residual shape: LOW #N", "round 1's LOW #2 recurred."],
+    ["residual shape: open-paren ordinal", "Two findings (#1, #2) are BREAKS."],
+    ["residual shape: backtick ordinal", "every `#1`/`#2` match."],
+    ["residual shape: angle-marker", "Build task >>#1<< (count)."],
+    ["NOVEL unlisted ordinal word (never named by any prior round)", "the analysis reports sample #4 as normal."],
+  ];
+  for (const [label, text] of cases) {
+    const citations = scanReferences(text, deps({ issueExists: () => true }));
+    const issueCitations = citations.filter((c) => c.kind === "issue");
+    assert.equal(issueCitations.length, 0, `[${label}] expected no issue-kind citation in: ${JSON.stringify(text)}, got: ${JSON.stringify(issueCitations)}`);
+    const unclassified = citations.filter((c) => c.verdict === "unclassified");
+    assert.ok(unclassified.length > 0, `[${label}] expected at least one unclassified citation in: ${JSON.stringify(text)}, got: ${JSON.stringify(citations)}`);
+  }
+});
+
+// AC3 / R5: an all-digit hex literal quoted in prose or backticks (not just the already-fixed
+// property:#000 CSS-declaration shape) classifies unclassified, never unresolved-authority.
+test("QA-14 (R5, marker redesign): an all-digit hex literal quoted in prose or backticks classifies unclassified, never unresolved-authority (red-team's own C4/C5 repro)", () => {
+  const proseCitations = scanReferences("the palette uses (#000, #333) tokens", deps());
+  const proseRelevant = proseCitations.filter((c) => c.raw === "#000" || c.raw === "#333");
+  assert.equal(proseRelevant.length, 2, `expected both #000 and #333 in: ${JSON.stringify(proseCitations)}`);
+  for (const c of proseRelevant) {
+    assert.equal(c.verdict, "unclassified");
+    assert.notEqual(c.verdict, "unresolved-authority");
+  }
+
+  const backtickCitations = scanReferences("colours `#000` and `#333`", deps());
+  const backtickRelevant = backtickCitations.filter((c) => c.raw === "#000" || c.raw === "#333");
+  assert.equal(backtickRelevant.length, 2, `expected both #000 and #333 in: ${JSON.stringify(backtickCitations)}`);
+  for (const c of backtickRelevant) {
+    assert.equal(c.verdict, "unclassified");
+    assert.notEqual(c.verdict, "unresolved-authority");
+  }
+});
+
+// AC4 / R6: a real issue citation immediately following an excluded/ordinal-adjacent term in the
+// same comma/slash/"and"/dash-range list is never silently dropped — it appears as unclassified
+// (loud, counted), never a zero-citation silent omission, and never falsely resolved either (this
+// mechanism cannot tell "findings #118/#119" apart from an ordinal list of the same shape — see
+// plan §5.1's honest counterweight — so BOTH members are unclassified, not one silently vanished).
+test("QA-14 (R6, marker redesign): a real issue citation following an excluded/ordinal-adjacent term in the same list is never silently dropped — 'findings #118/#119' (both real GitHub Issues) both appear as unclassified", () => {
+  const citations = scanReferences("findings #118/#119", deps({ issueExists: () => true }));
+  const relevant = citations.filter((c) => c.raw === "#118" || c.raw === "#119");
+  assert.equal(relevant.length, 2, `expected both #118 and #119 present (never dropped), got: ${JSON.stringify(citations)}`);
+  for (const c of relevant) {
+    assert.equal(c.verdict, "unclassified");
+    assert.notEqual(c.verdict, "resolved");
+  }
+});
+
+test("QA-14 (R6, marker redesign): 'Finding #3, #143 filed' — the real issue #143 in the tail of an ordinal-led list is never silently absent", () => {
+  const citations = scanReferences("Finding #3, #143 filed on GitHub.", deps({ issueExists: () => true }));
+  const relevant = citations.filter((c) => c.raw === "#3" || c.raw === "#143");
+  assert.equal(relevant.length, 2, `expected both #3 and #143 present (never dropped), got: ${JSON.stringify(citations)}`);
+  for (const c of relevant) {
+    assert.equal(c.verdict, "unclassified");
+  }
+});
+
+// AC5 / non-blocking bucket: summarizeCitations never flips ok to false for unclassified alone;
+// both counts are named in summary; unclassified lines always appear in details, on both PASS and
+// FAIL runs (docs/decisions.md 2026-09-11 row 61 point (1)).
+test("QA-14 (marker redesign §5.3): summarizeCitations — unclassified never flips ok to false, and both counts are named in summary/details", () => {
+  const citations: Citation[] = [
+    { raw: "#1", kind: "issue", verdict: "resolved", reason: "issue confirmed to exist" },
+    { raw: "#2", kind: "issue-candidate", verdict: "unclassified", reason: "no explicit citation marker" },
+    { raw: "#3", kind: "issue-candidate", verdict: "unclassified", reason: "no explicit citation marker" },
+  ];
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, true, "unclassified alone must never fail the run");
+  assert.match(result.summary, /1 resolved/);
+  assert.match(result.summary, /2 unclassified/);
+  assert.equal(result.details.length, 2, "unclassified citations must appear in details even on a PASS run");
+  assert.ok(result.details.every((d) => d.startsWith("[unclassified]")));
+});
+
+test("QA-14 (marker redesign §5.3): summarizeCitations — a genuinely bad citation still fails the run, and the failing count excludes unclassified members", () => {
+  const citations: Citation[] = [
+    { raw: "#1", kind: "issue", verdict: "unresolved-authority", reason: "Issue #1 does not exist in this repository" },
+    { raw: "#2", kind: "issue-candidate", verdict: "unclassified", reason: "no explicit citation marker" },
+  ];
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, false);
+  assert.match(result.summary, /^1 of 2 citation\(s\) failed to resolve/, "the failing count must be 1 (excluding the unclassified member), not 2");
+  assert.match(result.summary, /1 more unclassified/);
+  assert.equal(result.details.length, 2, "details must contain both the bad citation and the unclassified one, on a FAIL run too");
+  assert.ok(result.details[0]?.startsWith("[unresolved-authority]"));
+  assert.ok(result.details[1]?.startsWith("[unclassified]"));
+});
+
+// AC6 / non-regression: every currently-correct marker-based case keeps resolving exactly as
+// today (covered by the untouched existing tests above, all still green). New case found during
+// this round's own probing, not previously tested: the PLURAL "Issues #N, #N, #N" marker form.
+test("QA-14 (marker redesign, non-regression — new case found during probing): plural 'Issues #N, #N, #N' marker resolves every member of the list, not just the first", () => {
+  const citations = scanReferences("Issues #138, #139, #140 all close together.", deps({ issueExists: (n) => [138, 139, 140].includes(n) }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 3, `expected all 3 to resolve as real issue citations, got: ${JSON.stringify(issueCitations)}`);
+  assert.deepEqual(
+    issueCitations.map((c) => c.raw).sort(),
+    ["#138", "#139", "#140"],
+  );
+  assert.ok(issueCitations.every((c) => c.verdict === "resolved"));
 });
