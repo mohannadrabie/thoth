@@ -680,7 +680,7 @@
   "tier": "CRITICAL",
   "reviewRoundsSinceClean": 1,
   "reviewRoundsTotal": 2,
-  "humanRulingRequired": false,
+  "humanRulingRequired": true,
   "councilHeld": true,
   "councilVerdict": "GO (2026-09-11 council on the Issue #154 numeric-claim-drift class, Manager judgment-call trigger per the round-3 ruling's own tripwire; Path A ratified: a real, callable, non-blocking instrument for #154's residual — denominator via a new field mirroring #150/marker-corpus-probe.ts's pattern, numerator via REUSING (not duplicating) resolveIssueCitations's existing capped gh path, Citation.kind gains a markedVia:\"direct\"|\"continuation\" distinction so no future round needs a hand-built source fork to measure this; Candidate B (diff-scoped instrument) rejected — WIDENS, activates a dormant ref/content-mismatch bug in marker-corpus-probe.ts; Candidate C (finish the mechanical grep-driven sweep of all 4 now-known stale locations, not a hand-check) ships alongside Path A as a necessary floor regardless; Issue #159 (QA-15's own BARE_CLAIM_PHRASES blind spot for the \"N/M\" shorthand this project's own prose uses) fixed in the same round so the safety net itself would catch a future recurrence)",
   "roundsSinceLastGo": 0,
