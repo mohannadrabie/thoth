@@ -198,7 +198,10 @@ export async function checkCompleteness(text: string, runner: Runner): Promise<I
 // (a review's own re-run, a since-rotated/reworded diff) that no instrument in this repo can
 // re-produce today. QA-15's marker/heuristic mechanism itself is unchanged; only this file's
 // membership in the default-scanned set narrows.
-const DEFAULT_FILES = ["docs/STATE.md", "CHANGELOG.md"];
+// Exported (Issue #142 fix) so a regression test can pin its exact membership — a hand-typed
+// prose claim about what this array contains is exactly the kind of unverified completeness
+// assertion this same instrument exists to catch; the array itself needs the same discipline.
+export const DEFAULT_FILES = ["docs/STATE.md", "CHANGELOG.md"];
 
 async function main(): Promise<void> {
   const paths = process.argv.slice(2).length > 0 ? process.argv.slice(2) : DEFAULT_FILES;
