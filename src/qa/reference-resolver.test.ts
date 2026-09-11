@@ -786,12 +786,60 @@ test("QA-14 (Issue #154, dash leak CLOSED): a space-padded dash after a marked c
 // immediately after it, because this repo's own real comma-joined citation lists genuinely need
 // surrounding whitespace to stay matched. Real, small relative to the continuation-marked
 // population, and fails loud (a blocking `unresolved-authority`, never a silent false resolve) —
-// run `node src/qa/reference-resolver.ts <base> <head>` for the live count. Pinned here so a
+// see `src/qa/continuation-residual-probe.ts` for the live, isolated count (council fix-now round
+// 4, 2026-09-11 — replaces a prior pointer to the plain gate command, which does not isolate this
+// residual's own count from every other failure reason it also reports). Pinned here so a
 // future change to this behavior is a deliberate, reviewed decision, not a silent drift either
 // direction.
 test("QA-14 (Issue #154, disclosed residual, NOT fixed this round): a comma-joined token right after a marked citation still inherits marked status, even when it is hex/ordinal-shaped", () => {
   const citations = scanReferences("Closes #7, #000 is the palette token.", deps({ issueExists: (n) => n === 7 }));
   const relevant = citations.find((c) => c.raw === "#000");
   assert.equal(relevant?.kind, "issue", "documents the known residual: #000 is marked via comma continuation, not left as unclassified");
+  assert.equal(relevant?.verdict, "unresolved-authority");
+});
+
+// --- Council fix-now round 4 (2026-09-11, docs/decisions.md's "Path-Forward Brief" row, Issue
+// #154's residual instrument, design-challenger's O2 root-cause finding): `Citation.markedVia`
+// surfaces `classifyBareHashMatch`'s own direct-vs-continuation distinction instead of discarding
+// it — these pin that the new field is set correctly on every population it's defined for, and
+// left `undefined` everywhere it isn't.
+
+test("QA-14 (markedVia): a directly-marked bare #N gets markedVia: 'direct'", () => {
+  const citations = scanReferences("Closes #7 today.", deps({ issueExists: () => true }));
+  const relevant = citations.find((c) => c.raw === "#7");
+  assert.equal(relevant?.markedVia, "direct");
+});
+
+test("QA-14 (markedVia): a list-continuation-marked bare #N gets markedVia: 'continuation'", () => {
+  const citations = scanReferences("Closes #7, #8 today.", deps({ issueExists: () => true }));
+  const seven = citations.find((c) => c.raw === "#7");
+  const eight = citations.find((c) => c.raw === "#8");
+  assert.equal(seven?.markedVia, "direct");
+  assert.equal(eight?.markedVia, "continuation", "the second list member inherited marked status, it wasn't sitting right after the marker word itself");
+});
+
+test("QA-14 (markedVia): the word-form 'Issue #N' shape gets markedVia: 'direct' too", () => {
+  const citations = scanReferences("See Issue #7 for details.", deps({ issueExists: () => true }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.markedVia, "direct");
+});
+
+test("QA-14 (markedVia): an unclassified bare #N (no marker in reach) has markedVia undefined", () => {
+  const citations = scanReferences("See (#7) for context.", deps({ issueExists: () => true }));
+  const relevant = citations.find((c) => c.raw === "#7");
+  assert.equal(relevant?.kind, "issue-candidate");
+  assert.equal(relevant?.markedVia, undefined);
+});
+
+test("QA-14 (markedVia): a cross-repo owner/repo#N citation has markedVia undefined — the distinction doesn't apply to that population", () => {
+  const citations = scanReferences("Fixed in other-org/other-repo#42.", deps());
+  const relevant = citations.find((c) => c.raw === "other-org/other-repo#42");
+  assert.equal(relevant?.markedVia, undefined);
+});
+
+test("QA-14 (markedVia, Issue #154's own disclosed residual): the comma-continuation leak onto a hex-shaped token still gets markedVia: 'continuation' — it IS a real continuation-marked citation, which is exactly what makes it this residual's numerator when it fails existence", () => {
+  const citations = scanReferences("Closes #7, #000 is the palette token.", deps({ issueExists: (n) => n === 7 }));
+  const relevant = citations.find((c) => c.raw === "#000");
+  assert.equal(relevant?.markedVia, "continuation");
   assert.equal(relevant?.verdict, "unresolved-authority");
 });

@@ -41,6 +41,19 @@ export interface Citation {
   kind: "adr" | "issue" | "milestone" | "path" | "path-line" | "unparseable" | "issue-candidate";
   verdict: Verdict;
   reason: string;
+  // Council fix-now round 4 (2026-09-11, docs/decisions.md's "Path-Forward Brief" row, design-
+  // challenger's root-cause finding O2): `kind: "issue"` alone collapses a directly-marked bare
+  // hash-number citation and a continuation-marked one (a later list member that inherited status
+  // from an earlier marked member, rather than sitting right after a marker word itself) into the
+  // same value — the distinction `classifyBareHashMatch` already computes internally was being
+  // discarded before it reached any caller, which is why every prior round's measurement of this
+  // known residual (see the STRUCTURAL NOTE comment below, near `TIGHT_DASH_CONTINUATION_RE`) had
+  // to hand-build a throwaway instrumented fork instead of reading it off a real `Citation`. Set
+  // only for a LOCAL bare-hash-shaped issue citation (the bare and word-form
+  // "Issue" shapes) — `undefined` for every other kind (cross-repo, milestone, path, adr,
+  // unparseable, issue-candidate), where the distinction doesn't apply. Real digit examples
+  // deliberately avoided here — see this file's own header dogfood note.
+  markedVia?: "direct" | "continuation";
 }
 
 export interface ReferenceResolverDeps {
@@ -176,11 +189,17 @@ const TIGHT_DASH_CONTINUATION_RE = /^[–—-]$/;
 //     measurement to date, none of which are repeated here — see below);
 //   - fails LOUD, never silent — every instance surfaces as a blocking `unresolved-authority` in
 //     the real gate run, never a false-verify;
-//   - the CURRENT count is whatever `node src/qa/reference-resolver.ts <base> <head>` (or the
-//     full-tree form) reports right now — run it for the live number. A number written here, or in
-//     any other permanently-rescanned file, is not trustworthy the moment the corpus moves; only a
-//     dated `docs/reviews/` report (point-in-time by this project's own convention, and so allowed
-//     to go stale) may state one.
+//   - the CURRENT count is whatever `node src/qa/continuation-residual-probe.ts --field=continuation-marked`
+//     (denominator, pure/fast) and `--field=continuation-residual` (numerator, real `gh`-backed
+//     leak count) report right now — run them for the live numbers. (Council fix-now round 4,
+//     2026-09-11: the plain gate command previously pointed at here — `node
+//     src/qa/reference-resolver.ts <base> <head>` — does not isolate this residual's own count at
+//     all; it folds every failure reason, path/ADR/cross-repo/this-residual alike, into one
+//     undifferentiated total, per architecture-reviewer's own independent reproduction. The two
+//     `continuation-residual-probe.ts` commands above are the real, committed, isolated
+//     replacement.) A number written here, or in any other permanently-rescanned file, is not
+//     trustworthy the moment the corpus moves; only a dated `docs/reviews/` report (point-in-time
+//     by this project's own convention, and so allowed to go stale) may state one.
 // Closing it fully still requires either a word list (reintroducing the exact denylist failure
 // mode R3-R6 eliminated) or dropping comma continuation entirely (silently un-verifying every
 // genuine comma-joined citation list — the far larger and silent harm) — so it stays open,
@@ -297,7 +316,7 @@ interface MarkedListGuardState {
   lastMarkedListEnd: number;
 }
 
-type BareHashClassification = "already-recorded" | "marked" | "unmarked";
+type BareHashClassification = "already-recorded" | "marked-direct" | "marked-continuation" | "unmarked";
 
 /**
  * Classifies a BARE (non-cross-repo) `#N` candidate match into exactly one of three buckets.
@@ -312,16 +331,19 @@ type BareHashClassification = "already-recorded" | "marked" | "unmarked";
  *     singular "Issue #A, #B" never opened list continuation for `#B` while the plural
  *     "Issues #A, #B" (which takes branch (b) below, via `CITATION_MARKER_WORD_RE`'s `issues?`
  *     alternation) did. Both forms now seed continuation identically.
- * (b) "marked" — immediately preceded by an explicit citation marker word (`CITATION_MARKER_WORD_RE`:
- *     Issue(s)/Closes/Closed/Fixes/Fixed/Resolves) or the glued `GH`/`GH-` shorthand
- *     (`GH_MARKER_RE`) — a real citation, goes through `classifyIssue` as before.
- * (c) "marked" via LIST CONTINUATION of (a) or (b) — "Closes #N, #N, #N" (or the slash-joined
- *     "#N/#N" shorthand, or a TIGHT hyphen/en-dash/em-dash range "#N-#N", this repo's own review
- *     reports also use) only has the marker word in front of the FIRST number; every later number
- *     in the same list is separated from the marked item before it only by punctuation (comma,
- *     slash, "and", `&`, a tight dash-range separator, or whitespace), never by a new word, so it
- *     inherits the same marked status. See `isListContinuationGap` for the tight-dash rationale
- *     (GitHub issue 154).
+ * (b) "marked-direct" — immediately preceded by an explicit citation marker word
+ *     (`CITATION_MARKER_WORD_RE`: Issue(s)/Closes/Closed/Fixes/Fixed/Resolves) or the glued
+ *     `GH`/`GH-` shorthand (`GH_MARKER_RE`) — a real citation, goes through `classifyIssue` as
+ *     before. Surfaced on the resulting `Citation` as `markedVia: "direct"`.
+ * (c) "marked-continuation" — via LIST CONTINUATION of (a) or (b) — "Closes #N, #N, #N" (or the
+ *     slash-joined "#N/#N" shorthand, or a TIGHT hyphen/en-dash/em-dash range "#N-#N", this repo's
+ *     own review reports also use) only has the marker word in front of the FIRST number; every
+ *     later number in the same list is separated from the marked item before it only by
+ *     punctuation (comma, slash, "and", `&`, a tight dash-range separator, or whitespace), never
+ *     by a new word, so it inherits the same marked status. See `isListContinuationGap` for the
+ *     tight-dash rationale (GitHub issue 154). Surfaced on the resulting `Citation` as
+ *     `markedVia: "continuation"` (council fix-now round 4, 2026-09-11 — this distinction used to
+ *     be computed here and immediately discarded; see `Citation.markedVia`'s own doc comment).
  * (d) "unmarked" — none of the above: no explicit marker anywhere in reach. Reported as a loud,
  *     non-blocking `unclassified` citation by the caller — never silently resolved, never silently
  *     dropped (2026-09-11 marker redesign; see the header comment above `CITATION_MARKER_WORD_RE`).
@@ -338,12 +360,12 @@ function classifyBareHashMatch(text: string, idx: number, matchLength: number, s
   }
   if (CITATION_MARKER_WORD_RE.test(sameLineBefore) || GH_MARKER_RE.test(sameLineBefore)) {
     state.lastMarkedListEnd = idx + matchLength;
-    return "marked";
+    return "marked-direct";
   }
   const between = state.lastMarkedListEnd >= 0 ? text.slice(state.lastMarkedListEnd, idx) : null;
   if (between !== null && isListContinuationGap(between)) {
     state.lastMarkedListEnd = idx + matchLength;
-    return "marked";
+    return "marked-continuation";
   }
   state.lastMarkedListEnd = -1;
   return "unmarked";
@@ -395,7 +417,9 @@ export function scanReferences(text: string, deps: ReferenceResolverDeps): Citat
   }
   for (const m of text.matchAll(ISSUE_WORD_CANDIDATE_RE)) {
     const normalized = m[0].replace(/\s+/g, "");
-    record(normalized, () => classifyIssue(normalized, deps));
+    // Word-form "Issue #N" is itself an explicit, same-occurrence marker — always direct, never a
+    // continuation inheritance (this loop has no list-continuation state of its own).
+    record(normalized, () => ({ ...classifyIssue(normalized, deps), markedVia: "direct" as const }));
   }
   // Milestone candidates are scanned BEFORE the general issue-shaped candidates below, and the
   // bare-issue loop skips anything immediately preceded by "Milestone"/"Issue" text (its own
@@ -422,8 +446,12 @@ export function scanReferences(text: string, deps: ReferenceResolverDeps): Citat
     }
     const classification = classifyBareHashMatch(text, idx, raw.length, markedListState);
     if (classification === "already-recorded") continue;
-    if (classification === "marked") {
-      recordBareHash(raw, () => classifyIssue(raw, deps), true);
+    if (classification === "marked-direct" || classification === "marked-continuation") {
+      // markedVia (council fix-now round 4, 2026-09-11): surfaces `classifyBareHashMatch`'s own
+      // direct-vs-continuation distinction on the emitted Citation instead of discarding it — see
+      // `Citation.markedVia`'s doc comment for why.
+      const markedVia: "direct" | "continuation" = classification === "marked-direct" ? "direct" : "continuation";
+      recordBareHash(raw, () => ({ ...classifyIssue(raw, deps), markedVia }), true);
       continue;
     }
     // "unmarked" (2026-09-11 marker redesign): no explicit citation marker precedes this bare #N
