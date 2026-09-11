@@ -48,6 +48,7 @@ export const KNOWN_INSTRUMENTS: Readonly<Record<string, KnownInstrument>> = Obje
   "qa-fixture-isolation": { cmd: "node", args: ["src/qa/fixture-isolation-check.ts"] },
   "qa-recurring-findings": { cmd: "node", args: ["src/qa/recurring-findings-registry.ts"] },
   "qa-reference-resolver": { cmd: "node", args: ["src/qa/reference-resolver.ts"] },
+  "qa14-marker-corpus-probe": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts"] },
   "adr-cache-ensure": { cmd: "node", args: ["docs/adr-cache.mjs", "--ensure"] },
   "oss-history-scan": { cmd: "node", args: ["src/secret-scan/history-scan.ts"] },
   "qa-mutation-shell": { cmd: "node", args: ["src/qa/shell-detector-mutants.ts"] },

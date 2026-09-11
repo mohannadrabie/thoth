@@ -140,12 +140,37 @@ const CITATION_MARKER_WORD_RE = /\b(?:issues?|closes|closed|fixes|fixed|resolves
 // verify it as a real issue citation; see the dogfood note in this file's own header).
 const GH_MARKER_RE = /\bGH-?$/i;
 // List continuation: once a #N carries a real marker, a later #N in the SAME list inherits it
-// when only punctuation/connector separates them — comma, slash, "and", "&", a hyphen/en-dash/
-// em-dash range separator (shapes this repo's own review reports use, e.g. "Issues #N-#N" or a
-// parenthesized "(#N-#N)" range), or whitespace. No word may intervene (a genuinely new sentence
-// breaks continuation, same as the old ordinal-list guard). Real digit examples deliberately
-// avoided here — see this file's own header dogfood note.
-const LIST_CONTINUATION_RE = /^(?:[ \t,/&–—-]|and)*$/i;
+// when only punctuation/connector separates them — comma, slash, "and", "&", or whitespace
+// (shapes this repo's own review reports use, e.g. "Issues #N, #N" or "#N and #N"). No word may
+// intervene (a genuinely new sentence breaks continuation, same as the old ordinal-list guard).
+// Real digit examples deliberately avoided here — see this file's own header dogfood note.
+const LIST_CONTINUATION_RE = /^(?:[ \t,/&]|and)*$/i;
+// Round-1-fix-now round (GitHub issue 154, red-team's own dash-with-surrounding-spaces repro,
+// where a marked citation is directly followed by " - " then an unrelated ordinal-shaped number):
+// the hyphen/en-dash/em-dash range separator is handled SEPARATELY from the class above, and
+// deliberately TIGHT (no surrounding whitespace) — grepping this repo's own real corpus
+// (docs/decisions.md, docs/STATE.md, docs/REVIEW_LOG.md, docs/reviews/*.md, CHANGELOG.md) for
+// every real dash-joined citation-range pair found every single one written with NO space around
+// the dash (a tight "Issue-range-Issue" shape, e.g. this file's own header dogfood note style),
+// never a space-padded dash — a space-padded dash is, in this repo's real usage, an ordinary
+// sentence dash separating two unrelated clauses far more often than a genuine range. Restricting
+// the dash form to its actually-observed tight shape closes that leak on real input without
+// reintroducing a word denylist (which is exactly the failure mode this whole redesign exists to
+// eliminate — see the header comment above CITATION_MARKER_WORD_RE). Real digit/dash examples
+// deliberately avoided here — see this file's own header dogfood note.
+const TIGHT_DASH_CONTINUATION_RE = /^[–—-]$/;
+// Honest, disclosed residual (GitHub issue 154, kept open, not silently claimed fixed): a
+// COMMA/whitespace-joined continuation (the class above) cannot be narrowed the same way — this
+// repo's own real comma-joined citation lists genuinely do carry surrounding whitespace (a marked
+// citation, comma, space, next number), so a comma-adjacent hex-shaped or ordinal-shaped token
+// immediately after a real marker still inherits marked status today. Measured full-tree
+// incidence: 0 real occurrences of this shape in this repo's own tracked corpus (see this round's
+// build receipt) — a latent gap, not a live one, and not closed by this fix. Any "never" claim
+// about this residual must say so plainly, not silently. Real digit examples deliberately avoided
+// here — see this file's own header dogfood note.
+function isListContinuationGap(between: string): boolean {
+  return LIST_CONTINUATION_RE.test(between) || TIGHT_DASH_CONTINUATION_RE.test(between);
+}
 const BACKTICK_PATH_RE = /`([^`\n]+)`/g;
 
 function classifyAdr(raw: string, deps: ReferenceResolverDeps): Citation {
@@ -259,15 +284,22 @@ type BareHashClassification = "already-recorded" | "marked" | "unmarked";
  * (a) "already-recorded" — immediately preceded by "Issue"/"Milestone": already recorded by that
  *     word-form pass above, this bare match is the same citation seen a second time (round-2
  *     guard, GitHub issue 139) — skip it entirely, don't re-record, don't mark unclassified.
+ *     Round-1-fix-now round (GitHub issue 153): this branch itself IS a marker (the word
+ *     "Issue"/"Milestone" precedes it, same as any other marker word) so it must seed
+ *     `state.lastMarkedListEnd` too — previously it returned without doing so, which meant a
+ *     singular "Issue #A, #B" never opened list continuation for `#B` while the plural
+ *     "Issues #A, #B" (which takes branch (b) below, via `CITATION_MARKER_WORD_RE`'s `issues?`
+ *     alternation) did. Both forms now seed continuation identically.
  * (b) "marked" — immediately preceded by an explicit citation marker word (`CITATION_MARKER_WORD_RE`:
  *     Issue(s)/Closes/Closed/Fixes/Fixed/Resolves) or the glued `GH`/`GH-` shorthand
  *     (`GH_MARKER_RE`) — a real citation, goes through `classifyIssue` as before.
- * (c) "marked" via LIST CONTINUATION of (b) — "Closes #N, #N, #N" (or the slash/dash-joined
- *     "#N/#N"/"#N-#N" shorthand this repo's own review reports also use) only has the marker word
- *     in front of the FIRST number; every later number in the same list is separated from the
- *     marked item before it only by punctuation (comma, slash, "and", `&`, a hyphen/en-dash/
- *     em-dash range separator, or whitespace), never by a new word, so it inherits the same marked
- *     status.
+ * (c) "marked" via LIST CONTINUATION of (a) or (b) — "Closes #N, #N, #N" (or the slash-joined
+ *     "#N/#N" shorthand, or a TIGHT hyphen/en-dash/em-dash range "#N-#N", this repo's own review
+ *     reports also use) only has the marker word in front of the FIRST number; every later number
+ *     in the same list is separated from the marked item before it only by punctuation (comma,
+ *     slash, "and", `&`, a tight dash-range separator, or whitespace), never by a new word, so it
+ *     inherits the same marked status. See `isListContinuationGap` for the tight-dash rationale
+ *     (GitHub issue 154).
  * (d) "unmarked" — none of the above: no explicit marker anywhere in reach. Reported as a loud,
  *     non-blocking `unclassified` citation by the caller — never silently resolved, never silently
  *     dropped (2026-09-11 marker redesign; see the header comment above `CITATION_MARKER_WORD_RE`).
@@ -279,6 +311,7 @@ function classifyBareHashMatch(text: string, idx: number, matchLength: number, s
   const sameLineBefore = text.slice(lineStart, idx);
 
   if (/\b(?:issue|milestone)[ \t]*$/i.test(sameLineBefore)) {
+    state.lastMarkedListEnd = idx + matchLength;
     return "already-recorded";
   }
   if (CITATION_MARKER_WORD_RE.test(sameLineBefore) || GH_MARKER_RE.test(sameLineBefore)) {
@@ -286,7 +319,7 @@ function classifyBareHashMatch(text: string, idx: number, matchLength: number, s
     return "marked";
   }
   const between = state.lastMarkedListEnd >= 0 ? text.slice(state.lastMarkedListEnd, idx) : null;
-  if (between !== null && LIST_CONTINUATION_RE.test(between)) {
+  if (between !== null && isListContinuationGap(between)) {
     state.lastMarkedListEnd = idx + matchLength;
     return "marked";
   }
@@ -297,14 +330,42 @@ function classifyBareHashMatch(text: string, idx: number, matchLength: number, s
 /** Scans `text` for every citation-shaped candidate and classifies each. Pure — no I/O. */
 export function scanReferences(text: string, deps: ReferenceResolverDeps): Citation[] {
   const citations: Citation[] = [];
-  const seen = new Set<string>();
+  // Round-1-fix-now round (GitHub issue 152, HIGH): dedup keyed on the raw string alone used to
+  // let an UNMARKED bare #N occurrence take the slot first and permanently shadow a later real
+  // marked "Closes/Fixes #N" citation of the identical raw string — the marked occurrence's real
+  // classification (against issueExists/gh) was silently never reached at all. Fixed by keeping
+  // the index of each raw string's recorded Citation (not just a presence Set) so a later MARKED
+  // occurrence can find and UPGRADE an already-recorded, still-unmarked "issue-candidate" entry in
+  // place — a marked classification always wins over an unmarked one for the same raw string,
+  // regardless of which occurrence the scan reaches first. The reverse never happens: an unmarked
+  // occurrence never downgrades an already-recorded real classification.
+  const seen = new Map<string, number>();
   const markedListState: MarkedListGuardState = { lastMarkedListEnd: -1 };
 
   function record(raw: string, classify: () => Citation): void {
-    const key = raw;
-    if (seen.has(key)) return;
-    seen.add(key);
+    if (seen.has(raw)) return;
+    seen.set(raw, citations.length);
     citations.push(classify());
+  }
+
+  /**
+   * Like `record`, but for the bare (non-cross-repo) `#N` population only: when `raw` was already
+   * recorded as an unmarked `"issue-candidate"` and THIS occurrence is marked, replace the
+   * existing entry with the real classification instead of silently keeping the shadow.
+   */
+  function recordBareHash(raw: string, classify: () => Citation, isMarked: boolean): void {
+    const existingIndex = seen.get(raw);
+    if (existingIndex === undefined) {
+      seen.set(raw, citations.length);
+      citations.push(classify());
+      return;
+    }
+    if (isMarked) {
+      const existing = citations[existingIndex];
+      if (existing && existing.kind === "issue-candidate") {
+        citations[existingIndex] = classify();
+      }
+    }
   }
 
   for (const m of text.matchAll(ADR_CANDIDATE_RE)) {
@@ -340,20 +401,24 @@ export function scanReferences(text: string, deps: ReferenceResolverDeps): Citat
     const classification = classifyBareHashMatch(text, idx, raw.length, markedListState);
     if (classification === "already-recorded") continue;
     if (classification === "marked") {
-      record(raw, () => classifyIssue(raw, deps));
+      recordBareHash(raw, () => classifyIssue(raw, deps), true);
       continue;
     }
     // "unmarked" (2026-09-11 marker redesign): no explicit citation marker precedes this bare #N
     // on the same line/list — reported as a loud, non-blocking `unclassified` candidate, never
     // silently resolved and never silently dropped (R3/R4/R5/R6, docs/decisions.md 2026-09-11 row
     // 61). `verifyLocalIssue`/`issueExists`/`gh` are never invoked for an unmarked candidate.
-    record(raw, () => ({
+    recordBareHash(
       raw,
-      kind: "issue-candidate",
-      verdict: "unclassified",
-      reason:
-        "no explicit citation marker (Issue(s)/Closes/Fixes/Resolves/Closed/Fixed/GH/owner-repo) precedes this bare #N on the same line — not verified as a real issue citation, not silently treated as ordinary prose either",
-    }));
+      () => ({
+        raw,
+        kind: "issue-candidate",
+        verdict: "unclassified",
+        reason:
+          "no explicit citation marker (Issue(s)/Closes/Fixes/Resolves/Closed/Fixed/GH/owner-repo) precedes this bare #N on the same line — not verified as a real issue citation, not silently treated as ordinary prose either",
+      }),
+      false,
+    );
   }
   for (const m of text.matchAll(BACKTICK_PATH_RE)) {
     const inner = (m[1] ?? "").trim();

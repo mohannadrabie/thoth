@@ -670,3 +670,125 @@ test("QA-14 (marker redesign, non-regression — new case found during probing):
   );
   assert.ok(issueCitations.every((c) => c.verdict === "resolved"));
 });
+
+// ============================================================================================
+// Round-1 fix-now (2026-09-11), against Stage-3 round-1 review findings on the marker redesign
+// above (docs/reviews/qa14-marker-redesign-{red-team,code,cross-domain}-2026-09-11.md; triage
+// ruling docs/decisions.md 2026-09-11 row 63). Issues #149, #152, #153, #154.
+// ============================================================================================
+
+// Issue #152 (HIGH): scanReferences' dedup used to be keyed on the raw citation string alone —
+// an unmarked bare #N occurrence could take that key first and permanently shadow a later real
+// MARKED "Closes/Fixes #N" citation of the identical raw string, so the marked occurrence's real
+// classification (against issueExists) was never reached at all. A marked classification must
+// always win over an unmarked one for the same raw string, regardless of scan order.
+test("QA-14 (Issue #152, HIGH): an unmarked bare #N earlier in a file must NOT prevent a later 'Closes #N' from being verified — the run still FAILS for a nonexistent issue", () => {
+  const citations = scanReferences(
+    "The table's row #9999 was cosmetic.\n\nCloses #9999.",
+    deps({ issueExists: () => false }),
+  );
+  const relevant = citations.filter((c) => c.raw === "#9999");
+  assert.equal(relevant.length, 1, `expected exactly one #9999 citation (upgraded in place, not a second entry), got: ${JSON.stringify(citations)}`);
+  assert.equal(relevant[0]?.kind, "issue", "the marked occurrence must win — never left as issue-candidate");
+  assert.equal(relevant[0]?.verdict, "unresolved-authority");
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, false, "a nonexistent issue cited via a real marker must still fail the run, even when an earlier unmarked bare #N of the same number was scanned first");
+});
+
+test("QA-14 (Issue #152, HIGH, symmetric case): the same shape resolves cleanly when the marked issue genuinely exists", () => {
+  const citations = scanReferences(
+    "The table's row #120 was cosmetic.\n\nCloses #120.",
+    deps({ issueExists: (n) => n === 120 }),
+  );
+  const relevant = citations.filter((c) => c.raw === "#120");
+  assert.equal(relevant.length, 1);
+  assert.equal(relevant[0]?.kind, "issue");
+  assert.equal(relevant[0]?.verdict, "resolved");
+});
+
+test("QA-14 (Issue #152, HIGH, order-independent): a marked occurrence FIRST already worked (regression guard) — an unmarked repeat afterward must not downgrade it", () => {
+  const citations = scanReferences(
+    "Closes #9999.\n\nThe table's row #9999 was cosmetic.",
+    deps({ issueExists: () => false }),
+  );
+  const relevant = citations.filter((c) => c.raw === "#9999");
+  assert.equal(relevant.length, 1);
+  assert.equal(relevant[0]?.kind, "issue");
+  assert.equal(relevant[0]?.verdict, "unresolved-authority");
+});
+
+// Issue #149 (HIGH, code-reviewer): LIST_CONTINUATION_RE's dash/en-dash/em-dash class had zero
+// test coverage — mutation-demonstrated (removing the dash class from the regex left 708/708
+// green). These pin the tight-dash continuation shape this repo's own corpus actually uses.
+// Manually mutation-verified per code-reviewer's own method: with TIGHT_DASH_CONTINUATION_RE's
+// body changed to never match (e.g. `/^$a/`), both assertions below fail (#113/#12 fall back to
+// unclassified instead of resolved) — restoring the regex makes them pass again.
+test("QA-14 (Issue #149, dash list-continuation): a tight hyphen-joined marked range resolves both members", () => {
+  const citations = scanReferences("Closes #105-#113 in this batch.", deps({ issueExists: (n) => n === 105 || n === 113 }));
+  const relevant = citations.filter((c) => c.raw === "#105" || c.raw === "#113");
+  assert.equal(relevant.length, 2, `expected both ends of the range present, got: ${JSON.stringify(citations)}`);
+  assert.ok(relevant.every((c) => c.kind === "issue" && c.verdict === "resolved"), `expected both resolved, got: ${JSON.stringify(relevant)}`);
+});
+
+test("QA-14 (Issue #149, dash list-continuation): a tight en-dash/em-dash joined marked range resolves both members", () => {
+  const enDash = scanReferences("Fixed #105–#113 upstream.", deps({ issueExists: (n) => n === 105 || n === 113 }));
+  const enRelevant = enDash.filter((c) => c.raw === "#105" || c.raw === "#113");
+  assert.equal(enRelevant.length, 2);
+  assert.ok(enRelevant.every((c) => c.kind === "issue" && c.verdict === "resolved"), `en-dash case: ${JSON.stringify(enRelevant)}`);
+
+  const emDash = scanReferences("Resolves #10—#12 today.", deps({ issueExists: (n) => n === 10 || n === 12 }));
+  const emRelevant = emDash.filter((c) => c.raw === "#10" || c.raw === "#12");
+  assert.equal(emRelevant.length, 2);
+  assert.ok(emRelevant.every((c) => c.kind === "issue" && c.verdict === "resolved"), `em-dash case: ${JSON.stringify(emRelevant)}`);
+});
+
+// Issue #153 (MED): the "already-recorded" branch (bare #N immediately preceded by "Issue"/
+// "Milestone", already recorded by the dedicated word-form pass) didn't seed
+// state.lastMarkedListEnd, so a singular "Issue #A, #B" list failed to open continuation for #B
+// while the plural "Issues #A, #B" (which takes the CITATION_MARKER_WORD_RE branch instead)
+// worked. Both forms must now behave identically.
+test("QA-14 (Issue #153): a singular 'Issue #A, #B' list verifies BOTH members, identically to the plural 'Issues #A, #B' form", () => {
+  const citations = scanReferences("Issue #7, #9999 both closed.", deps({ issueExists: (n) => n === 7 }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 2, `expected both #7 and #9999 to reach real classification, got: ${JSON.stringify(citations)}`);
+  const nine999 = issueCitations.find((c) => c.raw === "#9999");
+  assert.equal(nine999?.verdict, "unresolved-authority", "the nonexistent #9999 must still be verified, not silently unclassified");
+  const result = summarizeCitations(citations);
+  assert.equal(result.ok, false, "'Issue #7, #9999' must fail the run for the nonexistent #9999, same as the plural form already does");
+});
+
+test("QA-14 (Issue #153, non-regression): a singular 'Issue #N' with no list stays unaffected", () => {
+  const citations = scanReferences("See Issue #120 for details.", deps({ issueExists: (n) => n === 120 }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 1);
+  assert.equal(issueCitations[0]?.verdict, "resolved");
+});
+
+// Issue #154 (MED): R4/R5's shipped "never resolves as issue" / "never unresolved-authority"
+// claims were falsified by the list-continuation path leaking marked status across an
+// intervening ordinal/hex word, when only pure connector punctuation (no actual word) separated
+// them from the prior marked item. The dash case is now closed by the tight-dash guard above
+// (Issue #149's TIGHT_DASH_CONTINUATION_RE): a SPACE-PADDED dash no longer continues a list.
+test("QA-14 (Issue #154, dash leak CLOSED): a space-padded dash after a marked citation does NOT carry marked status onto the next number — 'Closes #7 - #3 of the findings' leaves #3 unclassified", () => {
+  const citations = scanReferences("Closes #7 - #3 of the findings remain open.", deps({ issueExists: () => true }));
+  const seven = citations.find((c) => c.raw === "#7");
+  const three = citations.find((c) => c.raw === "#3");
+  assert.equal(seven?.kind, "issue");
+  assert.equal(seven?.verdict, "resolved");
+  assert.equal(three?.kind, "issue-candidate", `expected #3 to stay unclassified (no marker reaches it), got: ${JSON.stringify(three)}`);
+  assert.equal(three?.verdict, "unclassified");
+});
+
+// Honest, disclosed residual (NOT closed by this round — see the comment above
+// TIGHT_DASH_CONTINUATION_RE in reference-resolver.ts): a comma/whitespace-joined continuation
+// still carries marked status onto a hex-shaped or ordinal-shaped token immediately after it,
+// because this repo's own real comma-joined citation lists genuinely need surrounding whitespace
+// to stay matched. Measured full-tree incidence of this exact shape: 0/316 real occurrences in
+// this repo's tracked corpus (this round's own build receipt). Pinned here so a future change to
+// this behavior is a deliberate, reviewed decision, not a silent drift either direction.
+test("QA-14 (Issue #154, disclosed residual, NOT fixed this round): a comma-joined token right after a marked citation still inherits marked status, even when it is hex/ordinal-shaped", () => {
+  const citations = scanReferences("Closes #7, #000 is the palette token.", deps({ issueExists: (n) => n === 7 }));
+  const relevant = citations.find((c) => c.raw === "#000");
+  assert.equal(relevant?.kind, "issue", "documents the known residual: #000 is marked via comma continuation, not left as unclassified");
+  assert.equal(relevant?.verdict, "unresolved-authority");
+});
