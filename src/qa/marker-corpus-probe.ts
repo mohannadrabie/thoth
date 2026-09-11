@@ -44,6 +44,29 @@ const stubDeps: ReferenceResolverDeps = {
   repoSlug: null,
 };
 
+// GitHub Issue #150 round-2 fix-now: registered in `completeness-claim-checker.ts`'s
+// `KNOWN_INSTRUMENTS` since round 1, but with no `[[completeness: cmd=...]]` marker anywhere
+// referencing it — the published marked/unmarked/total figure was real (a committed, re-runnable
+// instrument) but structurally unverifiable through this project's only completeness-claim
+// mechanism (`verifyMarkerClaim` compares `expect=N` against the LAST integer in stdout, which for
+// the default human-readable summary is `filesScanned`, not any of the three published numbers).
+// `--field=marked|unmarked|total` makes this instrument single-number-per-invocation, matching
+// this project's own `[[completeness: cmd="<name>" expect=N]]` convention (one symbolic
+// KNOWN_INSTRUMENTS name per checkable number, e.g. `qa-mutation-shell`'s `expect=53`) — each
+// field prints ONLY that number, so it is unambiguously the last (and only) integer in stdout.
+export type MarkerCorpusField = "marked" | "unmarked" | "total";
+
+/** Pure — parses `--field=marked|unmarked|total` out of a CLI argv slice. Throws on an unknown
+ * field value (fails loud, not silently ignored); returns `null` when no `--field` flag is
+ * present (the default, full human-readable summary mode). */
+export function parseMarkerCorpusField(args: string[]): MarkerCorpusField | null {
+  const flag = args.find((a) => a.startsWith("--field="));
+  if (!flag) return null;
+  const value = flag.slice("--field=".length);
+  if (value === "marked" || value === "unmarked" || value === "total") return value;
+  throw new Error(`--field must be one of marked|unmarked|total, got "${value}"`);
+}
+
 export interface MarkerCorpusStats {
   /** Bare #N matches that reached real classification (an explicit marker, or list-continuation). */
   marked: number;
@@ -79,7 +102,9 @@ export function computeMarkerCorpusStats(fileTexts: Map<string, string>): Marker
 
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
-  const ref = process.argv[2] ?? "HEAD";
+  const argv = process.argv.slice(2);
+  const field = parseMarkerCorpusField(argv);
+  const ref = argv.find((a) => !a.startsWith("--")) ?? "HEAD";
 
   const git = makeGitOps(realRunner, repoRoot);
   // Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
@@ -101,15 +126,20 @@ async function main(): Promise<void> {
 
   const stats = computeMarkerCorpusStats(fileTexts);
   const pct = stats.total > 0 ? Math.round((stats.unmarked / stats.total) * 100) : 0;
-  const result: InstrumentResult = {
-    ok: true,
-    vacuous: stats.total === 0,
-    summary:
-      stats.total === 0
-        ? "0 bare #N citations found in the scanned tree — vacuous."
-        : `marked=${stats.marked} unmarked=${stats.unmarked} total=${stats.total} — approx ${pct}% of this repo's bare #N occurrences (${stats.filesScanned} files scanned) carry no explicit citation marker.`,
-    details: [],
-  };
+  // `--field` mode (Issue #150 round-2 fix-now): stdout is ONLY `<field>=<N>` — the single number
+  // a `[[completeness: cmd="qa14-marker-corpus-probe-<field>" expect=N]]` marker checks, with
+  // nothing else in the output stream that could be mistaken for it.
+  const result: InstrumentResult = field
+    ? { ok: true, vacuous: stats.total === 0, summary: `${field}=${stats[field]}`, details: [] }
+    : {
+        ok: true,
+        vacuous: stats.total === 0,
+        summary:
+          stats.total === 0
+            ? "0 bare #N citations found in the scanned tree — vacuous."
+            : `marked=${stats.marked} unmarked=${stats.unmarked} total=${stats.total} — approx ${pct}% of this repo's bare #N occurrences (${stats.filesScanned} files scanned) carry no explicit citation marker.`,
+        details: [],
+      };
   printInstrumentResult("QA-14 marker-corpus-probe", result);
   process.exit(0);
 }

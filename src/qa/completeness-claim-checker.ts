@@ -49,6 +49,14 @@ export const KNOWN_INSTRUMENTS: Readonly<Record<string, KnownInstrument>> = Obje
   "qa-recurring-findings": { cmd: "node", args: ["src/qa/recurring-findings-registry.ts"] },
   "qa-reference-resolver": { cmd: "node", args: ["src/qa/reference-resolver.ts"] },
   "qa14-marker-corpus-probe": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts"] },
+  // Round-2 fix-now (GitHub issue 150): the default entry above prints a human-readable sentence
+  // whose LAST integer is `filesScanned`, not the published marked/unmarked/total figure — so no
+  // marker could ever verify that figure through it. These three re-invoke the same probe with
+  // `--field=...`, each printing ONLY the one number it names, so a real
+  // `[[completeness: cmd="qa14-marker-corpus-probe-<field>" expect=N]]` marker checks it exactly.
+  "qa14-marker-corpus-probe-marked": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=marked"] },
+  "qa14-marker-corpus-probe-unmarked": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=unmarked"] },
+  "qa14-marker-corpus-probe-total": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=total"] },
   "adr-cache-ensure": { cmd: "node", args: ["docs/adr-cache.mjs", "--ensure"] },
   "oss-history-scan": { cmd: "node", args: ["src/secret-scan/history-scan.ts"] },
   "qa-mutation-shell": { cmd: "node", args: ["src/qa/shell-detector-mutants.ts"] },

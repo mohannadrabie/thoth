@@ -678,7 +678,7 @@
   },
   "scope": "qa14-marker-redesign",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 1,
+  "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,

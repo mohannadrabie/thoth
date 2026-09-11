@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_FILES, checkCompleteness, findBareClaims, findMarkerClaims, verifyMarkerClaim } from "./completeness-claim-checker.ts";
+import {
+  DEFAULT_FILES,
+  KNOWN_INSTRUMENTS,
+  checkCompleteness,
+  findBareClaims,
+  findMarkerClaims,
+  verifyMarkerClaim,
+} from "./completeness-claim-checker.ts";
+import { realRunner } from "../lib/exec.ts";
 import type { Runner } from "../lib/exec.ts";
 
 function fakeRunner(stdout: string): Runner {
@@ -108,4 +116,36 @@ test("QA-15 (Issue #142): DEFAULT_FILES deliberately excludes docs/decisions.md 
 
 test("QA-15 (Issue #142): DEFAULT_FILES is never accidentally emptied — the mutant `DEFAULT_FILES = []` this Issue was filed against would fail this assertion", () => {
   assert.ok(DEFAULT_FILES.length > 0, "DEFAULT_FILES must not be empty — an empty scope is a silent no-op gate, not a passing one");
+});
+
+// Round-2 fix-now (GitHub issue 150, red-team/cross-domain-reviewer round-2 re-confirm): the probe
+// was registered in KNOWN_INSTRUMENTS since round 1 but no marker anywhere referenced it, and the
+// default invocation's last-printed integer (filesScanned) could never verify the published
+// marked/unmarked/total figure even if a marker had been added — "registered" was not "wired".
+// These pin the three per-field entries exist with the exact args a marker would need, AND prove
+// (via a REAL subprocess, not a fake runner) that `--field=...` genuinely makes the claimed number
+// the last integer in stdout — the specific gap red-team's report named ("a fix that looks
+// complete and is not").
+test("QA-15 (Issue #150): KNOWN_INSTRUMENTS carries one qa14-marker-corpus-probe-<field> entry per checkable number (marked/unmarked/total)", () => {
+  assert.deepEqual(KNOWN_INSTRUMENTS["qa14-marker-corpus-probe-marked"], {
+    cmd: "node",
+    args: ["src/qa/marker-corpus-probe.ts", "--field=marked"],
+  });
+  assert.deepEqual(KNOWN_INSTRUMENTS["qa14-marker-corpus-probe-unmarked"], {
+    cmd: "node",
+    args: ["src/qa/marker-corpus-probe.ts", "--field=unmarked"],
+  });
+  assert.deepEqual(KNOWN_INSTRUMENTS["qa14-marker-corpus-probe-total"], {
+    cmd: "node",
+    args: ["src/qa/marker-corpus-probe.ts", "--field=total"],
+  });
+});
+
+test("QA-15 (Issue #150, end-to-end, real subprocess): verifyMarkerClaim against qa14-marker-corpus-probe-total genuinely re-runs the real probe and compares a real number, not a fake one", async () => {
+  // Deliberately wrong `expect` — proves this is a REAL re-run producing a REAL mismatch, not a
+  // stubbed pass. A previous run at HEAD found this instrument reports total > 0 on this repo's
+  // own tracked corpus (never 0), so `expect=0` is guaranteed to mismatch without being a guess.
+  const result = await verifyMarkerClaim({ raw: "x", cmd: "qa14-marker-corpus-probe-total", expect: 0 }, realRunner);
+  assert.equal(result.ok, false, "a deliberately-wrong expectation must be caught by a real re-run");
+  assert.match(result.summary, /claim says 0, instrument "qa14-marker-corpus-probe-total" re-run reports \d+/);
 });
