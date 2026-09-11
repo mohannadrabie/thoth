@@ -4,6 +4,7 @@ import { resolve as pathResolve } from "node:path";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
 import {
   checkIssueViaGh,
+  parseMaxDistinctIssues,
   resolveIssueCitations,
   resolveWithinRepo,
   scanReferences,
@@ -360,4 +361,126 @@ test("QA-14 (Issue #141): the same issue number cited multiple times, across mul
   assert.equal(calls, 1, "the in-memory issueCache must dedupe repeated citations to the same number");
   const bad = citations.filter((c) => c.verdict !== "resolved");
   assert.deepEqual(bad, []);
+});
+
+// --- Round 3 (red-team round-2 re-confirm, `docs/reviews/qa1415fix-red-team-round2-2026-09-10.md`):
+// two new MED findings (Issues #143, #144) and four LOW items, all introduced by round 2's own
+// regex fix. Fixed in this round; pinned here.
+
+// NEW-1 / Issue #143 (MED): non-citation hash-N ordinals must not be classified as issue citations.
+test("QA-14 (Issue #143, NEW-1): an ordinal shorthand ('Finding #2', 'Build task #1', 'suspicion #4') is NOT classified as an issue citation", () => {
+  const cases = [
+    "design-challenger Finding #2 was addressed.",
+    "Scheduled as build task #1 for this round.",
+    "the architecture's suspicion #4 was confirmed.",
+    "round-1 attack #5 was re-applied.",
+    "M3 mutation #2 was caught.",
+  ];
+  for (const text of cases) {
+    const citations = scanReferences(text, deps({ issueExists: () => true }));
+    const issueCitations = citations.filter((c) => c.kind === "issue");
+    assert.equal(issueCitations.length, 0, `expected no issue citation in: ${JSON.stringify(text)}, got: ${JSON.stringify(issueCitations)}`);
+  }
+});
+
+test("QA-14 (Issue #143, NEW-1): an HTML numeric character entity ('&#39;') is NOT classified as an issue citation", () => {
+  const citations = scanReferences("the escape map renders an apostrophe as &#39;.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #143, NEW-1 non-regression): a real 'Closes #N' citation immediately after an ordinal-shaped sentence still resolves", () => {
+  const citations = scanReferences("Finding #2 is fixed. Closes #120.", deps({ issueExists: (n) => n === 120 }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 1);
+  assert.equal(issueCitations[0]?.raw, "#120");
+  assert.equal(issueCitations[0]?.verdict, "resolved");
+});
+
+// Residual gap found during this round's own re-measurement (not part of the originally-filed
+// NEW-1 text): a comma/"and"-separated LIST of ordinals only has the word in front of the FIRST
+// number — later list members must inherit the same exclusion, not resolve as real citations.
+test("QA-14 (Issue #143, NEW-1 list-continuation): 'Findings #3, #4, #6' excludes ALL three numbers, not just the one directly after the word", () => {
+  const citations = scanReferences("design-challenger's Findings #3, #4, #6 are residual.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0, `expected none of the list to classify as an issue, got: ${JSON.stringify(issueCitations)}`);
+});
+
+test("QA-14 (Issue #143, NEW-1 list-continuation, 'and'-joined): 'attack #4 and #5' excludes both numbers", () => {
+  const citations = scanReferences("round-1 attack #4 and #5 both apply here.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #143, NEW-1 list-continuation non-regression): a real citation list is unaffected — 'Closes #7, #8' still resolves both", () => {
+  const citations = scanReferences("Closes #7, #8 in one sweep.", deps({ issueExists: () => true }));
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 2);
+  assert.deepEqual(
+    issueCitations.map((c) => c.raw).sort(),
+    ["#7", "#8"],
+  );
+});
+
+// NEW-2 / Issue #144 (MED): an all-digit CSS hex colour literal must not be classified as an issue.
+test("QA-14 (Issue #144, NEW-2): an all-digit CSS hex colour literal ('#000', '#333') in a style declaration is NOT classified as an issue citation", () => {
+  const citations = scanReferences(".bar-track{background:#000; border-radius:4px;} .x{color:#333;}", deps());
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 0);
+});
+
+test("QA-14 (Issue #144, non-regression): the mixed-alphanumeric hex guard from round 2 still holds alongside the new all-digit guard", () => {
+  const citations = scanReferences("--bg:#0f1115; --panel:#171a21; --accent:#5b8cff;", deps());
+  assert.equal(citations.length, 0);
+});
+
+// NEW-3 (LOW): the `precedingWord` guard must not silently drop a word-prefixed cross-repo citation.
+test("QA-14 (NEW-3): 'Issue owner/repo#N' (word-prefixed cross-repo) still classifies, not silently dropped by the same-word guard", () => {
+  const citations = scanReferences("Issue anthropics/claude-code#18846 tracks this upstream.", deps({ repoSlug: "mohannadrabie/thoth" }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.raw, "anthropics/claude-code#18846");
+  assert.equal(citations[0]?.verdict, "cross-repo-issue");
+});
+
+// NEW-4 (LOW): MILESTONE_CANDIDATE_RE and the guard must not span a line boundary.
+test("QA-14 (NEW-4): a line ending in the word 'milestone' followed by a line starting with a real Issue citation classifies the citation as an ISSUE, not a mis-kinded milestone", () => {
+  const citations = scanReferences("Tied to this milestone\n#120 is the issue that closes it.", deps({ issueExists: (n) => n === 120 }));
+  const milestoneCitations = citations.filter((c) => c.kind === "milestone");
+  assert.equal(milestoneCitations.length, 0, "must not span the newline into a bogus milestone match");
+  const issueCitations = citations.filter((c) => c.kind === "issue");
+  assert.equal(issueCitations.length, 1);
+  assert.equal(issueCitations[0]?.raw, "#120");
+  assert.equal(issueCitations[0]?.verdict, "resolved");
+});
+
+test("QA-14 (NEW-4, non-regression): a same-line 'Milestone #N' citation still classifies as milestone, unaffected by the line-boundary fix", () => {
+  const citations = scanReferences("See Milestone #23 for the plan.", deps({ issueExists: () => { throw new Error("must not query issueExists for a milestone"); } }));
+  assert.equal(citations.length, 1);
+  assert.equal(citations[0]?.kind, "milestone");
+});
+
+// NEW-5 (LOW): DEFAULT_MAX_DISTINCT_ISSUES' env override must validate, not silently fail open/shut.
+test("QA-14 (NEW-5): parseMaxDistinctIssues falls back to the default on a malformed (non-numeric) override, never NaN", () => {
+  const result = parseMaxDistinctIssues("not-a-number", 300);
+  assert.equal(result, 300);
+  assert.ok(Number.isFinite(result));
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues falls back to the default on an empty-string override, never silently zero", () => {
+  const result = parseMaxDistinctIssues("", 300);
+  assert.equal(result, 300);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues rejects a non-positive or non-integer override", () => {
+  assert.equal(parseMaxDistinctIssues("0", 300), 300);
+  assert.equal(parseMaxDistinctIssues("-5", 300), 300);
+  assert.equal(parseMaxDistinctIssues("12.5", 300), 300);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues accepts a well-formed positive integer override", () => {
+  assert.equal(parseMaxDistinctIssues("50", 300), 50);
+});
+
+test("QA-14 (NEW-5): parseMaxDistinctIssues returns the fallback when no override is set at all", () => {
+  assert.equal(parseMaxDistinctIssues(undefined, 300), 300);
 });

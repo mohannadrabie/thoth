@@ -74,10 +74,21 @@ const ADR_CANDIDATE_RE = /\bADR-[A-Za-z0-9]+/g;
 // CSS hex color literal (this repo's `docs/dashboard.mjs` inline `<style>` block has several) from
 // being torn into a bogus short digit-prefix match — the digit run stops at the first hex letter,
 // and `(?!\w)` then rejects that shorter, letter-followed prefix — while still matching every real
-// citation shape above (each is followed by whitespace or punctuation, never a word character). A
-// fully-numeric hex color (all-digit, no hex letters) would remain genuinely ambiguous with a real
-// issue number; none exist in this tree today (checked), so this is a documented, not a live, gap.
-const ISSUE_CANDIDATE_RE = /\b[\w.-]+\/[\w.-]+#\d+(?!\w)|#\d+(?!\w)/g;
+// citation shape above (each is followed by whitespace or punctuation, never a word character).
+//
+// Round-3 fix (GitHub issue 144): a fully-numeric hex color (all-digit, no hex letters, e.g.
+// `background:#000`) is NOT rejected by the guard above, and one real instance exists in this tree
+// today at `docs/dashboard.mjs:646` — measured via `git ls-files` plus this regex, not asserted (an
+// earlier version of this comment claimed "none exist... checked", which was false; that claim is
+// removed rather than repeated). Every real occurrence of this shape in this repo's tracked files is
+// a CSS color literal written as `property:#digits` — a colon with NO intervening whitespace
+// directly before the `#`, a shape this project's own citation prose never uses (measured via
+// `grep -rn ':#[0-9]+'` across tracked files: every hit is a CSS declaration). A leading `(?<!:)`
+// rejects exactly that shape without touching any real citation form (which is always preceded by
+// whitespace, `(`, start-of-line, or a word character, never a bare `:`). A parallel `(?<!&)` rejects
+// an HTML numeric character entity (`&#39;`, `docs/dashboard.mjs:33`) the same way — `&#N;` is never
+// a real issue/milestone citation shape in this repo's prose.
+const ISSUE_CANDIDATE_RE = /\b[\w.-]+\/[\w.-]+#\d+(?!\w)|(?<![:&])#\d+(?!\w)/g;
 const ISSUE_WORD_CANDIDATE_RE = /\bIssue\s*#\d+/gi;
 // A GitHub Milestone number lives in a namespace entirely separate from Issue numbers (a repo's
 // milestones and issues are independently numbered) — conflating a Milestone reference with an
@@ -87,7 +98,24 @@ const ISSUE_WORD_CANDIDATE_RE = /\bIssue\s*#\d+/gi;
 // above (which would otherwise feed it straight into `classifyIssue`) can't do that; not verified
 // against a live milestone list in this pass (no such lookup exists in this repo yet) but no
 // longer silently invisible either — the QA-16 doctrine this file's own header names.
-const MILESTONE_CANDIDATE_RE = /\bMilestone\s*#\d+/gi;
+//
+// Round-3 fix (GitHub issue 143, finding NEW-4): `\s` includes a newline, so this previously matched
+// "milestone" at the end of one line joined to a real, unrelated "#N" issue citation starting the
+// next line, silently mis-kinding a genuine Issue citation as an unverified Milestone and
+// auto-resolving it. `[ \t]*` (same-line whitespace only) keeps the real "Milestone #N" same-line
+// shape working while refusing to span a line break.
+const MILESTONE_CANDIDATE_RE = /\bMilestone[ \t]*#\d+/gi;
+// Round-3 fix (GitHub issue 143, finding NEW-1): a bare `#N` immediately preceded (same line,
+// ignoring only spaces/tabs) by one of these ordinal/count words is a plain English ordinal —
+// "Finding #2", "Build task #1", "suspicion #4", "round #3", "attempt #1", "step #2", a mutation's
+// "M1"-style "mutant #1" — never a GitHub Issue citation, even though it is syntactically identical
+// in shape to a real one ("Closes #N"). This is a denylist, not a completeness claim: it is calibrated
+// against this repo's own measured usage (`grep -rnoiE` across tracked `.md`/`.ts`/`.mjs` files for
+// "<word> #N", cross-checked against `docs/reviews/*`, `CHANGELOG.md`, and this file's own test
+// suite) and is expected to need new entries if this repo starts using a new ordinal word before a
+// bare `#N` — it does not claim to be exhaustive over English ordinals in general.
+const NON_ISSUE_ORDINAL_WORD_RE =
+  /\b(?:finding|findings|task|tasks|suspicion|suspicions|attack|attacks|round|rounds|attempt|attempts|mutant|mutants|mutation|mutations|step|steps)[ \t]*$/i;
 const BACKTICK_PATH_RE = /`([^`\n]+)`/g;
 
 function classifyAdr(raw: string, deps: ReferenceResolverDeps): Citation {
@@ -187,10 +215,57 @@ function classifyPath(raw: string, deps: ReferenceResolverDeps): Citation | null
   return null;
 }
 
+interface OrdinalListGuardState {
+  /** End index (in `text`) of the most recently excluded ordinal/count-word match, or -1. */
+  lastOrdinalListEnd: number;
+}
+
+/**
+ * Decides whether a BARE (non-cross-repo) `#N` candidate match must be excluded entirely — not
+ * classified as any kind of citation. Same-line only (does not cross a `\n`). Three reasons, in
+ * order:
+ *
+ * (a) It is immediately preceded by "Issue"/"Milestone" — already recorded by that word-form pass
+ *     above, this bare match is the same citation seen a second time (round-2 guard, GitHub issue
+ *     139).
+ * (b) It is immediately preceded by a plain-English ordinal/count word ("Finding #N", "Build task
+ *     #N", "suspicion #N") — never a GitHub Issue citation despite being syntactically identical
+ *     to a real one (round-3 fix, GitHub issue 143, finding NEW-1).
+ * (c) It is a LIST CONTINUATION of reason (b) — "Findings #N, #N, #N" (or the slash-joined
+ *     "Findings #N/#N" shorthand this repo's own review reports also use) only has the ordinal
+ *     word in front of the FIRST number; every later number in the same list is separated from the
+ *     excluded item before it only by punctuation (a comma, slash, "and", `&`, or whitespace),
+ *     never by a new word, so it inherits the same exclusion (found during this round's own
+ *     re-measurement, not part of the originally-filed finding text, but the same underlying
+ *     defect).
+ *
+ * Mutates `state.lastOrdinalListEnd` so a later match can detect reason (c).
+ */
+function shouldExcludeBareIssueMatch(text: string, idx: number, matchLength: number, state: OrdinalListGuardState): boolean {
+  const lineStart = text.lastIndexOf("\n", idx - 1) + 1;
+  const sameLineBefore = text.slice(lineStart, idx);
+
+  if (/\b(?:issue|milestone)[ \t]*$/i.test(sameLineBefore)) {
+    return true;
+  }
+  if (NON_ISSUE_ORDINAL_WORD_RE.test(sameLineBefore)) {
+    state.lastOrdinalListEnd = idx + matchLength;
+    return true;
+  }
+  const betweenPreviousAndThis = state.lastOrdinalListEnd >= 0 ? text.slice(state.lastOrdinalListEnd, idx) : null;
+  if (betweenPreviousAndThis !== null && /^(?:[ \t,/]|and|&)*$/i.test(betweenPreviousAndThis)) {
+    state.lastOrdinalListEnd = idx + matchLength;
+    return true;
+  }
+  state.lastOrdinalListEnd = -1;
+  return false;
+}
+
 /** Scans `text` for every citation-shaped candidate and classifies each. Pure — no I/O. */
 export function scanReferences(text: string, deps: ReferenceResolverDeps): Citation[] {
   const citations: Citation[] = [];
   const seen = new Set<string>();
+  const ordinalListState: OrdinalListGuardState = { lastOrdinalListEnd: -1 };
 
   function record(raw: string, classify: () => Citation): void {
     const key = raw;
@@ -217,8 +292,15 @@ export function scanReferences(text: string, deps: ReferenceResolverDeps): Citat
   for (const m of text.matchAll(ISSUE_CANDIDATE_RE)) {
     if (m[0].startsWith("ADR-")) continue;
     const idx = m.index ?? 0;
-    const precedingWord = /\b(?:issue|milestone)\s*$/i.test(text.slice(0, idx));
-    if (precedingWord) continue; // already captured by its own word-form pass above
+    // Round-3 fix (GitHub issue 143, finding NEW-3): the cross-repo `owner/repo#N` shape must
+    // NEVER go through `shouldExcludeBareIssueMatch` — that guard's premise only holds for the
+    // BARE `#N` alternative. `ISSUE_WORD_CANDIDATE_RE` (`/\bIssue\s*#\d+/gi`) cannot match across
+    // an intervening `owner/repo` slug, so "Issue owner/repo#N" would otherwise be silently
+    // dropped entirely: never recorded by the word-form pass (nothing there to match it) AND
+    // skipped here (wrongly assumed already recorded). Detected structurally (the match itself
+    // contains `/`), not by re-deriving the cross-repo regex.
+    const isCrossRepo = m[0].includes("/");
+    if (!isCrossRepo && shouldExcludeBareIssueMatch(text, idx, m[0].length, ordinalListState)) continue;
     record(m[0], () => classifyIssue(m[0], deps));
   }
   for (const m of text.matchAll(BACKTICK_PATH_RE)) {
@@ -331,7 +413,30 @@ export async function checkIssueViaGh(n: number, repoSlug: string | null, runner
 // loud, actionable failure instead of letting rate-limiting silently degrade every further lookup
 // into the same "cannot verify" `null` this story exists to eliminate. Overridable via
 // `QA14_MAX_ISSUES` for a repo with a different real citation volume.
-export const DEFAULT_MAX_DISTINCT_ISSUES = Number(process.env.QA14_MAX_ISSUES ?? 300);
+//
+// Round-3 fix (GitHub issue 143, finding NEW-5): the override was previously read as `Number(env ?? 300)` with
+// no validation. A malformed `QA14_MAX_ISSUES` (a typo, non-numeric text) produced `NaN`, and
+// `size > NaN` is always `false` — the cap this comment describes would have silently never
+// fired, the exact silent-degradation failure mode it exists to prevent. An empty-string override
+// (how GitHub Actions renders an unset `vars.X`/`secrets.X` interpolation) produced `0`, failing
+// the cap shut on every run instead. `parseMaxDistinctIssues` accepts the override only when it
+// parses to a finite positive integer, and falls back to `fallback` with a loud console warning
+// otherwise — exported so this parsing behavior is unit-tested directly, without needing to
+// mutate `process.env` and re-import this module.
+export function parseMaxDistinctIssues(rawEnvValue: string | undefined, fallback = 300): number {
+  if (rawEnvValue === undefined) return fallback;
+  const n = Number(rawEnvValue);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    console.warn(
+      `[QA-14 reference-resolver] WARNING: QA14_MAX_ISSUES="${rawEnvValue}" is not a positive ` +
+        `integer — falling back to the default cap of ${fallback}. (A malformed value must never ` +
+        `silently disable or silently over-tighten this rate-limit cap.)`,
+    );
+    return fallback;
+  }
+  return n;
+}
+export const DEFAULT_MAX_DISTINCT_ISSUES = parseMaxDistinctIssues(process.env.QA14_MAX_ISSUES);
 
 export interface IssueResolution {
   /** Every citation the scanned text set contains, of every kind — not issue citations alone. */
