@@ -211,6 +211,27 @@ test("QA-15 (Issue #159, non-regression): striking one claim on a line does not 
   assert.equal(claims.length, 1, "the live 'all 46' claim outside the struck span must still be caught");
 });
 
+// Issue #163 (red-team round-6, 2026-09-11): the human-ruled BARE_CLAIM_PHRASES extension for
+// `continuation-marked=N` / `continuation-residual=N` (round-5 fix-now) shipped with zero test
+// coverage of its own — mutation-demonstrated: deleting the pattern left the whole suite AND
+// `node src/qa/completeness-claim-checker.ts` both green. These three pin it directly.
+test("QA-15 (Issue #163): a reintroduced 'continuation-marked=N' stale claim IS caught", () => {
+  const claims = findBareClaims("The probe reports continuation-marked=281 on the current tree.");
+  assert.equal(claims.length, 1, "the round-4/5 defect shape (a bare continuation-marked=N claim) must be flagged");
+});
+
+test("QA-15 (Issue #163): a reintroduced 'continuation-residual=N' stale claim IS caught", () => {
+  const claims = findBareClaims("Residual today: continuation-residual=5.");
+  assert.equal(claims.length, 1, "the round-4/5 defect shape (a bare continuation-residual=N claim) must be flagged");
+});
+
+test("QA-15 (Issue #163, false-positive guard): a struck-through 'continuation-marked=N'/'continuation-residual=N' claim is NOT flagged — superseded text, not a live claim", () => {
+  const claims = findBareClaims(
+    "~~continuation-marked=273 continuation-residual=3~~ corrected below, per the live instrument command.",
+  );
+  assert.equal(claims.length, 0, "markdown-struck text represents a superseded claim, matching this project's own decisions.md convention");
+});
+
 test("QA-15 (Issue #159, end-to-end, real corpus): CHANGELOG.md and docs/STATE.md — the exact two files this round corrected — contain ZERO bare claims after this round's own edits", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const path of DEFAULT_FILES) {
