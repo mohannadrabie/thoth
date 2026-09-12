@@ -137,3 +137,20 @@ test("QA-14 continuation-residual-probe (real subprocess): --field=continuation-
   assert.match(fieldRun.stdout, /continuation-marked=\d+/);
   assert.doesNotMatch(fieldRun.stdout, /pure\/sync/, "field mode must not contain the default mode's own explanatory prose");
 });
+
+// Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
+// report, finding 2): the probe used to accept a positional `ref` argument that only ever changed
+// the FILE LIST (via `resolveChangedFiles`), never the CONTENT (always read from the working tree
+// via `readFile`) — a demonstrated ref/content-mismatch bug (`--field=continuation-marked a26e55a`
+// reported 273 against a26e55a's true content of 271). No real caller ever passed a non-default
+// ref (confirmed by grep across production code, CI, package.json scripts and this test file
+// itself); the parameter is deleted, not fixed — this pins that a stray positional argument is now
+// simply ignored (working-tree-only, same result with or without it), rather than silently
+// activating the old mismatch again.
+test("QA-14 continuation-residual-probe (real subprocess, regression): a stray positional argument no longer changes the result — working-tree-only, the ref/content-mismatch bug is deleted not merely dormant", async () => {
+  const withoutArg = await realRunner("node", ["src/qa/continuation-residual-probe.ts", "--field=continuation-marked"]);
+  const withStrayArg = await realRunner("node", ["src/qa/continuation-residual-probe.ts", "--field=continuation-marked", "a26e55a"]);
+  assert.equal(withoutArg.code, 0);
+  assert.equal(withStrayArg.code, 0);
+  assert.equal(withStrayArg.stdout, withoutArg.stdout, "a positional argument must have zero effect — the probe reads only the working tree");
+});

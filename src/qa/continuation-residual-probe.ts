@@ -151,10 +151,22 @@ export async function computeContinuationResidual(
 
 /** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
  * `resolveChangedFiles`, driven here directly rather than via a real diff), same as
- * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it. */
-async function collectFullTreeFileTexts(repoRoot: string, ref: string): Promise<Map<string, string>> {
+ * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it.
+ *
+ * Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
+ * report, finding 2): this file's content is ALWAYS read from the working tree (`readFile` below),
+ * regardless of which ref the file LIST comes from — the exact ref/working-tree content-mismatch
+ * bug the council explicitly rejected Candidate B over in `marker-corpus-probe.ts`
+ * (`node src/qa/continuation-residual-probe.ts --field=continuation-marked a26e55a` demonstrably
+ * reported the a26e55a file list read against HEAD's working-tree content, a tree state that never
+ * existed: true a26e55a content=271, probe's answer=273). No real caller anywhere in this repo
+ * (production code, `.github/workflows/ci.yml`, `package.json` scripts, or this file's own test
+ * suite) ever passed a non-default ref — confirmed by grep — so there is no fix-the-mismatch-
+ * properly obligation to honor; deleting the parameter and always reading the current working tree
+ * (the only state this function has ever correctly supported) is the minimal closure. */
+async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", ref);
+  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
   const trackedFiles = resolved?.changedFiles ?? [];
   const fileTexts = new Map<string, string>();
   for (const file of trackedFiles) {
@@ -172,9 +184,8 @@ async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const argv = process.argv.slice(2);
   const field = parseContinuationResidualField(argv);
-  const ref = argv.find((a) => !a.startsWith("--")) ?? "HEAD";
 
-  const fileTexts = await collectFullTreeFileTexts(repoRoot, ref);
+  const fileTexts = await collectFullTreeFileTexts(repoRoot);
 
   if (field === null || field === "continuation-marked") {
     const denom = computeContinuationMarkedCount(fileTexts);

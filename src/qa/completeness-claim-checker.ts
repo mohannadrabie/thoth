@@ -114,6 +114,23 @@ const BARE_CLAIM_PHRASES = [
   // residual/blocking-count claim (see CHANGELOG.md's qa14-marker-redesign entries). Bounded
   // wildcards (not nested repeated groups) keep this simple to read and simple to prove terminates.
   /\b\d+\/\d+\b.{0,20}\bdistinct\b.{0,30}\b(?:failures?|leaks?)\b/i,
+  // Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; grounded in
+  // `docs/reviews/qa14-marker-redesign-red-team-round5-2026-09-11.md` finding 3, which measured 4 of
+  // 4 plausible NEXT phrasings missed by the two patterns above — including the two
+  // `continuation-marked=273 continuation-residual=3` figures live in CHANGELOG.md/docs/STATE.md at
+  // that same round's own HEAD). Anchored to THIS project's actual instrument-output naming
+  // convention — `continuation-marked=<N>` / `continuation-residual=<N>`, the exact two field names
+  // `src/qa/continuation-residual-probe.ts --field=...` prints — rather than a blanket
+  // `identifier=\d+` shape: a generic version was measured against the real corpus and rejected for
+  // the same reason impact-analyst's council report rejected a blanket `\d+\/\d+` for Issue #159 —
+  // this repo's own two scanned files already carry many unrelated, legitimate `identifier=N` pairs
+  // (`marked=380`, `unmarked=416`, `total=796`, `blocking=295`, `p99=186`, `exitCode=1`,
+  // `demonstrated=6`, `code-traced=5`, and every `[[completeness: cmd="..." expect=N]]` marker's own
+  // `expect=N`) that a blanket pattern would false-positive on. This pattern would have caught round
+  // 5's own live recurrence automatically; it does not claim to close the identifier=N class in
+  // general, only this story's own recurring shape (same narrow-but-evidence-grounded trade as the
+  // two patterns above it).
+  /\bcontinuation-(?:marked|residual)=\d+\b/i,
 ];
 
 // Issue #159 (continued): a claim struck through with markdown `~~...~~` is, by this project's own
