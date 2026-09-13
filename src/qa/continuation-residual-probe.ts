@@ -67,6 +67,9 @@ const stubDeps: ReferenceResolverDeps = {
   knownAdrIds: new Set(),
   issueExists: () => null,
   repoSlug: null,
+  // Issue #137, R1: this probe only reads `markedVia` off bare-hash issue citations — a path
+  // citation's own basename-fallback resolution is never consulted by anything this file measures.
+  findByBasename: () => [],
 };
 
 export type ContinuationResidualField = "continuation-marked" | "continuation-residual";
@@ -228,6 +231,11 @@ async function main(): Promise<void> {
     },
     knownAdrIds,
     repoSlug,
+    // Issue #137, R1: this probe's own metric (the continuation-marked/-residual counts) is
+    // computed purely off bare-hash issue citations — path citations are scanned incidentally by
+    // `scanReferences` but never read by `computeContinuationResidual`, so no real basename index
+    // is needed here.
+    findByBasename: () => [],
   };
 
   const result = await computeContinuationResidual(fileTexts, baseDeps, repoSlug, realRunner);

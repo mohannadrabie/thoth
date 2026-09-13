@@ -21,6 +21,7 @@ function deps(overrides: Partial<ReferenceResolverDeps> = {}): ReferenceResolver
     knownAdrIds: new Set(["ADR-0021"]),
     issueExists: () => true,
     repoSlug: "mohannadrabie/thoth",
+    findByBasename: () => [],
     ...overrides,
   };
 }
@@ -138,6 +139,10 @@ test("QA-14 (dogfood): this checker's own source, run against itself, resolves c
     knownAdrIds,
     issueExists: () => null,
     repoSlug: "mohannadrabie/thoth",
+    // This file's own source (see its header dogfood note) deliberately never writes a bare
+    // (no-slash) `path:line` citation of itself, so the basename fallback is never exercised here
+    // — a stub is faithful, not a shortcut. (Issue #137, R1.)
+    findByBasename: () => [],
   };
   const text = await readFile("src/qa/reference-resolver.ts", "utf8");
   const citations = scanReferences(text, realDeps);
@@ -314,6 +319,7 @@ function wiringBaseDeps(): Omit<ReferenceResolverDeps, "issueExists"> {
     lineCount: () => 100,
     knownAdrIds: new Set(),
     repoSlug: "mohannadrabie/thoth",
+    findByBasename: () => [],
   };
 }
 
@@ -842,4 +848,126 @@ test("QA-14 (markedVia, Issue #154's own disclosed residual): the comma-continua
   const relevant = citations.find((c) => c.raw === "#000");
   assert.equal(relevant?.markedVia, "continuation");
   assert.equal(relevant?.verdict, "unresolved-authority");
+});
+
+// ============================================================================================
+// Issue #137, round R1+R2 (2026-09-13): (a) ADR_CANDIDATE_RE digit-boundary tightening — a
+// prose word glued to "ADR-" with ZERO digits anywhere in its suffix (ADR-amendment, ADR-cache,
+// a literal "ADR-NNNN" placeholder) is never a citation candidate at all, closing the false
+// unparseable reports those shapes produced before this round; a suffix with any digit still
+// candidates exactly as before. (b) classifyPath's path:line branch gains a basename-index
+// fallback for a cited path segment with no `/` that fails deps.pathExists as literally cited —
+// resolves only on an UNAMBIGUOUS (exactly one) basename match, fails closed on 0 or 2+.
+// ============================================================================================
+
+// --- R2: ADR_CANDIDATE_RE digit-boundary tightening ---
+
+test("QA-14 (Issue #137, R2): 'ADR-1a' (has a digit) is still a candidate, classified unparseable", () => {
+  const citations = scanReferences("See ADR-1a for the shape.", deps());
+  assert.equal(citations.length, 1, `expected exactly one candidate, got: ${JSON.stringify(citations)}`);
+  assert.equal(citations[0]?.kind, "unparseable");
+  assert.equal(citations[0]?.verdict, "unparseable");
+});
+
+test("QA-14 (Issue #137, R2): 'ADR-amendment' (zero digits in its suffix) is never a candidate at all — 0 citations", () => {
+  const citations = scanReferences("Any ADR-amendment must be human-approved.", deps());
+  assert.equal(citations.length, 0, `expected zero citations, got: ${JSON.stringify(citations)}`);
+});
+
+test("QA-14 (Issue #137, R2): 'ADR-cache' (zero digits in its suffix) is never a candidate at all — 0 citations", () => {
+  const citations = scanReferences("Run the ADR-cache reporter first.", deps());
+  assert.equal(citations.length, 0, `expected zero citations, got: ${JSON.stringify(citations)}`);
+});
+
+test("QA-14 (Issue #137, R2, the concrete case Issue #137 itself named): 'ADR-NNNN' (zero digits) is never a candidate at all — 0 citations", () => {
+  const citations = scanReferences("Author a new one via the ADR-NNNN template shape.", deps());
+  assert.equal(citations.length, 0, `expected zero citations, got: ${JSON.stringify(citations)}`);
+});
+
+// --- R1: basename-index fallback, path:line shape only ---
+
+test("QA-14 (Issue #137, R1): the bare-path/no-line-number branch never calls findByBasename", () => {
+  let calls = 0;
+  const citations = scanReferences(
+    "See `STATE.md` for details.",
+    deps({
+      pathExists: () => false,
+      findByBasename: () => {
+        calls++;
+        return [];
+      },
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path");
+  assert.equal(calls, 0, "findByBasename must never be called from the bare-path/no-line-number branch");
+});
+
+test("QA-14 (Issue #137, R1): a path:line citation whose path segment contains '/' never invokes findByBasename, even when pathExists fails", () => {
+  let calls = 0;
+  const citations = scanReferences(
+    "See `src/foo.ts:42` for the bug.",
+    deps({
+      pathExists: () => false,
+      findByBasename: () => {
+        calls++;
+        return [];
+      },
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path-line");
+  assert.equal(citations[0]?.verdict, "unresolved-authority");
+  assert.equal(calls, 0, "a path segment containing '/' must never trigger the basename fallback");
+});
+
+test("QA-14 (Issue #137, R1): a bare-filename path:line citation with ZERO basename matches is unresolved-authority", () => {
+  const citations = scanReferences(
+    "See `printer.ts:61` for the bug.",
+    deps({
+      pathExists: () => false,
+      findByBasename: () => [],
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path-line");
+  assert.equal(citations[0]?.verdict, "unresolved-authority");
+});
+
+test("QA-14 (Issue #137, R1): a bare-filename path:line citation with EXACTLY ONE basename match resolves against the matched real path, in range", () => {
+  const citations = scanReferences(
+    "See `printer.ts:61` for the bug.",
+    deps({
+      pathExists: (p) => p === "src/policy/precedence/printer.ts",
+      findByBasename: (b) => (b === "printer.ts" ? ["src/policy/precedence/printer.ts"] : []),
+      lineCount: (p) => (p === "src/policy/precedence/printer.ts" ? 100 : null),
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path-line");
+  assert.equal(citations[0]?.verdict, "resolved");
+  assert.match(citations[0]?.reason ?? "", /printer\.ts -> src\/policy\/precedence\/printer\.ts/);
+});
+
+test("QA-14 (Issue #137, R1): a bare-filename path:line citation with exactly one basename match, but the cited line is out of range for the MATCHED file, is unresolved-authority", () => {
+  const citations = scanReferences(
+    "See `printer.ts:9999` for the bug.",
+    deps({
+      pathExists: (p) => p === "src/policy/precedence/printer.ts",
+      findByBasename: (b) => (b === "printer.ts" ? ["src/policy/precedence/printer.ts"] : []),
+      lineCount: (p) => (p === "src/policy/precedence/printer.ts" ? 50 : null),
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path-line");
+  assert.equal(citations[0]?.verdict, "unresolved-authority");
+  assert.match(citations[0]?.reason ?? "", /out of range/);
+});
+
+test("QA-14 (Issue #137, R1): a bare-filename path:line citation with TWO OR MORE basename matches fails closed as unresolved-authority, never guessing which file", () => {
+  const citations = scanReferences(
+    "See `printer.ts:61` for the bug.",
+    deps({
+      pathExists: () => false,
+      findByBasename: (b) => (b === "printer.ts" ? ["src/a/printer.ts", "src/b/printer.ts"] : []),
+    }),
+  );
+  assert.equal(citations[0]?.kind, "path-line");
+  assert.equal(citations[0]?.verdict, "unresolved-authority");
+  assert.match(citations[0]?.reason ?? "", /matches 2 files by basename/);
 });

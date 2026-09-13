@@ -42,6 +42,9 @@ const stubDeps: ReferenceResolverDeps = {
   knownAdrIds: new Set(),
   issueExists: () => null,
   repoSlug: null,
+  // Issue #137, R1: this probe's own stats are computed purely off bare-hash issue citations — a
+  // path citation's basename-fallback resolution is never read by anything this file measures.
+  findByBasename: () => [],
 };
 
 // GitHub Issue #150 round-2 fix-now: registered in `completeness-claim-checker.ts`'s
