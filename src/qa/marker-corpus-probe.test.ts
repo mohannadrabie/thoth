@@ -92,3 +92,20 @@ test("QA-14 marker-corpus-probe (Issue #156): --field=total emits ONLY that fiel
     "field mode must NOT contain the default mode's '(<N> files scanned)' clause either",
   );
 });
+
+// GitHub Issue #164 fix (mirrors continuation-residual-probe.test.ts's own Issue #161 regression
+// test): this probe used to accept an optional positional `ref` argument that only ever changed
+// the FILE LIST (via `resolveChangedFiles`), never the CONTENT (always read from the working tree
+// via `readFile`) — a demonstrated ref/content-mismatch bug. No real caller ever passed a
+// non-default ref (confirmed by grep across production code, CI, package.json scripts,
+// completeness-claim-checker.ts's KNOWN_INSTRUMENTS, and this test file itself); the parameter is
+// deleted, not fixed — this pins that a stray positional argument is now simply ignored
+// (working-tree-only, same result with or without it), rather than silently activating the old
+// mismatch again.
+test("QA-14 marker-corpus-probe (real subprocess, regression): a stray positional argument no longer changes the result — working-tree-only, the ref/content-mismatch bug is deleted not merely dormant", async () => {
+  const withoutArg = await realRunner("node", ["src/qa/marker-corpus-probe.ts", "--field=total"]);
+  const withStrayArg = await realRunner("node", ["src/qa/marker-corpus-probe.ts", "--field=total", "a26e55a"]);
+  assert.equal(withoutArg.code, 0, `probe must exit 0; stderr: ${withoutArg.stderr}`);
+  assert.equal(withStrayArg.code, 0, `probe must exit 0; stderr: ${withStrayArg.stderr}`);
+  assert.equal(withStrayArg.stdout, withoutArg.stdout, "a positional argument must have zero effect — the probe reads only the working tree");
+});

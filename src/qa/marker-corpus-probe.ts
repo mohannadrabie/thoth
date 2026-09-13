@@ -30,6 +30,19 @@ import { scanReferences, shouldScanFile } from "./reference-resolver.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { printInstrumentResult } from "../lib/instrument.ts";
 
+// GitHub Issue #164 fix (mirrors the already-shipped Issue #161 fix on this file's own twin
+// instrument, continuation-residual-probe.ts — same root cause, same closure): this file used to
+// accept an optional positional `ref` argument that only ever changed the FILE LIST (via
+// `resolveChangedFiles`), never the CONTENT (always read from the working tree via `readFile`) —
+// a demonstrated ref/content-mismatch bug (red-team round-5/round-6 reports on
+// qa14-marker-redesign: `node src/qa/marker-corpus-probe.ts a26e55a` reported a count for a26e55a's
+// file list against HEAD's working-tree content, a tree state that never existed). No real caller
+// anywhere in this repo (production code, `.github/workflows/ci.yml`, `package.json` scripts,
+// `completeness-claim-checker.ts`'s `KNOWN_INSTRUMENTS`, or this file's own test suite) ever passed
+// a non-default ref — confirmed by grep. The parameter is deleted, not fixed: `main()` always
+// resolves both the file list AND the content from the current working tree, the only state this
+// function has ever correctly supported.
+
 // A MARKED bare `#N` reaches real classification (`classifyIssue` -> `verifyLocalIssue` ->
 // `issueExists`), same as QA-14's own collector pass does — this probe only cares which bucket
 // (`kind: "issue"` vs. `kind: "issue-candidate"`) a citation lands in, never the real/fake
@@ -103,18 +116,14 @@ export function computeMarkerCorpusStats(fileTexts: Map<string, string>): Marker
   return { marked, unmarked, total: marked + unmarked, filesScanned: fileTexts.size };
 }
 
-async function main(): Promise<void> {
-  const repoRoot = process.cwd();
-  const argv = process.argv.slice(2);
-  const field = parseMarkerCorpusField(argv);
-  const ref = argv.find((a) => !a.startsWith("--")) ?? "HEAD";
-
+/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
+ * `resolveChangedFiles`, driven here directly rather than via a real diff) so this probe scans
+ * EXACTLY the file set QA-14 itself would scan in a full-tree run — one enumeration mechanism,
+ * not a second copy of it. Content is always read from the current working tree (Issue #164 fix,
+ * above): there is no `ref` parameter left to diverge from it. */
+async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
-  // Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
-  // resolveChangedFiles, driven here directly rather than via a real diff) so this probe scans
-  // EXACTLY the file set QA-14 itself would scan in a full-tree run — one enumeration mechanism,
-  // not a second copy of it.
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", ref);
+  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
   const trackedFiles = resolved?.changedFiles ?? [];
 
   const fileTexts = new Map<string, string>();
@@ -126,6 +135,15 @@ async function main(): Promise<void> {
       continue; // binary/unreadable/deleted-since-ref — skip, not an error
     }
   }
+  return fileTexts;
+}
+
+async function main(): Promise<void> {
+  const repoRoot = process.cwd();
+  const argv = process.argv.slice(2);
+  const field = parseMarkerCorpusField(argv);
+
+  const fileTexts = await collectFullTreeFileTexts(repoRoot);
 
   const stats = computeMarkerCorpusStats(fileTexts);
   const pct = stats.total > 0 ? Math.round((stats.unmarked / stats.total) * 100) : 0;
