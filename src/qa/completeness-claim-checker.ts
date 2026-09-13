@@ -48,6 +48,25 @@ export const KNOWN_INSTRUMENTS: Readonly<Record<string, KnownInstrument>> = Obje
   "qa-fixture-isolation": { cmd: "node", args: ["src/qa/fixture-isolation-check.ts"] },
   "qa-recurring-findings": { cmd: "node", args: ["src/qa/recurring-findings-registry.ts"] },
   "qa-reference-resolver": { cmd: "node", args: ["src/qa/reference-resolver.ts"] },
+  "qa14-marker-corpus-probe": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts"] },
+  // Round-2 fix-now (GitHub issue 150): the default entry above prints a human-readable sentence
+  // whose LAST integer is `filesScanned`, not the published marked/unmarked/total figure — so no
+  // marker could ever verify that figure through it. These three re-invoke the same probe with
+  // `--field=...`, each printing ONLY the one number it names, so a real
+  // `[[completeness: cmd="qa14-marker-corpus-probe-<field>" expect=N]]` marker checks it exactly.
+  "qa14-marker-corpus-probe-marked": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=marked"] },
+  "qa14-marker-corpus-probe-unmarked": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=unmarked"] },
+  "qa14-marker-corpus-probe-total": { cmd: "node", args: ["src/qa/marker-corpus-probe.ts", "--field=total"] },
+  // Council fix-now round 4 (2026-09-11, Issue #154, Path A): real, callable, ON-DEMAND-only
+  // instrument for the list-continuation residual — see
+  // src/qa/continuation-residual-probe.ts's own header for the denominator/numerator split.
+  // Deliberately never referenced by a `[[completeness: cmd="..." expect=N]]` marker in any
+  // permanently-scanned prose (same whole-tracked-tree-corpus reasoning as the three entries
+  // above and DEFAULT_FILES's own docs/decisions.md exclusion below) — registered so a human can
+  // run it on demand, callable-but-non-blocking by design, not so a future round can wire a
+  // blocking marker to it without re-deriving why that would be wrong a 5th time.
+  "qa14-continuation-residual-probe-marked": { cmd: "node", args: ["src/qa/continuation-residual-probe.ts", "--field=continuation-marked"] },
+  "qa14-continuation-residual-probe-residual": { cmd: "node", args: ["src/qa/continuation-residual-probe.ts", "--field=continuation-residual"] },
   "adr-cache-ensure": { cmd: "node", args: ["docs/adr-cache.mjs", "--ensure"] },
   "oss-history-scan": { cmd: "node", args: ["src/secret-scan/history-scan.ts"] },
   "qa-mutation-shell": { cmd: "node", args: ["src/qa/shell-detector-mutants.ts"] },
@@ -63,13 +82,68 @@ const MARKER_RE = /\[\[completeness:\s*cmd="([^"]+)"\s*expect=(\d+)\s*\]\]/g;
 // Heuristic only — documented as such, not claimed exhaustive (this instrument's own honesty
 // rule, the same one it enforces on everyone else). Misses shapes it doesn't recognize; the
 // marker convention above is the authoritative mechanism, this is a best-effort backstop.
+//
+// GitHub Issue #159 (architecture-reviewer, 2026-09-11, docs/decisions.md's "Path-Forward Brief"
+// row for qa14-marker-redesign's Issue #154 class): the "N of M" phrasing above never matched this
+// project's own real "N/M" slash shorthand — the exact reason a stale, non-struck "10/400 real
+// occurrences, 5 distinct blocking gate failures" claim (CHANGELOG.md) passed QA-15 clean at HEAD
+// despite being live-stale, four rounds running. A BLANKET `\d+\/\d+` addition was measured and
+// rejected (impact-analyst's council report, `docs/reviews/qa14-marker-redesign-impact-analyst-2026-09-11.md`):
+// 112 existing `N/M`-shaped numbers already live in this project's own two scanned files, the
+// overwhelming majority legitimate test/coverage-count reporting ("708/708 pass", "17/17",
+// "43/45 pass"). The two patterns below are narrower, grounded in what the real defect shapes
+// actually were (measured via `grep`, not guessed) — an `N/M` slash pair immediately followed by
+// "occurrences", or by "distinct ... failures/leaks" — neither of which appears near any of the
+// 112 legitimate hits (re-confirmed by re-running that same grep against this file's own two
+// scanned files after adding these patterns, zero new false positives). Narrower than a blanket
+// regex is a deliberate trade — CLAUDE.md's own hard rule prefers a real, callable mechanical
+// guard over hand-editing prose, but a guard that rubber-stamp-fails legitimate test-count
+// reporting is worse than the gap it closes (PRINCIPLES rule 16's "ceremony without a
+// corresponding safety gain").
 const BARE_CLAIM_PHRASES = [
   /\ball\s+\d+\b/i,
   /\bevery\s+\d+\b/i,
   /\b\d+\s+of\s+\d+\b/i,
   /\bfull set of\s+\d+\b/i,
   /\bexhaustive\b.{0,40}\b\d+\b/i,
+  // "10/400 real occurrences", "10/400 occurrences" — a slash-shaped fraction directly describing
+  // a count of occurrences, never how this project phrases an equal/near-equal test-pass count.
+  /\b\d+\/\d+\b\s+(?:real\s+)?occurrences?\b/i,
+  // "10/400, 5 distinct blocking gate failures", "10/400 distinct ... leaks" — a slash-shaped
+  // fraction near a "distinct ... failure/leak" phrase, this project's own real wording for a
+  // residual/blocking-count claim (see CHANGELOG.md's qa14-marker-redesign entries). Bounded
+  // wildcards (not nested repeated groups) keep this simple to read and simple to prove terminates.
+  /\b\d+\/\d+\b.{0,20}\bdistinct\b.{0,30}\b(?:failures?|leaks?)\b/i,
+  // Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; grounded in
+  // `docs/reviews/qa14-marker-redesign-red-team-round5-2026-09-11.md` finding 3, which measured 4 of
+  // 4 plausible NEXT phrasings missed by the two patterns above — including the two
+  // `continuation-marked=273 continuation-residual=3` figures live in CHANGELOG.md/docs/STATE.md at
+  // that same round's own HEAD). Anchored to THIS project's actual instrument-output naming
+  // convention — `continuation-marked=<N>` / `continuation-residual=<N>`, the exact two field names
+  // `src/qa/continuation-residual-probe.ts --field=...` prints — rather than a blanket
+  // `identifier=\d+` shape: a generic version was measured against the real corpus and rejected for
+  // the same reason impact-analyst's council report rejected a blanket `\d+\/\d+` for Issue #159 —
+  // this repo's own two scanned files already carry many unrelated, legitimate `identifier=N` pairs
+  // (`marked=380`, `unmarked=416`, `total=796`, `blocking=295`, `p99=186`, `exitCode=1`,
+  // `demonstrated=6`, `code-traced=5`, and every `[[completeness: cmd="..." expect=N]]` marker's own
+  // `expect=N`) that a blanket pattern would false-positive on. This pattern would have caught round
+  // 5's own live recurrence automatically; it does not claim to close the identifier=N class in
+  // general, only this story's own recurring shape (same narrow-but-evidence-grounded trade as the
+  // two patterns above it).
+  /\bcontinuation-(?:marked|residual)=\d+\b/i,
 ];
+
+// Issue #159 (continued): a claim struck through with markdown `~~...~~` is, by this project's own
+// documented convention (docs/decisions.md's header: "Supersede in place ... strike through and
+// append, never delete or silently edit"), a SUPERSEDED claim, not a live one — the same semantic
+// QA-15's own [[completeness: ...]] marker distinguishes for a machine-checked claim. Without this,
+// a corrected bare claim (kept, struck through, per that convention — exactly what this round's own
+// #154/#159 fix-now round does to the four locations it corrects) would immediately re-trip the
+// heuristic that names it, purely because the OLD text is still physically present in the file.
+// Stripped before matching, not before reporting — `claim.raw` below still shows the real line.
+function stripStrikethrough(line: string): string {
+  return line.replace(/~~.*?~~/g, "");
+}
 
 export function findMarkerClaims(text: string): MarkerClaim[] {
   const claims: MarkerClaim[] = [];
@@ -88,8 +162,9 @@ export function findBareClaims(text: string): BareClaim[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (line.includes("[[completeness:")) continue; // covered by the marker mechanism instead
+    const liveLine = stripStrikethrough(line); // Issue #159: a struck claim is superseded, not live
     for (const re of BARE_CLAIM_PHRASES) {
-      if (re.test(line)) {
+      if (re.test(liveLine)) {
         claims.push({ raw: line.trim(), context: `line ${i + 1}` });
         break;
       }

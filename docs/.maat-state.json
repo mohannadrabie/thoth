@@ -676,16 +676,27 @@
       }
     ]
   },
-  "scope": "qa1415fix",
+  "scope": "qa14-marker-redesign",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 1,
-  "reviewRoundsTotal": 1,
+  "reviewRoundsSinceClean": 3,
+  "reviewRoundsTotal": 4,
+  "note_2026-09-11-counter-correction": "Corrected retroactively: rounds 5 and 6 (both red-team no-go, post-council) were not recorded when they landed -- reviewRoundsSinceClean/Total were left at round-4's values (1/2). True state: rounds 4, 5, 6 are 3 CONSECUTIVE no-go verdicts post-council with no intervening clean verdict, which mechanically re-trips rule 16(c) as round 6 lands. Per the council skill's own rule (a second stall on the same shape after a council is an automatic hard stop, not a second council), this should have routed back to the human again rather than the Manager routing round 6's fix directly on red-team's own recommendation. Disclosed in this story's Manager Summary as a process deviation, not silently corrected. No fresh clean verdict exists in this counter's history for this scope -- the Manager's own direct Stage 4/5 verification (real checks, independent grep/comparison, receipt-check audit) is what closed this out, not a 7th reviewer round.",
   "humanRulingRequired": false,
-  "councilHeld": false,
-  "councilVerdict": null,
+  "councilHeld": true,
+  "councilVerdict": "GO (2026-09-11 council on the Issue #154 numeric-claim-drift class, Manager judgment-call trigger per the round-3 ruling's own tripwire; Path A ratified: a real, callable, non-blocking instrument for #154's residual — denominator via a new field mirroring #150/marker-corpus-probe.ts's pattern, numerator via REUSING (not duplicating) resolveIssueCitations's existing capped gh path, Citation.kind gains a markedVia:\"direct\"|\"continuation\" distinction so no future round needs a hand-built source fork to measure this; Candidate B (diff-scoped instrument) rejected — WIDENS, activates a dormant ref/content-mismatch bug in marker-corpus-probe.ts; Candidate C (finish the mechanical grep-driven sweep of all 4 now-known stale locations, not a hand-check) ships alongside Path A as a necessary floor regardless; Issue #159 (QA-15's own BARE_CLAIM_PHRASES blind spot for the \"N/M\" shorthand this project's own prose uses) fixed in the same round so the safety net itself would catch a future recurrence)",
   "roundsSinceLastGo": 0,
-  "note_2026-09-10": "Issue #120 (QA-14 issueExists hardcoded null / QA-15 docs/decisions.md bare-claim false positives). story-implementer proposed STANDARD (narrow read-only issues:read permission, internal-tooling per PRINCIPLES rule 20c); Manager overruled to CRITICAL for consistency with the immediately-prior cifix scope's own ruling on this exact file: .github/workflows/ci.yml is a CLAUDE.md-named sensitive area (Secret scanning / CI gates) regardless of blast radius. Reviewers: red-team + infra-security-reviewer + cross-domain-reviewer.",
+  "note_2026-09-11": "Issue #137 finding (c) (R3) + reopened #143 (R4) + reopened #144 (R5) + #145 (R6) — the bare-`#N` issue-citation classification redesign named as qa1415fix's own round-3 fast-follow. R1 (path basename resolution)/R2 (ADR_CANDIDATE_RE tightening) scope-split off to a future story, #137 stays open for those. story-implementer proposed CRITICAL with its own independent justification (not just precedent-parroting: 3x adversarial CRITICAL rounds already found real regressions on this exact file); Manager ratified as proposed, unchanged. Reviewers: red-team + code-reviewer + cross-domain-reviewer. Plan: docs/plans/qa14-marker-redesign-phase1-2026-09-11.md. Design ruling: new `unclassified` verdict kind is non-blocking (docs/decisions.md 2026-09-11 row 61) — never flips QA-14's exit code, always printed/counted.",
   "priorScope": {
+    "scope": "qa1415fix",
+    "tier": "CRITICAL",
+    "reviewRoundsSinceClean": 1,
+    "reviewRoundsTotal": 1,
+    "humanRulingRequired": false,
+    "councilHeld": false,
+    "councilVerdict": null,
+    "roundsSinceLastGo": 0,
+    "note_2026-09-10": "Issue #120 (QA-14 issueExists hardcoded null / QA-15 docs/decisions.md bare-claim false positives). story-implementer proposed STANDARD (narrow read-only issues:read permission, internal-tooling per PRINCIPLES rule 20c); Manager overruled to CRITICAL for consistency with the immediately-prior cifix scope's own ruling on this exact file: .github/workflows/ci.yml is a CLAUDE.md-named sensitive area (Secret scanning / CI gates) regardless of blast radius. Reviewers: red-team + infra-security-reviewer + cross-domain-reviewer.",
+    "priorScope": {
     "scope": "cifix",
     "tier": "CRITICAL",
     "reviewRoundsSinceClean": 1,
@@ -704,5 +715,6 @@
       "roundsSinceLastGo": 1,
       "note_2026-09-09": "S6 fix-now round 6 (red-team final re-confirm on Issues #122/#123): verdict no-go, but NOT on #122/#123 themselves — both independently reconstructed as genuinely closed and CLOSED on GitHub. The no-go is entirely attributable to a NEW, unrelated HIGH finding: CI has been dead since 2026-09-01 (10/10 push/PR runs died at actions/checkout, private adr submodule + repo-scoped token), reopening Issue #27. Red-team's own suggested one-line fix was independently checked by the Manager and found WRONG (ci.yml's QA-14 step does read adr/ directly, via src/qa/reference-resolver.ts) — see Issue #27's Manager comment. reviewRoundsSinceClean=1 reflects this round's no-go verdict on the S6 scope generally; it is NOT yet a rule-16(c) trigger (needs 2 consecutive non-clean rounds — round 5 was clean). humanRulingRequired resolved 2026-09-09, see top-level note."
     }
+  }
   }
 }
