@@ -52,6 +52,7 @@ function wiringBaseDeps(): Omit<ReferenceResolverDeps, "issueExists"> {
     lineCount: () => 100,
     knownAdrIds: new Set(),
     repoSlug: "mohannadrabie/thoth",
+    findByBasename: () => [],
   };
 }
 

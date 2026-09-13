@@ -240,3 +240,40 @@ test("QA-15 (Issue #159, end-to-end, real corpus): CHANGELOG.md and docs/STATE.m
     assert.deepEqual(claims, [], `expected no bare claims in ${path}, found: ${JSON.stringify(claims)}`);
   }
 });
+
+// GitHub Issue #167 (red-team, qa14-issue137-precision-fastfollow round-2 fix-now, 2026-09-13):
+// every BARE_CLAIM_PHRASES pattern above requires a digit adjacent to the quantifier, so a
+// word-form exhaustive enumeration claim was structurally invisible — exactly the shape of
+// Issue #166's own false claim, which shipped QA-15-clean in this same story's first draft.
+// Mutation-demonstrated: reverting the new pattern (the last entry in BARE_CLAIM_PHRASES) makes
+// the first test below fail (0 claims found instead of 1) while every other test in this file
+// stays green — this pattern, and only this pattern, closes the gap.
+test("QA-15 (Issue #167): the exact #166-shaped false claim ('Every remaining one is X (A, B, C)') IS caught", () => {
+  const claims = findBareClaims(
+    "unparseable: 57 -> 3 (54 fewer). Every remaining one is a real digit-bearing, wrong-length ADR id (`ADR-003`, `ADR-007`, `ADR-12`); every zero-digit prose false positive is gone.",
+  );
+  assert.equal(claims.length, 1, "a word-form 'every remaining X is ... (enumeration)' claim with no digit must be flagged");
+});
+
+test("QA-15 (Issue #167): 'all'/'each' word-forms of the same shape are also caught", () => {
+  assert.equal(
+    findBareClaims("All remaining entries are stale fixtures (foo.ts, bar.ts, baz.ts).").length,
+    1,
+  );
+  assert.equal(
+    findBareClaims("Each remaining item is a duplicate (one, two, three).").length,
+    1,
+  );
+});
+
+test("QA-15 (Issue #167, false-positive guard): the real, already-shipped qa1415fix CHANGELOG.md sentence this pattern was measured against is NOT flagged", () => {
+  const claims = findBareClaims(
+    "Every remaining blocking failure read individually: none is caused by this change — a majority are pre-existing `classifyPath` path-not-found failures (R1, out of scope, e.g. bare test filenames missing their real directory prefix), plus a genuine cross-repo issue (correct, by design), a couple of `ADR-` fixture/placeholder examples in prose (pre-existing), and an illustrative `Issue#0` fixture example (pre-existing).",
+  );
+  assert.deepEqual(claims, [], "a real, demonstrated, non-enumerated finding must not be flagged just for saying 'every remaining X'");
+});
+
+test("QA-15 (Issue #167, false-positive guard): an ordinary 'every remaining X' sentence with no enumeration in parens is NOT flagged", () => {
+  assert.equal(findBareClaims("Every remaining question was answered directly by the human.").length, 0);
+  assert.equal(findBareClaims("All remaining work is tracked in the backlog, not gold-plated here.").length, 0);
+});

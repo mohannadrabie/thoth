@@ -67,6 +67,16 @@ export interface ReferenceResolverDeps {
   issueExists: (n: number) => boolean | null;
   /** This repository's own `owner/repo` slug, or null if unknown. */
   repoSlug: string | null;
+  /**
+   * Every repo-relative path whose basename (final path segment) exactly matches `basename`.
+   * GitHub issue 137, R1: used ONLY as a fallback inside `classifyPath`'s `path:line` branch, and
+   * only when the cited path segment contains no `/` and fails `pathExists` as literally cited
+   * (this repo's own review/plan prose often cites a bare filename rather than its fully-qualified
+   * repo-relative path). Never consulted for the bare-path/no-line-number branch, and never
+   * consulted when the cited segment already contains a `/`. Real path:line examples deliberately
+   * avoided here — see this file's own header dogfood note.
+   */
+  findByBasename: (basename: string) => string[];
 }
 
 // Candidate-citation detector: broad enough to catch "looks like a citation" text so nothing
@@ -75,7 +85,16 @@ export interface ReferenceResolverDeps {
 // so trailing prose punctuation never becomes part of the citation itself; a genuinely malformed
 // shape (wrong digit count, non-numeric suffix) still reaches classify*() and is reported
 // unparseable there — this boundary only keeps sentence punctuation out of the raw match.
-const ADR_CANDIDATE_RE = /\bADR-[A-Za-z0-9]+/g;
+//
+// Digit-boundary tightening (GitHub issue 137, R2): the lookahead `(?=[A-Za-z0-9]*\d)` requires at
+// least one digit ANYWHERE in the suffix before the candidate is recorded at all. Ordinary prose
+// that happens to say "ADR-amendment", "ADR-cache", or a literal "ADR-NNNN" placeholder (zero
+// digits) is never a candidate in the first place — no false unparseable report for text that was
+// never trying to cite a real ADR id. A suffix carrying any digit at all is still a candidate
+// exactly as before, and still reaches `classifyAdr` below for its own exact-4-digit-length
+// validation, byte-identical to before this round. Real digit-suffix examples deliberately avoided
+// here — see this file's own header dogfood note.
+const ADR_CANDIDATE_RE = /\bADR-(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+/g;
 // Boundary-bug fix (this round's own tracked defect): the previous `/\b(?:[\w.-]+\/[\w.-]+)?#\d+/g` put its `\b` in front of an
 // OPTIONAL group. When the group didn't participate (the common case — a bare, non-cross-repo
 // citation), `\b` could only match immediately before `#` when the PRECEDING character was a
@@ -286,17 +305,43 @@ function classifyPath(raw: string, deps: ReferenceResolverDeps): Citation | null
   // A path followed by a colon and a line number, e.g. a file path with :42 appended.
   const pl = /^([^\s:`]+\.\w+):(\d+)$/.exec(raw);
   if (pl) {
-    const [, path, lineStr] = pl;
-    if (!path) return null;
+    const [, citedPath, lineStr] = pl;
+    if (!citedPath) return null;
+    let path = citedPath;
     if (!deps.pathExists(path)) {
-      return { raw, kind: "path-line", verdict: "unresolved-authority", reason: `${path} does not exist` };
+      // Basename-index fallback (GitHub issue 137, R1) — ONLY here, ONLY for a cited segment with no `/`
+      // (a real repo-relative path attempt that already contains a `/` gets no such fallback: if
+      // that specific path doesn't exist, it doesn't exist, no guessing). `deps.findByBasename` is
+      // the only new call on this path — no direct `existsSync`/`readFileSync` is added here; the
+      // matched path (if any) still goes through `deps.lineCount` below, same as `path` always did.
+      if (citedPath.includes("/")) {
+        return { raw, kind: "path-line", verdict: "unresolved-authority", reason: `${citedPath} does not exist` };
+      }
+      const matches = deps.findByBasename(citedPath);
+      if (matches.length === 0) {
+        return { raw, kind: "path-line", verdict: "unresolved-authority", reason: `${citedPath} does not exist` };
+      }
+      if (matches.length > 1) {
+        return {
+          raw,
+          kind: "path-line",
+          verdict: "unresolved-authority",
+          reason: `${citedPath} matches ${matches.length} files by basename in this repository — ambiguous, fails closed rather than guessing which one`,
+        };
+      }
+      path = matches[0]!;
     }
     const total = deps.lineCount(path);
     const line = Number(lineStr);
     if (total !== null && line > total) {
       return { raw, kind: "path-line", verdict: "unresolved-authority", reason: `${path} has ${total} lines, cited line ${line} is out of range` };
     }
-    return { raw, kind: "path-line", verdict: "resolved", reason: "path and line both resolve" };
+    return {
+      raw,
+      kind: "path-line",
+      verdict: "resolved",
+      reason: path === citedPath ? "path and line both resolve" : `resolved via basename match: ${citedPath} -> ${path}`,
+    };
   }
 
   // A bare repo-relative path with at least one slash or a known top-level doc filename shape.
@@ -721,11 +766,27 @@ async function main(): Promise<void> {
     adrFiles.map((f) => `ADR-${(f.split("/").pop() ?? "").slice(0, 4)}`),
   );
 
+  // Basename index (GitHub issue 137, R1): one single repo-tree walk, reused across every query —
+  // never re-walked per citation. Same `node_modules`/`.git` exclusion `listFilesRecursive` already
+  // applies for the ADR catalog above.
+  const allRepoFiles = await listFilesRecursive(repoRoot, () => true);
+  const basenameIndex = new Map<string, string[]>();
+  for (const f of allRepoFiles) {
+    const base = f.split("/").pop() ?? f;
+    const existing = basenameIndex.get(base);
+    if (existing) {
+      existing.push(f);
+    } else {
+      basenameIndex.set(base, [f]);
+    }
+  }
+
   const baseDeps: Omit<ReferenceResolverDeps, "issueExists"> = {
     pathExists: (p) => {
       const resolved = resolveWithinRepo(repoRoot, p);
       return resolved !== null && existsSync(resolved);
     },
+    findByBasename: (basename) => basenameIndex.get(basename) ?? [],
     lineCount: (p) => {
       const resolved = resolveWithinRepo(repoRoot, p);
       if (resolved === null) return null;

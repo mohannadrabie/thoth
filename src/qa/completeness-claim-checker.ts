@@ -131,6 +131,34 @@ const BARE_CLAIM_PHRASES = [
   // general, only this story's own recurring shape (same narrow-but-evidence-grounded trade as the
   // two patterns above it).
   /\bcontinuation-(?:marked|residual)=\d+\b/i,
+  // GitHub Issue #167 (red-team, qa14-issue137-precision-fastfollow round-2 fix-now, 2026-09-13):
+  // every pattern above requires a digit adjacent to the quantifier, so a WORD-FORM exhaustive
+  // enumeration claim — "Every remaining one is X (A, B, C)" — is structurally invisible and
+  // passes clean even when false. This is not hypothetical: it is exactly how Issue #166's bad
+  // claim ("Every remaining one is a real digit-bearing, wrong-length ADR id (`ADR-tooshort`,
+  // `ADR-mixedsuffix`, `ADR-noentry`)" — a real digit-bearing example was missing, making the
+  // claim false) shipped QA-15-clean in this same story's own first draft. (Issue #168, code-
+  // reviewer, round-2 re-confirm: this comment's own first draft quoted the same real
+  // digit-bearing strings Issue #166 itself used, verbatim — reintroducing the exact defect
+  // being documented; reworded here to the same non-digit placeholder shapes this story
+  // already uses elsewhere, e.g. `reference-resolver.ts`'s own header comment.)
+  //
+  // Narrow, not blanket: requires an exhaustive/completeness word ("every"/"all"/"each") followed
+  // by "remaining", then an "is"/"are" verb within a bounded window, then a comma-separated
+  // enumeration in parentheses within a further bounded window — the exact structural shape of
+  // the demonstrated defect, not every sentence that happens to say "every remaining X". A blanket
+  // `/\b(?:every|all|each)\s+remaining\b/i` (red-team's own first-cut suggestion) was measured
+  // against this project's real corpus and REJECTED: it false-positives on this file's own
+  // legitimate qa1415fix CHANGELOG.md entry ("Every remaining blocking failure read individually:
+  // none is caused by this change — ... (R1, out of scope, ...), plus a genuine cross-repo issue
+  // (correct, by design), ..."), which names "every remaining X" but is a real, demonstrated,
+  // non-enumerated finding, not a hand-typed completeness assertion. Requiring both the verb
+  // (is/are) AND a comma-bearing parenthetical enumeration right after it is what tells the two
+  // shapes apart (verified: the CHANGELOG.md line above does not match; see the false-positive
+  // guard test in completeness-claim-checker.test.ts). Bounded wildcards (`.{0,N}`), not nested
+  // repeated word-groups, keep this linear and simple to prove terminates (same discipline as the
+  // `distinct failures/leaks` pattern above).
+  /\b(?:every|all|each)\s+remaining\b.{0,60}\b(?:is|are)\b.{0,80}\([^()]*,[^()]*\)/i,
 ];
 
 // Issue #159 (continued): a claim struck through with markdown `~~...~~` is, by this project's own
