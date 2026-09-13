@@ -1,9 +1,17 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-13 (`qa14-issue137-precision-fastfollow` — build + review complete, SHIPPABLE, not yet committed. R1+R2 built, reviewed by `red-team`/`code-reviewer`/`cross-domain-reviewer` (go/SHIP-AFTER-FIXES/APPROVE), 2 fix-now rounds (Issues #166, #167, #168 — all the same self-referential digit-bearing-example class this file's own header comment warns against, recurring in the close-out prose itself rather than the shipped logic), Manager-verified directly. Real final full-tree count: **135 blocking** — not 132; the +3 is a disclosed, ACCEPTED verbatim-evidence residual (`docs/REVIEW_LOG.md` + a review report correctly quoting the real buggy example strings as evidence, per this project's own rule 10/19 — obfuscating review evidence was rejected as "Path C" precedent). `npm test` 773/773 pass. **Next: Stage 4/5 (verify/audit), then human commit+PR.**)
+**Last updated:** 2026-09-13 (`qa14-issue137-precision-fastfollow` — DONE. PR #169 merged to `master` (`ad196c5`), Issues #137/#166/#167/#168 closed completed. This session (`/maat:ship "continue work"`) reconciled leftover bookkeeping, not new build work: archived 1 due `docs/decisions.md` row (the S5-activation-deferral row, review-back 2026-09-10, no dissent — `node docs/decisions-archive.mjs --apply`); closed stale GitHub Issue #126 (`current-focus`, `blocked-on-owner`) — its named harm ("`npm test` fails on Issue #113, blocking QA-14/OSS-01 from ever running in CI") no longer holds, confirmed against a real post-merge CI run (`34787370684`) that runs `npm test` 773/773 and every downstream QA/OSS step, including QA-14, to completion. QA-14 itself still exits 1 in CI on the disclosed, tracked `unresolved-authority`/`unclassified` residual — expected, not a regression. No `current-focus` issues remain open. **Next: pick the next story — see the options below.**)
 
-## Resume point — Issue #137 (R1 + R2) — reviewed, fix-now closed out, SHIPPABLE
+## Next candidates (none started this session — human pick needed)
+
+`/maat:ship` needs a specific target; "continue work" alone doesn't name one. Open, unstarted candidates by milestone:
+- **S1 — Protect the baseline** (2 open): #164 (marker-corpus-probe ref/working-tree content-mismatch, still live), #154 (QA-14 marker redesign R4/R5 stale-claim residual, list-continuation path).
+- **S2** (1 open): #63 (`kernel-purity-check.ts`'s forbidden-globals scan is a literal-text regex, evadable via string-concat obfuscation).
+- **S5 — Deny-by-default + hook wiring** (7 open) and **S6 — Policy centralization** (5 open): the largest unstarted blocks; `gh issue list --milestone "S5 — Deny-by-default + hook wiring" --state open` / `--milestone "S6 — Policy centralization"` to see them.
+- `docs/backlog.md`'s "Open" section also carries ~30 smaller deferred items (mostly disclosed residuals from already-shipped stories), several explicitly flagged as a future story's likely scope (e.g. Path B's pre-commit OSS-01 dogfood check, Issue #136's allowlist-narrowing follow-on).
+
+## Resume point — Issue #137 (R1 + R2) — DONE, merged as PR #169
 
 Branch: `master` (working tree, not yet committed — this story built directly on `master` after `qa14-marker-redesign` merged; a feature branch should be cut before commit, see single next action). Scope: `src/qa/reference-resolver.ts` + `.test.ts`, per the approved plan.
 
@@ -16,7 +24,7 @@ Branch: `master` (working tree, not yet committed — this story built directly 
 
 **Stage 4/5/5.5 complete:** each of the 3 dated reports read in full (CRITICAL tier); every `receipt-check.mjs` REOPEN trigger resolved cosmetic (verdict/tag-format mismatches, not hidden defects) — logged via `run-log.mjs receipt-reopened` x2. Committed as `04003e4` on `fix/qa14-issue137-precision-fastfollow` (branch cut from `master` before commit, correcting a caught process deviation — this story was built directly on `master` through Phase 2/review). Issues #166/#167/#168 closed `completed`, each independently re-verified by the Manager directly (not taken on any prior claim) before closing; **Issue #137 itself closed `completed`** — its full remaining scope (R1+R2) is done.
 
-**Single next action:** human pushes `fix/qa14-issue137-precision-fastfollow` and opens a PR into `master` (`git push -u origin fix/qa14-issue137-precision-fastfollow && gh pr create --base master --title "fix(qa14-issue137): basename-index fallback + ADR_CANDIDATE_RE digit-boundary tightening (Issue #137, R1+R2)" --body "Closes #137, #166, #167, #168. See docs/decisions.md's 2026-09-13 rows for the full review arc (3 CRITICAL-tier reviewers, 2 fix-now rounds, real full-tree QA-14 measurement: 299→135 blocking, disclosed residual explained)."`) — push and merge stay human-only, same as every prior story.
+**Single next action (superseded):** ~~human pushes and opens a PR~~ — done: PR #169 merged `ad196c5` (2026-09-13T22:46:50Z). The live next action is the human picking the next story from "Next candidates" above.
 
 ## Prior resume point (superseded above, kept for continuity) — Issue #137 — next story, not yet planned
 
