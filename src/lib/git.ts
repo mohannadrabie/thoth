@@ -15,6 +15,22 @@ export interface GitOps {
   diffText(base: string, head: string): Promise<string>;
   /** The `owner/repo` slug this working tree's `origin` remote points at, or null if unavailable. */
   originSlug(): Promise<string | null>;
+  /**
+   * Every file path in the CURRENT WORKING TREE that isn't gitignored: tracked files (`git
+   * ls-files --cached`, minus submodule gitlinks) plus untracked-but-not-ignored files (`--others
+   * --exclude-standard`) — the real, live tree state, never a ref-pinned snapshot (`lsTree` above
+   * reads a specific commit's blobs instead; the two are not interchangeable — GitHub Issue #172:
+   * a caller that reads file CONTENT from the working tree but the file LIST from
+   * `lsTree("HEAD")` silently excludes any new, uncommitted, scannable file). A submodule gitlink
+   * (mode `160000`, e.g. this repo's own `adr/`) is a directory on disk, not a real blob — excluded
+   * the same way `lsTree()` already excludes it for a ref-pinned read. An UNTRACKED nested git
+   * repository (its own `.git`, not a real submodule) is reported by `--others` as a directory
+   * entry with a trailing slash instead of being recursed into — also excluded (GitHub Issue #178:
+   * unfiltered, it passed through as a "file" and crashed a caller's `readFile` with `EISDIR`).
+   * Uses `-z` (NUL-separated) so a path containing a newline can never truncate or split a
+   * filename.
+   */
+  lsFilesWorkingTree(): Promise<string[]>;
 }
 
 // GitHub Actions' documented sentinel for `github.event.before`/`.after` on a branch's first
@@ -124,6 +140,41 @@ export function makeGitOps(runner: Runner, cwd: string): GitOps {
       const m = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/.exec(url);
       if (!m) return null;
       return `${m[1]}/${m[2]}`;
+    },
+
+    async lsFilesWorkingTree() {
+      // Two separate calls, not one combined `--cached --others` call: only the CACHED half can
+      // ever be a submodule gitlink (mode `160000` — a directory on disk, e.g. this repo's own
+      // `adr/` submodule; reading it as a file throws `EISDIR`, discovered live by this method's
+      // own test), so only the cached half needs `-s` (stat/mode) to filter that out — the same
+      // guard `lsTree()` above already applies for a ref-pinned read (`type === "blob"`). An
+      // untracked (`--others`) path can never be a submodule (a submodule is always index-tracked),
+      // so it needs no mode check.
+      const cachedOut = await run(["ls-files", "-z", "-s", "--cached"]);
+      const cached: string[] = [];
+      for (const entry of cachedOut.split("\0")) {
+        if (!entry) continue;
+        const tabIdx = entry.indexOf("\t");
+        if (tabIdx === -1) continue;
+        const mode = entry.slice(0, tabIdx).trim().split(/\s+/)[0];
+        if (mode === "160000") continue; // submodule gitlink — not a scannable blob
+        cached.push(entry.slice(tabIdx + 1));
+      }
+      const othersOut = await run(["ls-files", "-z", "--others", "--exclude-standard"]);
+      const others = othersOut
+        .split("\0")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.endsWith("/"));
+      // GitHub Issue #178 fix-now: an UNTRACKED nested git repository (its own `.git`, not a real
+      // submodule gitlink — a submodule is always index-tracked, so it's excluded above via the
+      // `--cached` mode-160000 check instead) cannot be recursed into by `git ls-files --others`;
+      // git reports it as a DIRECTORY entry with a trailing slash (e.g. `zz-nested/`) rather than
+      // its files. Before this fix that directory entry passed `shouldScanFile` unfiltered and a
+      // later `readFile` on it threw an unhandled `EISDIR` (demonstrated: red-team round-2 report,
+      // attack 3) — a real anomaly, but the wrong layer to filter it at, since a directory was
+      // never a candidate file in the first place. Excluding it here, at the source, means every
+      // consumer of this list (both QA-14 probes) never sees a non-file path at all.
+      return [...cached, ...others];
     },
   };
 }
