@@ -203,3 +203,55 @@ test("R4: a fresh clone with NO core.hooksPath configured (git's own hooksPath d
     await rm(cloneDir, { recursive: true, force: true });
   }
 });
+
+test("R187 (GitHub Issue #187, red-team [HIGH], regression): .githooks/pre-commit is committed with the " +
+  "executable bit set -- git silently ignores a non-executable hook on every POSIX clone (githooks(5)), and " +
+  "this project's own test suite runs on a platform where the exec bit is not meaningful, so this can only " +
+  "be caught by asserting the TRACKED mode directly, not by exercising the hook", async () => {
+  const res = await gitOk(PROJECT_ROOT, "ls-files", "-s", ".githooks/pre-commit");
+  assert.match(
+    res,
+    /^100755\s/,
+    `expected the committed mode to be 100755 (executable), got: ${res.trim()}. Fix: ` +
+      `git update-index --chmod=+x .githooks/pre-commit`,
+  );
+});
+
+test("R190 (GitHub Issue #190, red-team [MED], regression): an internal error (no HEAD yet) prints a single-line " +
+  "BLOCKED message naming what failed, not a raw Node stack trace -- the exit code stays non-zero either way", async () => {
+  const repoDir = await mkdtemp(join(tmpdir(), "thoth-precommit-scan-nohead-"));
+  try {
+    await gitOk(repoDir, "init", "-q", "-b", "main"); // no commits at all -- no HEAD
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "an internal error must still fail closed");
+    assert.match(res.stderr, /\[Path B pre-commit-scan\] BLOCKED:/, "must print a single named, clear line");
+    assert.ok(
+      !res.stderr.includes("at async") && !res.stderr.includes("node:internal"),
+      "must not dump a raw Node stack trace to the developer",
+    );
+  } finally {
+    await rm(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("R7 (red-team [SUSPICION->settled], regression): `git commit -am` with a secret in a tracked, unstaged " +
+  "file is refused -- correctness here rests on GIT_INDEX_FILE inheritance from the hook's own environment " +
+  "(see simulated-commit.ts's header comment), now pinned by a real end-to-end hook test rather than left " +
+  "undocumented and untested", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, ".git", "hooks", "pre-commit"), `#!/bin/sh\nexec node "${SCAN_SCRIPT}"\n`);
+    await chmod(join(repoDir, ".git", "hooks", "pre-commit"), 0o755);
+
+    // A tracked, clean file, committed first -- then dirtied with a secret WITHOUT `git add`.
+    await writeFile(join(repoDir, "tracked.js"), "const clean = \"nothing here\";\n");
+    await gitOk(repoDir, "add", "tracked.js");
+    await gitOk(repoDir, "commit", "-q", "-m", "tracked.js, clean");
+    await writeFile(join(repoDir, "tracked.js"), `const key = "${FAKE_SECRET}";\n`);
+
+    const beforeLog = await gitOk(repoDir, "log", "-1", "--format=%H");
+    const commitRes = await git(repoDir, "commit", "-am", "auto-stage a secret via -a");
+    assert.notEqual(commitRes.code, 0, "git commit -am must auto-stage tracked.js's new content and refuse it");
+    const afterLog = await gitOk(repoDir, "log", "-1", "--format=%H");
+    assert.equal(afterLog, beforeLog, "nothing must land");
+  });
+});

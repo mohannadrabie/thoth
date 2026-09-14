@@ -232,6 +232,77 @@ test("buildSimulatedCommit: a clean staged change with no secret produces a tree
   });
 });
 
+test("buildSimulatedCommit (GitHub Issue #188, red-team [HIGH], regression): a staged path containing pathspec " +
+  "glob magic resolves its OWN blob, not a lexicographically-earlier sibling's -- the live secret-leak shape " +
+  "red-team demonstrated end-to-end through the real installed hook", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    // "k[0-9].js" is a glob-magic pathspec ("match any of k0.js..k9.js"); "k5.js" is a real,
+    // lexicographically-earlier sibling that also matches that glob literally. Before the fix, a
+    // per-path `git ls-files -s -- <path>` call resolved "k[0-9].js" to k5.js's (clean) blob.
+    await writeFile(join(repoDir, "k5.js"), "const clean = \"nothing here\";\n");
+    await writeFile(join(repoDir, "k[0-9].js"), 'const key = "AKIAFAKEFAKEFAKEFAKE";\n');
+    await git(repoDir, "add", ".");
+
+    const commitSha = await buildSimulatedCommit(realRunner, repoDir);
+    const gitOps = makeGitOps(realRunner, repoDir);
+    const tree = await gitOps.lsTree(commitSha);
+
+    const cleanBlob = await gitOps.catFileBlob(tree.get("k5.js")!);
+    assert.match(cleanBlob.toString("utf8"), /nothing here/);
+
+    const globPathBlob = await gitOps.catFileBlob(tree.get("k[0-9].js")!);
+    assert.match(
+      globPathBlob.toString("utf8"),
+      /AKIAFAKEFAKEFAKEFAKE/,
+      "the glob-shaped path must resolve to ITS OWN staged blob, not the earlier sibling's",
+    );
+  });
+});
+
+test("buildSimulatedCommit (GitHub Issue #189, red-team [MED], regression): a staged directory->file " +
+  "replacement builds a tree, not an `update-index` fatal -- a real `git commit` accepts this tree without " +
+  "complaint, and the simulation must not diverge into a permanent block", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await mkdir(join(repoDir, "a"), { recursive: true });
+    await writeFile(join(repoDir, "a", "b"), "was a directory entry\n");
+    await git(repoDir, "add", ".");
+    await git(repoDir, "commit", "-q", "-m", "base: a/b exists as a directory entry");
+
+    // Collapse the directory into a single file at the same path prefix -- name-status reports
+    // "A a" before "D a/b" (sorted by path), the exact ordering that used to crash update-index.
+    await rm(join(repoDir, "a"), { recursive: true, force: true });
+    await writeFile(join(repoDir, "a"), 'const key = "AKIAFAKEFAKEFAKEFAKE";\n');
+    await git(repoDir, "add", "-A");
+
+    const commitSha = await buildSimulatedCommit(realRunner, repoDir); // must not throw
+    const gitOps = makeGitOps(realRunner, repoDir);
+    const tree = await gitOps.lsTree(commitSha);
+    assert.ok(tree.has("a"), "the new file must be present");
+    assert.ok(!tree.has("a/b"), "the old directory entry must be gone");
+    const blob = await gitOps.catFileBlob(tree.get("a")!);
+    assert.match(blob.toString("utf8"), /AKIAFAKEFAKEFAKEFAKE/, "the secret in the new file must still be scannable");
+  });
+});
+
+test("buildSimulatedCommit: the reverse direction (a staged file->directory replacement) also builds a tree, not a fatal", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "a"), "was a file\n");
+    await git(repoDir, "add", ".");
+    await git(repoDir, "commit", "-q", "-m", "base: a exists as a file");
+
+    await unlink(join(repoDir, "a"));
+    await mkdir(join(repoDir, "a"), { recursive: true });
+    await writeFile(join(repoDir, "a", "b"), 'const key = "AKIAFAKEFAKEFAKEFAKE";\n');
+    await git(repoDir, "add", "-A");
+
+    const commitSha = await buildSimulatedCommit(realRunner, repoDir); // must not throw
+    const gitOps = makeGitOps(realRunner, repoDir);
+    const tree = await gitOps.lsTree(commitSha);
+    assert.ok(tree.has("a/b"));
+    assert.ok(!tree.has("a"));
+  });
+});
+
 test("buildSimulatedCommit: nested directories are staged correctly (mode/path preserved through --cacheinfo)", async () => {
   await withIsolatedGitRepo(async (repoDir) => {
     await mkdir(join(repoDir, "nested", "dir"), { recursive: true });

@@ -48,9 +48,25 @@ export async function runPreCommitScan(repoRoot: string): Promise<number> {
   return exitCodeFor(result);
 }
 
+/**
+ * GitHub Issue #190 (red-team, [MED], demonstrated): with no try/catch, every internal failure
+ * path (an empty repo with no HEAD, a git plumbing error, ...) dumped a raw Node stack trace to
+ * the committer instead of a clear, named message — the exit code was already correct (fails
+ * closed, non-zero), this is presentation only, but PRINCIPLES rule 2 ("every block names its
+ * unlock") still applies to a standing, blocking gate. The commit stays refused either way; this
+ * only changes what the developer sees when it is.
+ */
 async function main(): Promise<void> {
-  const code = await runPreCommitScan(process.cwd());
-  process.exit(code);
+  try {
+    const code = await runPreCommitScan(process.cwd());
+    process.exit(code);
+  } catch (err) {
+    console.error(
+      `[Path B pre-commit-scan] BLOCKED: an internal error prevented the scan from completing, ` +
+        `so the commit is refused rather than silently allowed. ${(err as Error).message}`,
+    );
+    process.exit(1);
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -27,6 +27,17 @@ export type Runner = (
 // SURVIVED, silently.
 const NODE_TEST_RUNNER_ENV_KEYS = ["NODE_TEST_CONTEXT", "NODE_TEST_WORKER_ID"];
 
+// LOAD-BEARING (red-team finding 7, path-b-precommit-secret-scan, 2026-09-14): this copies the
+// WHOLE of `process.env`, including `GIT_*` keys. That is the entire reason `git commit -a` /
+// `git commit -- <path>` are scanned correctly by `src/secret-scan/simulated-commit.ts`: git hands
+// a running hook a `GIT_INDEX_FILE` pointing at a TEMPORARY index for those two commit forms
+// (a git-internal index.lock file under .git, for `-a`, or a `next-index-N` file for a pathspec
+// commit), and every plain read
+// in `simulated-commit.ts` that does NOT pass its own `GIT_INDEX_FILE` override inherits that value
+// from here, reading the correct not-yet-real staged state instead of the stale real `.git/index`.
+// A future hardening of this function to strip `GIT_*` keys would silently revert
+// `git commit -am` to a false negative on the single most common commit form — see
+// `pre-commit-scan.test.ts`'s dedicated `git commit -am` regression test before making that change.
 function cleanSubprocessEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const key of NODE_TEST_RUNNER_ENV_KEYS) delete env[key];

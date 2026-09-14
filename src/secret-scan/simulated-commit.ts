@@ -14,16 +14,42 @@
 // the whole point of sourcing every path from the real index's own blob SHA instead of re-reading
 // the working tree.
 //
+// "The real index" is deliberately loose phrasing (red-team finding 7, `git commit -a`/
+// `git commit -- <path>`): git points a running hook at a TEMPORARY index for those two commit
+// forms (a git-internal index.lock file under .git, for `-a`, or a `next-index-N` file for a
+// pathspec commit) and exports its
+// path via `GIT_INDEX_FILE` in the hook's own environment — every `run()` call below that does NOT
+// pass its own `GIT_INDEX_FILE` override (i.e. every plain read: `rev-parse HEAD`, `diff --cached`,
+// `ls-files -s`) inherits that FROM THE PARENT PROCESS'S ENVIRONMENT, via `src/lib/exec.ts`'s
+// `cleanSubprocessEnv()` copying the whole of `process.env`. This is LOAD-BEARING, not incidental:
+// it is the entire reason `git commit -a`/`-- <path>` read the correct (temporary, not-yet-real)
+// staged state instead of the stale real `.git/index`. A future hardening of `cleanSubprocessEnv()`
+// that strips `GIT_*` keys would silently revert this to a false negative on the single most common
+// commit form. Pinned by `pre-commit-scan.test.ts`'s `git commit -am` regression test.
+//
 // Known, disclosed non-goals (out of this story's scope, not silently mishandled):
 //   - An empty repo with no HEAD yet fails loud with a clear message (matches this module's own
 //     `-p HEAD` parent requirement) rather than being specially handled.
 //   - A path staged with an unresolved merge conflict (`git ls-files -s` reporting multiple
 //     stages for the same path) is not specially handled — this instrument runs against an
 //     ordinary staged-and-about-to-commit tree, not a mid-conflict index.
+//   - `git commit --no-verify` (or any GUI/IDE client that skips hooks, or a commit made before
+//     `npm install`/`npm ci` has ever run) bypasses this check entirely — no local git hook can
+//     prevent that; git itself never runs it. This is a defense-in-depth, pre-commit-only backstop,
+//     not an unbypassable control. `.github/workflows/ci.yml`'s OSS-01 full-history scan (unaffected
+//     by any local bypass, and the only check a server-side merge ever runs) is the real backstop.
 //   - Every real run adds new loose objects (blob/tree/commit) to `.git/objects`. These are never
 //     referenced by any ref, so they are ordinary unreachable objects — harmless, reclaimed by a
-//     normal `git gc` like any other dangling object — not a leak of secret content beyond what a
-//     real `git commit` would itself have written to the exact same object database anyway.
+//     normal `git gc` like any other dangling object. For a PASSING run this is no more than a real
+//     `git commit` would itself have written to the same object database anyway; for a BLOCKED run,
+//     the tree/commit objects (never the blobs, already written by `git add`) are extra objects a
+//     real `git commit` would never have created — still harmless, still GC'd normally, just not
+//     literally zero marginal objects in that one case.
+//   - Cleanup (temp index file deletion, below) is a `finally` block: it runs on every normal
+//     return and every thrown error, but NOT on a process kill signal (Ctrl-C mid-run). A SIGINT
+//     during a commit can leave an orphaned `thoth-precommit-index-*` directory in the OS temp dir
+//     — contents are an index file (staged paths + blob SHAs), never secret bytes. Not handled here;
+//     an ordinary temp-directory cleanup sweep (or the OS's own tmp-reaper) clears it eventually.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,25 +115,40 @@ export function parseNameStatusZ(raw: string): StagedEntry[] {
   return entries;
 }
 
-/** Reads one path's mode+blob-sha from the REAL index (never the working tree, never the temp
- * simulated index) via `git ls-files -s`. Returns null if the path has no entry (should not
- * happen for a path `git diff --cached` just reported as staged; callers fail loud instead of
- * guessing when this happens anyway). */
-async function resolveStagedBlob(
+/**
+ * Reads mode+blob-sha for EVERY path in the REAL index (never the working tree, never the temp
+ * simulated index), in ONE call — never per-path.
+ *
+ * GitHub Issue #188 (red-team, [HIGH], demonstrated): a per-path `git ls-files -s -- <path>` call
+ * has `<path>` interpreted as a git PATHSPEC, not a literal string — `--` disables *option*
+ * parsing, not *pathspec magic*. A staged filename containing `[`, `]`, `*`, or `?` (e.g. a
+ * Next.js-style `app/[id].js`) can match a lexicographically-earlier sibling; taking the first
+ * returned record then silently resolves to the WRONG blob. Red-team demonstrated this end-to-end
+ * through the real installed hook: staging `k[0-9].js` (a secret) alongside `k5.js` (clean) made
+ * the scanner read `k5.js`'s blob for `k[0-9].js`, report PASS, and let `git commit` land the
+ * secret in real history. A single unfiltered `git ls-files -s -z` lists every real index entry
+ * with no pathspec involved at all; each staged path is then looked up by an EXACT map key, never
+ * re-interpreted — this removes the glob-interpretation class entirely, and drops this function's
+ * own subprocess count from O(staged paths) to 1.
+ */
+async function resolveAllStagedBlobs(
   runner: Runner,
   repoRoot: string,
-  path: string,
-): Promise<{ mode: string; sha: string } | null> {
-  const raw = await run(runner, repoRoot, ["ls-files", "-s", "-z", "--", path]);
-  const record = raw.split("\0").find((r) => r.length > 0);
-  if (record === undefined) return null;
-  const tabIdx = record.indexOf("\t");
-  if (tabIdx === -1) return null;
-  const meta = record.slice(0, tabIdx).trim().split(/\s+/);
-  const mode = meta[0];
-  const sha = meta[1];
-  if (!mode || !sha) return null;
-  return { mode, sha };
+): Promise<Map<string, { mode: string; sha: string }>> {
+  const raw = await run(runner, repoRoot, ["ls-files", "-s", "-z"]);
+  const map = new Map<string, { mode: string; sha: string }>();
+  for (const record of raw.split("\0")) {
+    if (!record) continue;
+    const tabIdx = record.indexOf("\t");
+    if (tabIdx === -1) continue;
+    const meta = record.slice(0, tabIdx).trim().split(/\s+/);
+    const mode = meta[0];
+    const sha = meta[1];
+    const path = record.slice(tabIdx + 1);
+    if (!mode || !sha) continue;
+    map.set(path, { mode, sha });
+  }
+  return map;
 }
 
 /**
@@ -136,26 +177,40 @@ export async function buildSimulatedCommit(runner: Runner, repoRoot: string): Pr
     const nameStatusRaw = await run(runner, repoRoot, ["diff", "--cached", "--name-status", "-z", "HEAD"]);
     const entries = parseNameStatusZ(nameStatusRaw);
 
-    for (const entry of entries) {
-      if (entry.status === "D") {
-        await run(runner, repoRoot, ["update-index", "--force-remove", "--", entry.path], {
-          GIT_INDEX_FILE: indexFile,
-        });
-        continue;
-      }
-      const blob = await resolveStagedBlob(runner, repoRoot, entry.path);
-      if (!blob) {
-        throw new Error(
-          `simulated-commit: ${entry.path} is reported staged (status ${entry.status}) but has no entry ` +
-            `in the real index — refusing to guess its content.`,
+    // Two-pass application (GitHub Issue #189, red-team [MED], demonstrated): `git diff --cached
+    // --name-status` sorts by path, so a directory-to-file collapse (e.g. a hypothetical
+    // foo/index.ts becoming a single foo.ts) reports the new file's "A" status BEFORE the old
+    // directory member's "D" status. Applying entries in that reported order tries to add the file
+    // while the directory still exists in the temp index,
+    // and `update-index` fatals ("appears as both a file and as a directory") on a tree a real
+    // `git commit` accepts without complaint. Removing every deletion first, then adding/updating,
+    // means the temp index never transiently holds both shapes for the same path segment at once.
+    const deletions = entries.filter((e) => e.status === "D");
+    const additions = entries.filter((e) => e.status !== "D");
+
+    for (const entry of deletions) {
+      await run(runner, repoRoot, ["update-index", "--force-remove", "--", entry.path], {
+        GIT_INDEX_FILE: indexFile,
+      });
+    }
+
+    if (additions.length > 0) {
+      const blobs = await resolveAllStagedBlobs(runner, repoRoot);
+      for (const entry of additions) {
+        const blob = blobs.get(entry.path);
+        if (!blob) {
+          throw new Error(
+            `simulated-commit: ${entry.path} is reported staged (status ${entry.status}) but has no entry ` +
+              `in the real index — refusing to guess its content.`,
+          );
+        }
+        await run(
+          runner,
+          repoRoot,
+          ["update-index", "--add", "--cacheinfo", blob.mode, blob.sha, entry.path],
+          { GIT_INDEX_FILE: indexFile },
         );
       }
-      await run(
-        runner,
-        repoRoot,
-        ["update-index", "--add", "--cacheinfo", blob.mode, blob.sha, entry.path],
-        { GIT_INDEX_FILE: indexFile },
-      );
     }
 
     const tree = (await run(runner, repoRoot, ["write-tree"], { GIT_INDEX_FILE: indexFile })).trim();
