@@ -36,3 +36,4 @@
 {"at":"2026-09-13T22:06:41.961Z","event":"story-shipped","scope":"qa14-issue137-precision-fastfollow","rounds":"0","reports":"3","findings":"6","adrTokensSaved":"138400","councilFired":"false"}
 {"at":"2026-09-13T23:08:44.544Z","event":"tier-ratified","scope":"s1-closeout-164-154","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"same file family, 3+ prior adversarial CRITICAL-tier catches, project-established floor"}
 {"at":"2026-09-14T03:40:24.676Z","event":"story-shipped","scope":"s1-closeout-164-154","rounds":"3","reports":"15","findings":"46","adrTokensSaved":"346000","councilFired":"true"}
+{"at":"2026-09-14T17:06:26.986Z","event":"tier-ratified","scope":"path-b-precommit-secret-scan","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"src/secret-scan/* sensitive area, new standing commit-blocking enforcement mechanism, matches this file family's own CRITICAL precedent (cifix rounds)"}
