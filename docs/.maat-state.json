@@ -678,7 +678,7 @@
   },
   "scope": "path-b-precommit-secret-scan",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 1,
+  "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
