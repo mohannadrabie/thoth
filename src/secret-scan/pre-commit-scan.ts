@@ -11,10 +11,22 @@
 // no second grant path).
 //
 // Scope is the SIMULATED COMMIT'S OWN TREE only (`revList` overridden to return exactly the one
-// simulated commit sha, not its ancestry) — proportional to tree size, not full history length, so
-// this stays fast enough to run on every real `git commit`. Full-history scanning is still OSS-01's
-// job in CI (`.github/workflows/ci.yml`'s "OSS-01 full-history secret scan" step); this instrument
-// is a local, pre-commit-only backstop, not a replacement for it.
+// simulated commit sha, not its ancestry) — proportional to tree size, not full history length.
+// GitHub Issue #194 (red-team round-2, [MED]): this was previously asserted as "fast enough to run
+// on every real git commit" with no measurement (PRINCIPLES rule 18). Measured, not assumed: on
+// this repo's own tree (312 tracked files, 2026-09-14), a real end-to-end run took ~23-25s across 5
+// consecutive measurements this session (red-team's own independent measurement the same day, on
+// 310 files, was ~12.5-13.0s — both real, machine/session-dependent numbers for the same O(tree
+// size) architecture, not a discrepancy either figure should be trusted to resolve). The cost is
+// `history-scan.ts`'s own serial `git cat-file` spawn per tracked blob (root-caused by red-team,
+// `history-scan.ts:80-81`) — NOT reimplemented or optimized here; that is a separate, larger change
+// to shared OSS-01 machinery, out of this fix-now round's scope. What IS fixed here: the default
+// stdout on a PASSING run no longer lists every `ALLOWLISTED` match (263 of 264 lines on this
+// repo's own clean commits, measured) — full detail still prints on a FAIL, where it is the
+// information a developer actually needs. Full-history scanning is still OSS-01's job in CI
+// (`.github/workflows/ci.yml`'s "OSS-01 full-history secret scan" step); this instrument is a
+// local, pre-commit-only backstop, not a replacement for it, and at repo sizes materially larger
+// than this project's own, this local check's own latency is a real, disclosed limitation.
 //
 // Installed as a real, blocking git hook via `.githooks/pre-commit` + `package.json`'s `prepare`
 // script (`git config core.hooksPath .githooks`) — see that file/script for the install mechanism.
@@ -44,7 +56,13 @@ export async function runPreCommitScan(repoRoot: string): Promise<number> {
   ]);
   const result = summarizeMatches(matches, allowlist);
 
-  printInstrumentResult("Path B pre-commit-scan", result);
+  // GitHub Issue #194 (red-team round-2, [MED]): a full listing of every ALLOWLISTED match scrolls
+  // past the developer on EVERY commit, clean or not (263 of 264 lines on this repo's own clean
+  // commits) — a real "bypass-by-attrition" risk. `summarizeMatches`'s own result is unchanged (R2:
+  // zero new exemption surface, nothing here changes what passes/fails) — only what THIS CLI prints
+  // to stdout on a clean (PASS) run. A FAIL still prints every detail line: that is exactly the
+  // information a developer needs to unblock, and is never suppressed.
+  printInstrumentResult("Path B pre-commit-scan", result.ok ? { ...result, details: [] } : result);
   return exitCodeFor(result);
 }
 
@@ -55,6 +73,10 @@ export async function runPreCommitScan(repoRoot: string): Promise<number> {
  * closed, non-zero), this is presentation only, but PRINCIPLES rule 2 ("every block names its
  * unlock") still applies to a standing, blocking gate. The commit stays refused either way; this
  * only changes what the developer sees when it is.
+ *
+ * Round-2 residual (red-team, [LOW]): the message named the cause but not the unlock, leaving a
+ * brand-new repo's first-ever commit (the one case where "no HEAD yet" is expected, not a real
+ * failure) with no way forward. Now names both.
  */
 async function main(): Promise<void> {
   try {
@@ -63,7 +85,11 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error(
       `[Path B pre-commit-scan] BLOCKED: an internal error prevented the scan from completing, ` +
-        `so the commit is refused rather than silently allowed. ${(err as Error).message}`,
+        `so the commit is refused rather than silently allowed. ${(err as Error).message}\n` +
+        `[Path B pre-commit-scan] Unlock: if this repo genuinely has no commits yet, this check ` +
+        `cannot run against a HEAD that doesn't exist -- make the first commit once with ` +
+        `\`git commit --no-verify\`, then this hook runs normally on every commit after it. ` +
+        `Otherwise, this is an unexpected internal error -- please report it.`,
     );
     process.exit(1);
   }

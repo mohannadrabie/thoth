@@ -65,6 +65,39 @@ test("R1: a clean staged change -> exit 0", async () => {
   });
 });
 
+test("GitHub Issue #194 (red-team round-2, [MED], regression): a PASSING run's stdout does not list " +
+  "ALLOWLISTED matches (noise-suppression, the bypass-by-attrition fix) -- but a FAILING run still " +
+  "lists every detail line, since that is exactly the information a developer needs to unblock", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await mkdir(join(repoDir, "docs", "qa"), { recursive: true });
+    await writeFile(
+      join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
+      JSON.stringify([
+        { path: "allowed.js", patternId: "aws-access-key-id", reason: "test fixture, not a real credential" },
+      ]),
+    );
+    await writeFile(join(repoDir, "allowed.js"), `const key = "${FAKE_SECRET}";\n`);
+    await gitOk(repoDir, "add", ".");
+
+    const passRes = await runScanCli(repoDir);
+    assert.equal(passRes.code, 0, "an allowlisted-only match must still pass overall");
+    assert.ok(
+      !passRes.stdout.includes("ALLOWLISTED"),
+      `a PASSING run's stdout must not list ALLOWLISTED details:\n${passRes.stdout}`,
+    );
+
+    // Now add a second, non-allowlisted secret alongside it -- the run must FAIL, and now list
+    // every detail line, including the allowlisted one (summarizeMatches's own reused behavior,
+    // untouched -- only the PASS-case CLI presentation changed).
+    await writeFile(join(repoDir, "blocking.js"), `const key = "${FAKE_SECRET}1";\n`);
+    await gitOk(repoDir, "add", "blocking.js");
+
+    const failRes = await runScanCli(repoDir);
+    assert.notEqual(failRes.code, 0, "the non-allowlisted match must fail the gate");
+    assert.match(failRes.stdout, /ALLOWLISTED/, "a FAILING run must still list every detail line, allowlisted or not");
+  });
+});
+
 test("R1: the fixture repo's own HEAD and .git/index are byte-unchanged after a run through the full CLI", async () => {
   await withIsolatedGitRepo(async (repoDir) => {
     await writeFile(join(repoDir, "config.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -82,7 +115,11 @@ test("R1: the fixture repo's own HEAD and .git/index are byte-unchanged after a 
   });
 });
 
-test("R2: an allowlisted-but-real match is still REPORTED (not silently dropped) but does not fail the exit code", async () => {
+test("R2: an allowlisted-but-real match does not fail the exit code -- the underlying result still " +
+  "REPORTS it, not silently dropped (asserted at the summarizeMatches unit level in " +
+  "history-scan.test.ts and at the CLI level, for a FAIL run, in the GitHub Issue #194 regression " +
+  "test above -- a PASSING run's own stdout intentionally suppresses ALLOWLISTED lines as of #194, " +
+  "so it is not re-asserted here)", async () => {
   await withIsolatedGitRepo(async (repoDir) => {
     await mkdir(join(repoDir, "docs", "qa"), { recursive: true });
     await writeFile(
@@ -96,7 +133,6 @@ test("R2: an allowlisted-but-real match is still REPORTED (not silently dropped)
 
     const res = await runScanCli(repoDir);
     assert.equal(res.code, 0, "an allowlisted-only match must not fail the gate");
-    assert.match(res.stdout, /ALLOWLISTED/, "an allowlisted match must still appear in the report");
   });
 });
 
@@ -217,14 +253,17 @@ test("R187 (GitHub Issue #187, red-team [HIGH], regression): .githooks/pre-commi
   );
 });
 
-test("R190 (GitHub Issue #190, red-team [MED], regression): an internal error (no HEAD yet) prints a single-line " +
-  "BLOCKED message naming what failed, not a raw Node stack trace -- the exit code stays non-zero either way", async () => {
+test("R190 (GitHub Issue #190, red-team [MED], regression): an internal error (no HEAD yet) prints a named " +
+  "BLOCKED message AND names the unlock (round-2 residual, red-team [LOW]) -- not a raw Node stack " +
+  "trace, and not just the cause with no way forward -- the exit code stays non-zero either way", async () => {
   const repoDir = await mkdtemp(join(tmpdir(), "thoth-precommit-scan-nohead-"));
   try {
     await gitOk(repoDir, "init", "-q", "-b", "main"); // no commits at all -- no HEAD
     const res = await runScanCli(repoDir);
     assert.notEqual(res.code, 0, "an internal error must still fail closed");
     assert.match(res.stderr, /\[Path B pre-commit-scan\] BLOCKED:/, "must print a single named, clear line");
+    assert.match(res.stderr, /Unlock:/, "must name a way forward, not only the cause (PRINCIPLES rule 2)");
+    assert.match(res.stderr, /--no-verify/, "the unlock for a brand-new repo's first commit must be actionable");
     assert.ok(
       !res.stderr.includes("at async") && !res.stderr.includes("node:internal"),
       "must not dump a raw Node stack trace to the developer",

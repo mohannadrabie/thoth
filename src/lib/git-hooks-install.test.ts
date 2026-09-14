@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,25 @@ test("installGitHooks: no .git directory -> installed=false, no error, nothing t
     const result = await installGitHooks(realRunner, dir);
     assert.equal(result.installed, false);
     assert.equal(result.clobberedHooksPath, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installGitHooks (GitHub Issue #193-sibling, red-team round-2 [LOW], regression): a subdirectory " +
+  "of a real git checkout still installs the hook -- git rev-parse --git-dir walks up to find it, " +
+  "unlike the old existsSync('.git') probe which read false and silently skipped installing the " +
+  "security hook from anywhere but the repo root", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "thoth-hooks-install-subdir-"));
+  try {
+    await gitOk(dir, "init", "-q", "-b", "main");
+    const subdir = join(dir, "packages", "sub");
+    await mkdir(subdir, { recursive: true });
+
+    const result = await installGitHooks(realRunner, subdir);
+    assert.equal(result.installed, true, "must still install from a subdirectory of a real checkout");
+    const hooksPath = (await gitOk(dir, "config", "core.hooksPath")).trim();
+    assert.equal(hooksPath, ".githooks");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
