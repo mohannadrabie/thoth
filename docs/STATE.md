@@ -1,16 +1,29 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-14 (`s1-closeout-164-154` — **SHIPPED. PR #184 merged** `64288ff` into `master`, 2026-09-14T16:46:19Z. Reconciled this session from real GitHub/git state, not trusted from this file: Issues #164/#154/#180/#181/#183 confirmed `CLOSED`/`COMPLETED`; #182 confirmed still `OPEN`, a disclosed residual (matches #154's own precedent); Milestone S1 confirmed still open, 4/17 issues open (#174, #175, #179, #182) — none of them this story's to close. Post-merge CI on `master` (run `34868991...`, the PR's own pre-merge check): red on **QA-14 reference-resolver only** — the pre-existing, disclosed Issue #137-class citation-precision gap this project has repeatedly documented cannot go green on any branch yet (not a regression from this merge); every other job green. Local branches `fix/s1-closeout-164-154` and the already-merged `fix/qa14-issue137-precision-fastfollow` deleted (`git branch -d`, fast-forward-merged, nothing lost). `docs/decisions.md` swept: 6 rows past their review-back date archived to `docs/decisions-archive.md` (`node docs/decisions-archive.mjs --apply`), active log back to bounded size. **Next: human picks the next story** — see candidates below.)
+**Last updated:** 2026-09-14 (`path-b-precommit-secret-scan` — **Phase 2 build complete on branch `feat/path-b-precommit-secret-scan`, NOT YET reviewed or merged.** CRITICAL tier ratified unchanged (`docs/run-log.jsonl`'s 2026-09-14T17:06:26 tier-ratified event); reviewers `red-team` + `app-security-reviewer` + `cross-domain-reviewer` still to run. See the resume point below for the full build. **Next: dispatch Stage-3 review.**)
 
-## Next candidates (for after `s1-closeout-164-154`, now merged)
+## Next candidates (after `path-b-precommit-secret-scan` ships)
 
 - **S2** (1 open): #63 (`kernel-purity-check.ts`'s forbidden-globals scan is a literal-text regex, evadable via string-concat obfuscation).
-- **Path B** (the standing pre-commit dogfood check, `docs/backlog.md`'s cifix-council item) — now on its 2nd real-world trigger (Issue #131 → #180/#183/this story's own 4th recurrence); architecture-reviewer's council ruling names it the natural next story.
 - **S5 — Deny-by-default + hook wiring** (7 open) and **S6 — Policy centralization** (5 open): the largest unstarted blocks; `gh issue list --milestone "S5 — Deny-by-default + hook wiring" --state open` / `--milestone "S6 — Policy centralization"` to see them.
 - `docs/backlog.md`'s "Open" section also carries ~30 smaller deferred items (mostly disclosed residuals from already-shipped stories).
 
-## Resume point — `s1-closeout-164-154` (Issues #164 + #154 + #180/#181/#183) — DONE, merged
+## Resume point — `path-b-precommit-secret-scan` — Phase 2 build complete, awaiting Stage-3 review
+
+Branch `feat/path-b-precommit-secret-scan`, cut from `master` @ `49ff52e` (post `s1-closeout-164-154` merge). CRITICAL tier ratified unchanged (`docs/run-log.jsonl`'s 2026-09-14T17:06:26 tier-ratified event, scope `path-b-precommit-secret-scan`) — `src/secret-scan/*` is CLAUDE.md's named "Secret scanning / CI gates" sensitive area, same file family as `cifix`'s own CRITICAL precedent every round. No `test-writer` dispatch: a git pre-commit hook / CLI instrument, no UI/API surface change.
+
+**R1-R4 built:** `src/secret-scan/simulated-commit.ts` (new) builds the simulated to-be-committed tree via git plumbing, content sourced from the real index's own staged blob (`git ls-files -s`) rather than re-read from the working tree — **human-ruled 2026-09-14, overriding the plan's own literal `git add`-the-staged-paths sketch**, closing a self-flagged partial-stage divergence risk on a security gate (pinned by 2 dedicated regression tests, both directions). `src/secret-scan/pre-commit-scan.ts` (new) scans the simulated commit's own tree with OSS-01's existing `scanHistory`/`loadAllowlist`/`summarizeMatches` completely unmodified — zero new exemption surface. `.githooks/pre-commit` + `package.json`'s `"prepare": "git config core.hooksPath .githooks"` install it repeatably (tracked `core.hooksPath` directory chosen over a copied `.git/hooks/` shim — never goes stale, zero new dependencies). `src/lib/exec.ts`'s `Runner` gained an optional per-call `env` override (SE ADR-0003: inject I/O, don't mutate global state) to scope `GIT_INDEX_FILE`.
+
+**R5/R6 confirmed mechanically, not by hand:** `git diff --stat master...HEAD -- .github/workflows/ci.yml` empty; the 3 Issue #136 `patterns.test.ts` allowlist entries untouched (`git diff` confirms). **R8 done:** `docs/qa/recurring-findings-registry.md`'s Issue #181 row `Status` updated to the shipped mechanism.
+
+**Self-demonstrating dogfood, this session:** a real, live `npm ci` run against a fresh local clone (not assumed — PRINCIPLES rule 18) confirmed the `prepare` script fires and `core.hooksPath` activates; the resulting real `git commit` correctly refused both a planted canary secret AND — live, unplanned — this story's own new test fixtures' unallowlisted synthetic literals (`simulated-commit.test.ts`/`pre-commit-scan.test.ts`), the exact Issue #131/#180 class this story exists to close. 4 new `docs/qa/secret-scan-allowlist.json` entries added the same way every prior story's own fixtures were.
+
+**Verification, real:** `npm run typecheck`/`npm run lint` clean; `npm test` **810/810 pass, 0 fail, 0 skipped** (785 carried + 25 new); `node src/qa/completeness-claim-checker.ts` PASS (2 files); `node src/qa/recurring-findings-registry.ts` PASS (2 classes); `node src/qa/reference-resolver.ts master HEAD` PASS (35 citations: 33 resolved, 2 non-blocking unclassified, 0 failed); ADR cache `HIT` (35 ADRs, fingerprint `83b2e3e`, unchanged). `history-scan.test.ts`'s own real-repo full-history dogfood test stays a clean pass.
+
+**Single next action:** dispatch Stage-3 review — `red-team` + `app-security-reviewer` + `cross-domain-reviewer` — against branch `feat/path-b-precommit-secret-scan`.
+
+## Resume point (superseded above, kept for continuity) — `s1-closeout-164-154` (Issues #164 + #154 + #180/#181/#183) — DONE, merged
 
 PR #184 merged into `master` @ `64288ff` (2026-09-14T16:46:19Z). Nothing further to do on this story. See the prior resume point below for the full build/review arc; superseded now that the merge itself is confirmed done.
 
