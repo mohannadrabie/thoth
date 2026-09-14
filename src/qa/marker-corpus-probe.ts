@@ -210,6 +210,11 @@ export async function readFileTexts(
 export async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
   const workingTreeFiles = await git.lsFilesWorkingTree();
+  // GitHub Issue #182 (disclosed residual, not fixed — s1-closeout-164-154 council Path A,
+  // 2026-09-13): `lsFilesWorkingTree()` includes untracked-but-not-ignored paths, so the published
+  // total can include transient untracked scratch files in the working tree and drift
+  // session-to-session (measured live: 1087 -> 1106 -> 1110 in one review session). Disclosed, not
+  // fixed — see docs/decisions.md's corresponding row for the ruling.
   return readFileTexts(workingTreeFiles.map((f) => resolve(repoRoot, f)));
 }
 
