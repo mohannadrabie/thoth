@@ -14,7 +14,7 @@ export interface ExecResult {
 export type Runner = (
   cmd: string,
   args: string[],
-  opts?: { cwd?: string; timeoutMs?: number; encoding?: BufferEncoding },
+  opts?: { cwd?: string; timeoutMs?: number; encoding?: BufferEncoding; env?: Record<string, string> },
 ) => Promise<ExecResult>;
 
 // Node's own test runner sets NODE_TEST_CONTEXT / NODE_TEST_WORKER_ID on itself. Measured
@@ -38,6 +38,12 @@ function cleanSubprocessEnv(): NodeJS.ProcessEnv {
  * means. `encoding: "latin1"` (the default here) is a deliberate choice: it round-trips every
  * byte value 1:1 through a JS string, which `utf8` does not for arbitrary binary blob content
  * (e.g. `git cat-file -p` on a non-text blob). Callers that need real UTF-8 text pass `"utf8"`.
+ *
+ * `opts.env`, when given, is merged OVER the cleaned copy of the real `process.env` (never
+ * replaces it) — a per-call override, scoped to this one invocation only, never a mutation of
+ * the parent process's own `process.env` (Path B / `src/secret-scan/simulated-commit.ts`: needs
+ * `GIT_INDEX_FILE` pinned to a specific temp file for a handful of calls without ever risking
+ * that value leaking into an unrelated concurrent call).
  */
 export const realRunner: Runner = async (cmd, args, opts = {}) => {
   try {
@@ -47,7 +53,7 @@ export const realRunner: Runner = async (cmd, args, opts = {}) => {
       maxBuffer: 64 * 1024 * 1024,
       windowsHide: true,
       encoding: opts.encoding ?? "latin1",
-      env: cleanSubprocessEnv(),
+      env: opts.env ? { ...cleanSubprocessEnv(), ...opts.env } : cleanSubprocessEnv(),
     });
     return { stdout, stderr, code: 0 };
   } catch (err) {

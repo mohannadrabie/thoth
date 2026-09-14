@@ -1,0 +1,9 @@
+#!/bin/sh
+# Path B: real, blocking git pre-commit secret scan (docs/backlog.md's cifix-council item;
+# docs/decisions.md 2026-09-09/2026-09-14). Installed via `core.hooksPath` (see package.json's
+# `prepare` script) rather than a copied `.git/hooks/pre-commit` shim, so it stays in sync with
+# this file automatically -- no re-copy step to forget when this script changes.
+#
+# git invokes hooks with cwd already at the repo's own top level, so a plain relative path here
+# resolves correctly regardless of where the commit was run from.
+exec node src/secret-scan/pre-commit-scan.ts
