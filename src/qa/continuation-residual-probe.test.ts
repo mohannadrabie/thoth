@@ -7,6 +7,7 @@ import {
   computeContinuationMarkedCount,
   computeContinuationResidual,
   parseContinuationResidualField,
+  readFileTexts,
 } from "./continuation-residual-probe.ts";
 
 // GitHub Issue #154 / council Path A (docs/decisions.md, 2026-09-11 "Path-Forward Brief" row):
@@ -110,6 +111,50 @@ test("QA-14 continuation-residual-probe (numerator): REUSES resolveIssueCitation
   assert.equal(result.continuationResidual, 0);
 });
 
+// GitHub Issue #177 fix-now (red-team round-2 attack 2, demonstrated — covers BOTH this file and
+// its twin marker-corpus-probe.ts, same catch shape): the #170 ENOENT-narrowing catch was pinned
+// by zero tests in either file — a full-suite mutation reverting both to a blanket
+// `catch { continue; }` left the suite byte-identical. These exercise this file's own
+// `readFileTexts` directly via its injectable-reader seam. Verified by temporarily reverting the
+// narrowing back to a blanket catch and confirming the first test below goes red, then restoring.
+test("QA-14 continuation-residual-probe (Issue #177, mutation-proving): a non-ENOENT read failure propagates instead of being silently swallowed", async () => {
+  const seen: string[] = [];
+  const fakeReadFile = (path: string): Promise<string> => {
+    seen.push(path);
+    if (path === "gone.md") {
+      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      return Promise.reject(err);
+    }
+    if (path === "broken.md") {
+      const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      return Promise.reject(err);
+    }
+    return Promise.resolve("Closes #7, #8 today.\n");
+  };
+  await assert.rejects(
+    () => readFileTexts(["ok.md", "gone.md", "broken.md"], fakeReadFile),
+    /EACCES/,
+    "a non-ENOENT read failure must propagate loud, not be silently absorbed into the file list — " +
+      "if this resolves instead of rejecting, the ENOENT-only narrowing has regressed to a blanket catch",
+  );
+  assert.deepEqual(seen, ["ok.md", "gone.md", "broken.md"], "must not short-circuit before reaching the non-ENOENT failure");
+});
+
+test("QA-14 continuation-residual-probe (Issue #177): an ENOENT read failure is still silently skipped — the one legitimate 'listed but now gone' case", async () => {
+  const fakeReadFile = (path: string): Promise<string> => {
+    if (path === "gone.md") {
+      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      return Promise.reject(err);
+    }
+    return Promise.resolve("Closes #7, #8 today.\n");
+  };
+  const texts = await readFileTexts(["ok.md", "gone.md"], fakeReadFile);
+  assert.deepEqual([...texts.keys()], ["ok.md"], "ENOENT must still be a silent skip, not a propagated failure");
+});
+
 // --- CLI field parsing
 
 test("QA-14 continuation-residual-probe: parseContinuationResidualField returns null when no --field flag is given", () => {
@@ -158,12 +203,22 @@ test("QA-14 continuation-residual-probe (real subprocess): --field=continuation-
 // asserting the output SHAPE rather than comparing it against a second live walk — the stray
 // argument's zero-effect property is separately, deterministically pinned above by
 // `parseContinuationResidualField`'s own pure unit tests, with no I/O and no live-tree race.
-test("QA-14 continuation-residual-probe (real subprocess, regression): a stray positional argument still produces a valid working-tree answer, not the deleted ref/content-mismatch shape", async () => {
+//
+// GitHub Issue #179 — KNOWN GAP, NOT A CONTRACT (red-team round-2 attack 5, demonstrated): this
+// test pins CURRENT behavior only — it is not an endorsement that silently accepting a stray
+// positional/unknown flag is correct. `marker-corpus-probe.ts`'s twin gap (Issue #173) was fixed
+// with a fail-loud `assertKnownArgs` gate; this file's own equivalent gap is still open, tracked
+// in Issue #179, deliberately deferred this round given the round's own risk budget (two prior
+// rounds each introduced a new bug while fixing the previous round's findings). When #179 is
+// fixed, this test must be REPLACED with one asserting a non-zero exit and a message naming the
+// offending token — the same shape as marker-corpus-probe.test.ts's own
+// "a stray positional argument or an unknown flag now fails loud" test above (in the twin file).
+test("QA-14 continuation-residual-probe (KNOWN GAP, tracked in Issue #179 — not a contract): a stray positional argument is currently silently ignored, producing a valid working-tree answer rather than failing loud", async () => {
   const result = await realRunner("node", [
     "src/qa/continuation-residual-probe.ts",
     "--field=continuation-marked",
     "a26e55a",
   ]);
-  assert.equal(result.code, 0, `probe must exit 0; stderr: ${result.stderr}`);
+  assert.equal(result.code, 0, `probe currently exits 0 even for a stray argument (Issue #179, open); stderr: ${result.stderr}`);
   assert.match(result.stdout, /continuation-marked=\d+/, "a stray positional argument must not change the --field output shape");
 });

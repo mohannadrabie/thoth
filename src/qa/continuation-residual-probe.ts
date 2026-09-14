@@ -49,6 +49,7 @@
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
@@ -152,30 +153,29 @@ export async function computeContinuationResidual(
   return { continuationMarked, continuationResidual, capExceeded: false, distinctIssueNumbers };
 }
 
-/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
- * `resolveChangedFiles`, driven here directly rather than via a real diff), same as
- * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it.
+/**
+ * Reads each listed (repo-relative or absolute) file's text, skipping (not erroring on) a path that no longer exists by the
+ * time it's read — ENOENT — while letting any OTHER read failure propagate loud rather than be
+ * silently absorbed into a wrong count.
  *
- * Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
- * report, finding 2): this file's content is ALWAYS read from the working tree (`readFile` below),
- * regardless of which ref the file LIST comes from — the exact ref/working-tree content-mismatch
- * bug the council explicitly rejected Candidate B over in `marker-corpus-probe.ts`
- * (`node src/qa/continuation-residual-probe.ts --field=continuation-marked a26e55a` demonstrably
- * reported the a26e55a file list read against HEAD's working-tree content, a tree state that never
- * existed: true a26e55a content=271, probe's answer=273). No real caller anywhere in this repo
- * (production code, `.github/workflows/ci.yml`, `package.json` scripts, or this file's own test
- * suite) ever passed a non-default ref — confirmed by grep — so there is no fix-the-mismatch-
- * properly obligation to honor; deleting the parameter and always reading the current working tree
- * (the only state this function has ever correctly supported) is the minimal closure. */
-async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
-  const git = makeGitOps(realRunner, repoRoot);
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
-  const trackedFiles = resolved?.changedFiles ?? [];
+ * GitHub Issue #177 fix-now: the #170 ENOENT-narrowing below (this file's own twin defect) was
+ * pinned by zero tests — a full-suite mutation reverting it to a blanket `catch { continue; }`
+ * left the suite byte-identical (red-team round-2 report, attack 2, which covered both files).
+ * `readFileImpl` is the dependency-injection seam that makes the narrowing provable: a test can
+ * force a non-ENOENT error deterministically and assert it propagates instead of being swallowed.
+ * Defaults to the real `fs/promises` `readFile` for every real caller. Mirrors
+ * marker-corpus-probe.ts's own `readFileTexts` (same fix, same shape, same twin-file discipline
+ * this story has followed throughout).
+ */
+export async function readFileTexts(
+  files: string[],
+  readFileImpl: (path: string, encoding: "utf8") => Promise<string> = readFile,
+): Promise<Map<string, string>> {
   const fileTexts = new Map<string, string>();
-  for (const file of trackedFiles) {
+  for (const file of files) {
     if (!shouldScanFile(file)) continue;
     try {
-      fileTexts.set(file, await readFile(file, "utf8"));
+      fileTexts.set(file, await readFileImpl(file, "utf8"));
     } catch (err) {
       // GitHub Issue #170 fix-now (cross-domain review of the sibling instrument,
       // marker-corpus-probe.ts, demonstrated ~17% flake under real `npm test` concurrency; named
@@ -190,6 +190,32 @@ async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, s
     }
   }
   return fileTexts;
+}
+
+/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
+ * `resolveChangedFiles`, driven here directly rather than via a real diff), same as
+ * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it.
+ *
+ * Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
+ * report, finding 2): this file's content is ALWAYS read from the working tree (`readFile` below),
+ * regardless of which ref the file LIST comes from — the exact ref/working-tree content-mismatch
+ * bug the council explicitly rejected Candidate B over in `marker-corpus-probe.ts`
+ * (`node src/qa/continuation-residual-probe.ts --field=continuation-marked a26e55a` demonstrably
+ * reported the a26e55a file list read against HEAD's working-tree content, a tree state that never
+ * existed: true a26e55a content=271, probe's answer=273). No real caller anywhere in this repo
+ * (production code, `.github/workflows/ci.yml`, `package.json` scripts, or this file's own test
+ * suite) ever passed a non-default ref — confirmed by grep — so there is no fix-the-mismatch-
+ * properly obligation to honor; deleting the parameter and always reading the current working tree
+ * (the only state this function has ever correctly supported) is the minimal closure.
+ *
+ * Paths returned by `lsTree`/`resolveChangedFiles` are repo-relative; resolved against `repoRoot`
+ * before reading (mirrors marker-corpus-probe.ts's own Issue #176 fix-now) so a caller passing a
+ * `repoRoot` other than `process.cwd()` (e.g. a test fixture) reads the right file. */
+async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
+  const git = makeGitOps(realRunner, repoRoot);
+  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
+  const trackedFiles = resolved?.changedFiles ?? [];
+  return readFileTexts(trackedFiles.map((f) => resolve(repoRoot, f)));
 }
 
 async function main(): Promise<void> {

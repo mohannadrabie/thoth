@@ -23,8 +23,12 @@ export interface GitOps {
    * a caller that reads file CONTENT from the working tree but the file LIST from
    * `lsTree("HEAD")` silently excludes any new, uncommitted, scannable file). A submodule gitlink
    * (mode `160000`, e.g. this repo's own `adr/`) is a directory on disk, not a real blob — excluded
-   * the same way `lsTree()` already excludes it for a ref-pinned read. Uses `-z` (NUL-separated)
-   * so a path containing a newline can never truncate or split a filename.
+   * the same way `lsTree()` already excludes it for a ref-pinned read. An UNTRACKED nested git
+   * repository (its own `.git`, not a real submodule) is reported by `--others` as a directory
+   * entry with a trailing slash instead of being recursed into — also excluded (GitHub Issue #178:
+   * unfiltered, it passed through as a "file" and crashed a caller's `readFile` with `EISDIR`).
+   * Uses `-z` (NUL-separated) so a path containing a newline can never truncate or split a
+   * filename.
    */
   lsFilesWorkingTree(): Promise<string[]>;
 }
@@ -157,7 +161,19 @@ export function makeGitOps(runner: Runner, cwd: string): GitOps {
         cached.push(entry.slice(tabIdx + 1));
       }
       const othersOut = await run(["ls-files", "-z", "--others", "--exclude-standard"]);
-      const others = othersOut.split("\0").map((l) => l.trim()).filter(Boolean);
+      const others = othersOut
+        .split("\0")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.endsWith("/"));
+      // GitHub Issue #178 fix-now: an UNTRACKED nested git repository (its own `.git`, not a real
+      // submodule gitlink — a submodule is always index-tracked, so it's excluded above via the
+      // `--cached` mode-160000 check instead) cannot be recursed into by `git ls-files --others`;
+      // git reports it as a DIRECTORY entry with a trailing slash (e.g. `zz-nested/`) rather than
+      // its files. Before this fix that directory entry passed `shouldScanFile` unfiltered and a
+      // later `readFile` on it threw an unhandled `EISDIR` (demonstrated: red-team round-2 report,
+      // attack 3) — a real anomaly, but the wrong layer to filter it at, since a directory was
+      // never a candidate file in the first place. Excluding it here, at the source, means every
+      // consumer of this list (both QA-14 probes) never sees a non-file path at all.
       return [...cached, ...others];
     },
   };

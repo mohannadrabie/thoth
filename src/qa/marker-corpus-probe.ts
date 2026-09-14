@@ -23,6 +23,7 @@
 // with what the checker itself actually does.
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
@@ -148,26 +149,27 @@ export function computeMarkerCorpusStats(fileTexts: Map<string, string>): Marker
 }
 
 /**
- * GitHub Issue #172 fix (see the header comment for the full repro/rationale): the file LIST now
- * comes from `git.lsFilesWorkingTree()` — tracked + untracked-but-not-ignored paths in the CURRENT
- * working tree — the same tree state CONTENT is read from below, never a `ls-tree`-at-a-ref
- * snapshot. This is a deliberate, new divergence from `continuation-residual-probe.ts`'s own
- * `collectFullTreeFileTexts` — checked directly, structurally identical to this function's own
- * pre-fix shape (its list still comes from `resolveChangedFiles(..., "HEAD")`, unchanged by this
- * fix). That file carries the identical list/content-tree-state mismatch this fix closes here; it
- * is a live, separate defect, flagged as its own follow-up rather than silently fixed alongside a
- * differently-scoped Issue — one enumeration mechanism per file, not a second copy of either's
- * marker/list-continuation regex logic.
+ * Reads each listed (repo-relative or absolute) file's text, skipping (not erroring on) a path
+ * that no longer exists by the time it's read — ENOENT, e.g. deleted between listing and reading —
+ * while letting any OTHER read failure propagate loud rather than be silently absorbed into a
+ * wrong count.
+ *
+ * GitHub Issue #177 fix-now: the #170 ENOENT-narrowing below was pinned by zero tests — a
+ * full-suite mutation reverting it to a blanket `catch { continue; }` left the suite byte-
+ * identical (red-team round-2 report, attack 2). `readFileImpl` is the dependency-injection seam
+ * that makes the narrowing provable: a test can force a non-ENOENT error deterministically (no
+ * real filesystem race, no timing dependency) and assert it propagates instead of being swallowed.
+ * Defaults to the real `fs/promises` `readFile` for every real caller.
  */
-async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
-  const git = makeGitOps(realRunner, repoRoot);
-  const workingTreeFiles = await git.lsFilesWorkingTree();
-
+export async function readFileTexts(
+  files: string[],
+  readFileImpl: (path: string, encoding: "utf8") => Promise<string> = readFile,
+): Promise<Map<string, string>> {
   const fileTexts = new Map<string, string>();
-  for (const file of workingTreeFiles) {
+  for (const file of files) {
     if (!shouldScanFile(file)) continue;
     try {
-      fileTexts.set(file, await readFile(file, "utf8"));
+      fileTexts.set(file, await readFileImpl(file, "utf8"));
     } catch (err) {
       // GitHub Issue #170 fix-now (cross-domain review, demonstrated ~17% flake under real `npm
       // test` concurrency): this used to be a blanket `catch { continue; }`, silently treating ANY
@@ -182,6 +184,33 @@ async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, s
     }
   }
   return fileTexts;
+}
+
+/**
+ * GitHub Issue #172 fix (see the header comment for the full repro/rationale): the file LIST now
+ * comes from `git.lsFilesWorkingTree()` — tracked + untracked-but-not-ignored paths in the CURRENT
+ * working tree — the same tree state CONTENT is read from below, never a `ls-tree`-at-a-ref
+ * snapshot. This is a deliberate, new divergence from `continuation-residual-probe.ts`'s own
+ * `collectFullTreeFileTexts` — checked directly, structurally identical to this function's own
+ * pre-fix shape (its list still comes from `resolveChangedFiles(..., "HEAD")`, unchanged by this
+ * fix). That file carries the identical list/content-tree-state mismatch this fix closes here; it
+ * is a live, separate defect, flagged as its own follow-up rather than silently fixed alongside a
+ * differently-scoped Issue — one enumeration mechanism per file, not a second copy of either's
+ * marker/list-continuation regex logic.
+ *
+ * GitHub Issue #176 fix-now: exported (was module-private) so a test can call it directly,
+ * in-process, against an isolated `mkdtemp` git repo fixture — never a live CLI subprocess spawned
+ * against this repo's own real working tree (the shape red-team round-2 demonstrated failing 6/6
+ * under two concurrent `node --test` processes on one checkout). `lsFilesWorkingTree()` returns
+ * paths relative to `repoRoot`, not necessarily `process.cwd()` — every REAL caller (`main()`
+ * below) happens to pass `process.cwd()` as `repoRoot`, so this was never previously observable,
+ * but a test fixture (or any future caller) passing a different directory needs each path resolved
+ * against `repoRoot` before reading, not left to resolve implicitly against the process's own cwd.
+ */
+export async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
+  const git = makeGitOps(realRunner, repoRoot);
+  const workingTreeFiles = await git.lsFilesWorkingTree();
+  return readFileTexts(workingTreeFiles.map((f) => resolve(repoRoot, f)));
 }
 
 async function main(): Promise<void> {

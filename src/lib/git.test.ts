@@ -115,6 +115,25 @@ test("lsFilesWorkingTree (regression): a submodule gitlink (mode 160000, e.g. th
   assert.deepEqual(files, ["README.md"], "the 160000 submodule gitlink entry must not appear in the file list");
 });
 
+test("lsFilesWorkingTree (regression, Issue #178): an --others entry ending in '/' (an untracked nested git repo, which `git ls-files` reports as a directory rather than recursing into it) is excluded from the returned list", async () => {
+  const runner: Runner = (cmd, args) => {
+    if (args.includes("--cached")) {
+      return Promise.resolve({ stdout: "100644 aaa 0\tREADME.md\0", stderr: "", code: 0 });
+    }
+    // Real `git ls-files -z --others --exclude-standard` output for a checkout containing an
+    // untracked nested git repo directory `zz-nested/`: the directory itself, trailing slash,
+    // never its contents (git cannot recurse into a separate repo's index).
+    return Promise.resolve({ stdout: "docs/new-untracked.md\0zz-nested/\0", stderr: "", code: 0 });
+  };
+  const git = makeGitOps(runner, ".");
+  const files = await git.lsFilesWorkingTree();
+  assert.deepEqual(
+    files,
+    ["README.md", "docs/new-untracked.md"],
+    "the nested-repo directory entry ('zz-nested/') must not appear in the file list",
+  );
+});
+
 test("lsFilesWorkingTree: an empty working tree yields an empty list, not [\"\"]", async () => {
   const runner: Runner = () => Promise.resolve({ stdout: "", stderr: "", code: 0 });
   const git = makeGitOps(runner, ".");
