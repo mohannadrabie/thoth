@@ -68,3 +68,56 @@ test("resolveChangedFiles: a genuinely bad non-zero ref still returns null (unch
   const result = await resolveChangedFiles(git, "not-a-real-ref", "HEAD");
   assert.equal(result, null);
 });
+
+// GitHub Issue #172: lsFilesWorkingTree must combine tracked (--cached) and untracked-but-not-
+// ignored (--others --exclude-standard) paths — the real working-tree file set, not a ref-pinned
+// `lsTree("HEAD")` snapshot. Two separate git calls (see git.ts's own comment for why); this pins
+// both being invoked and their output combined, NUL-separated parsing included.
+test("lsFilesWorkingTree: combines --cached (mode-filtered) and --others output into one file list", async () => {
+  const calls: string[][] = [];
+  const runner: Runner = (cmd, args) => {
+    assert.equal(cmd, "git");
+    calls.push(args);
+    if (args.includes("--cached")) {
+      return Promise.resolve({
+        stdout: "100644 aaa 0\tsrc/foo.ts\0",
+        stderr: "",
+        code: 0,
+      });
+    }
+    return Promise.resolve({ stdout: "docs/new-untracked.md\0", stderr: "", code: 0 });
+  };
+  const git = makeGitOps(runner, ".");
+  const files = await git.lsFilesWorkingTree();
+  assert.deepEqual(files, ["src/foo.ts", "docs/new-untracked.md"]);
+  assert.deepEqual(calls, [
+    ["ls-files", "-z", "-s", "--cached"],
+    ["ls-files", "-z", "--others", "--exclude-standard"],
+  ]);
+});
+
+test("lsFilesWorkingTree (regression): a submodule gitlink (mode 160000, e.g. this repo's own `adr/`) is excluded, not treated as a scannable file", async () => {
+  const runner: Runner = (cmd, args) => {
+    if (args.includes("--cached")) {
+      // NOTE: `\x00`, not `\0` — `\0` immediately followed by a digit (this fixture's mode
+      // `160000` starts with `1`) is a legacy octal escape, not a NUL separator; using `\0` here
+      // silently merged both entries into one garbled string in an earlier draft of this test.
+      return Promise.resolve({
+        stdout: "100644 aaa 0\tREADME.md\x00160000 bbb 0\tadr\x00",
+        stderr: "",
+        code: 0,
+      });
+    }
+    return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+  };
+  const git = makeGitOps(runner, ".");
+  const files = await git.lsFilesWorkingTree();
+  assert.deepEqual(files, ["README.md"], "the 160000 submodule gitlink entry must not appear in the file list");
+});
+
+test("lsFilesWorkingTree: an empty working tree yields an empty list, not [\"\"]", async () => {
+  const runner: Runner = () => Promise.resolve({ stdout: "", stderr: "", code: 0 });
+  const git = makeGitOps(runner, ".");
+  const files = await git.lsFilesWorkingTree();
+  assert.deepEqual(files, []);
+});

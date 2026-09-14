@@ -176,8 +176,17 @@ async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, s
     if (!shouldScanFile(file)) continue;
     try {
       fileTexts.set(file, await readFile(file, "utf8"));
-    } catch {
-      continue; // binary/unreadable/deleted-since-ref — skip, not an error
+    } catch (err) {
+      // GitHub Issue #170 fix-now (cross-domain review of the sibling instrument,
+      // marker-corpus-probe.ts, demonstrated ~17% flake under real `npm test` concurrency; named
+      // there as an identical latent defect in THIS file's own `collectFullTreeFileTexts`, same
+      // catch shape, same already-merged two-subprocess test): this used to be a blanket
+      // `catch { continue; }`, silently treating ANY read failure — including a transient I/O
+      // error under load — as "file gone", which could silently undercount. ENOENT is the one
+      // genuinely legitimate skip (the path was listed but no longer exists); anything else is a
+      // real failure and must propagate loud, not get silently absorbed into a wrong count.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
   }
   return fileTexts;

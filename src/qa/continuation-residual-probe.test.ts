@@ -148,10 +148,22 @@ test("QA-14 continuation-residual-probe (real subprocess): --field=continuation-
 // itself); the parameter is deleted, not fixed — this pins that a stray positional argument is now
 // simply ignored (working-tree-only, same result with or without it), rather than silently
 // activating the old mismatch again.
-test("QA-14 continuation-residual-probe (real subprocess, regression): a stray positional argument no longer changes the result — working-tree-only, the ref/content-mismatch bug is deleted not merely dormant", async () => {
-  const withoutArg = await realRunner("node", ["src/qa/continuation-residual-probe.ts", "--field=continuation-marked"]);
-  const withStrayArg = await realRunner("node", ["src/qa/continuation-residual-probe.ts", "--field=continuation-marked", "a26e55a"]);
-  assert.equal(withoutArg.code, 0);
-  assert.equal(withStrayArg.code, 0);
-  assert.equal(withStrayArg.stdout, withoutArg.stdout, "a positional argument must have zero effect — the probe reads only the working tree");
+//
+// GitHub Issue #170 fix-now (s1-closeout-164-154 cross-domain review, filed against this file's
+// twin, marker-corpus-probe.test.ts, but this test shares the identical shape and root cause —
+// same catch previously swallowed any read error, not just a genuinely-gone file, in this file's
+// own `collectFullTreeFileTexts`): the original version of this test asserted byte-identical
+// stdout across TWO live subprocess spawns of a full-tree-scanning probe, demonstrated flaky under
+// real `npm test` concurrency. This is reduced to ONE spawn (with the stray argument present),
+// asserting the output SHAPE rather than comparing it against a second live walk — the stray
+// argument's zero-effect property is separately, deterministically pinned above by
+// `parseContinuationResidualField`'s own pure unit tests, with no I/O and no live-tree race.
+test("QA-14 continuation-residual-probe (real subprocess, regression): a stray positional argument still produces a valid working-tree answer, not the deleted ref/content-mismatch shape", async () => {
+  const result = await realRunner("node", [
+    "src/qa/continuation-residual-probe.ts",
+    "--field=continuation-marked",
+    "a26e55a",
+  ]);
+  assert.equal(result.code, 0, `probe must exit 0; stderr: ${result.stderr}`);
+  assert.match(result.stdout, /continuation-marked=\d+/, "a stray positional argument must not change the --field output shape");
 });

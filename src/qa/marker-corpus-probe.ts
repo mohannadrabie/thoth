@@ -23,7 +23,7 @@
 // with what the checker itself actually does.
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
-import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
+import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import { scanReferences, shouldScanFile } from "./reference-resolver.ts";
@@ -39,9 +39,20 @@ import { printInstrumentResult } from "../lib/instrument.ts";
 // file list against HEAD's working-tree content, a tree state that never existed). No real caller
 // anywhere in this repo (production code, `.github/workflows/ci.yml`, `package.json` scripts,
 // `completeness-claim-checker.ts`'s `KNOWN_INSTRUMENTS`, or this file's own test suite) ever passed
-// a non-default ref — confirmed by grep. The parameter is deleted, not fixed: `main()` always
-// resolves both the file list AND the content from the current working tree, the only state this
-// function has ever correctly supported.
+// a non-default ref — confirmed by grep. The parameter is deleted: `main()` no longer accepts a ref
+// at all (Issue #173, below, makes passing one a fail-loud error rather than a silent no-op).
+//
+// GitHub Issue #172 fix-now (red-team round-1 of the #164 close-out, attack 1 — filed against the
+// comment this replaces): deleting the `ref` parameter closed the MACHINE-VISIBLE half of the bug
+// but not the whole thing — `main()` still resolved the file LIST via `resolveChangedFiles(...,
+// "HEAD")` (a `git ls-tree HEAD` read) while CONTENT was always read from the working tree, so an
+// untracked, uncommitted, scannable new file was silently invisible to the count (demonstrated:
+// baseline total=989; add an untracked file with 3 bare `#N` citations, total stays 989; add the
+// SAME 3 citations to a TRACKED file instead, total becomes 992). List and content are now BOTH
+// drawn from the same tree state — the real, live working tree — via `git.lsFilesWorkingTree()`
+// (`git ls-files --cached --others --exclude-standard`, src/lib/git.ts), not a ref-pinned
+// `ls-tree` read. This is the accurate version of what the paragraph above used to (incorrectly)
+// claim was already true.
 
 // A MARKED bare `#N` reaches real classification (`classifyIssue` -> `verifyLocalIssue` ->
 // `issueExists`), same as QA-14's own collector pass does — this probe only cares which bucket
@@ -83,6 +94,26 @@ export function parseMarkerCorpusField(args: string[]): MarkerCorpusField | null
   throw new Error(`--field must be one of marked|unmarked|total, got "${value}"`);
 }
 
+/**
+ * GitHub Issue #173 fix-now (red-team round-1 of the #164 close-out, attack 2): a stray positional
+ * argument (a leftover `ref`, `not-a-ref-at-all`, `HEAD~5`, ...) or an unknown flag (`--bogus-flag`)
+ * used to be silently swallowed — the probe still printed a working-tree answer, exit 0, no
+ * warning — contradicting this file's own documented fail-loud convention
+ * (`parseMarkerCorpusField` above already throws on a bad `--field` VALUE). This closes the same
+ * gap for a bad argv SHAPE: any token that isn't itself a `--field=...` flag is now a hard error,
+ * before anything else runs. Pure — throws, never exits/logs itself, so it stays trivially unit
+ * testable.
+ */
+export function assertKnownArgs(args: string[]): void {
+  const unknown = args.filter((a) => !a.startsWith("--field="));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unrecognized argument(s): ${unknown.map((a) => JSON.stringify(a)).join(", ")} — this probe only accepts ` +
+        `--field=marked|unmarked|total (no positional ref — deleted, Issue #164 — and no other flag)`,
+    );
+  }
+}
+
 export interface MarkerCorpusStats {
   /** Bare #N matches that reached real classification (an explicit marker, or list-continuation). */
   marked: number;
@@ -116,23 +147,38 @@ export function computeMarkerCorpusStats(fileTexts: Map<string, string>): Marker
   return { marked, unmarked, total: marked + unmarked, filesScanned: fileTexts.size };
 }
 
-/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
- * `resolveChangedFiles`, driven here directly rather than via a real diff) so this probe scans
- * EXACTLY the file set QA-14 itself would scan in a full-tree run — one enumeration mechanism,
- * not a second copy of it. Content is always read from the current working tree (Issue #164 fix,
- * above): there is no `ref` parameter left to diverge from it. */
+/**
+ * GitHub Issue #172 fix (see the header comment for the full repro/rationale): the file LIST now
+ * comes from `git.lsFilesWorkingTree()` — tracked + untracked-but-not-ignored paths in the CURRENT
+ * working tree — the same tree state CONTENT is read from below, never a `ls-tree`-at-a-ref
+ * snapshot. This is a deliberate, new divergence from `continuation-residual-probe.ts`'s own
+ * `collectFullTreeFileTexts` — checked directly, structurally identical to this function's own
+ * pre-fix shape (its list still comes from `resolveChangedFiles(..., "HEAD")`, unchanged by this
+ * fix). That file carries the identical list/content-tree-state mismatch this fix closes here; it
+ * is a live, separate defect, flagged as its own follow-up rather than silently fixed alongside a
+ * differently-scoped Issue — one enumeration mechanism per file, not a second copy of either's
+ * marker/list-continuation regex logic.
+ */
 async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
-  const trackedFiles = resolved?.changedFiles ?? [];
+  const workingTreeFiles = await git.lsFilesWorkingTree();
 
   const fileTexts = new Map<string, string>();
-  for (const file of trackedFiles) {
+  for (const file of workingTreeFiles) {
     if (!shouldScanFile(file)) continue;
     try {
       fileTexts.set(file, await readFile(file, "utf8"));
-    } catch {
-      continue; // binary/unreadable/deleted-since-ref — skip, not an error
+    } catch (err) {
+      // GitHub Issue #170 fix-now (cross-domain review, demonstrated ~17% flake under real `npm
+      // test` concurrency): this used to be a blanket `catch { continue; }`, silently treating ANY
+      // read failure — including a transient I/O error under load — as "file gone", which could
+      // silently undercount. ENOENT is the one genuinely legitimate skip (the path was listed but
+      // no longer exists — e.g. deleted between listing and reading, or a git-index entry for a
+      // file removed from disk); anything else is a real failure and must propagate loud, not get
+      // silently absorbed into a wrong count (same "don't swallow into a silent pass" discipline as
+      // src/lib/git.ts's own Issue #18 comment, `resolveChangedFiles` above it).
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
   }
   return fileTexts;
@@ -141,6 +187,7 @@ async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, s
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const argv = process.argv.slice(2);
+  assertKnownArgs(argv);
   const field = parseMarkerCorpusField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
