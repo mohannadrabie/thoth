@@ -222,13 +222,17 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
 //      allowlist (`deriveMutableCredentialGrants`, below) -- an instrument read (JSON.parse of the
 //      real file), never a hand-typed array. A new grant on any file, anywhere, is in this set on
 //      its very next run with no code change here (fixes F1).
-//   2. Exactly ONE named, in-code exclusion: a file under `docs/reviews/`, because PRINCIPLES
-//      rule 11 makes a persisted, dated report immutable by construction -- its bytes are
-//      content-bounded for the file's whole life, not just until the next edit. Nothing else
-//      qualifies: an append-only LOG's *existing* rows are protected, but nothing stops a NEW row
-//      containing a live secret (`docs/decisions.md`); a `*.test.ts` fixture is edited every round
-//      of this very story. Both stay in the checked set, generalized rather than special-cased
-//      away (fixes F2's mis-scoped exclusions).
+//   2. One named, in-code exclusion: a file under `docs/reviews/`, on the theory that PRINCIPLES
+//      rule 11 forbids rewriting a persisted, dated report's existing bytes. GitHub Issue #203
+//      (red-team round-5, [MED], demonstrated, deliberately deferred, still open) found this
+//      overstates: rule 11's own first option is an *appended* addendum, so a report's bytes are
+//      not bounded at write time the way this exclusion assumes -- a brand-new report (or a fresh
+//      addendum) can still carry an unreviewed live secret on its first commit, same as any other
+//      file. This exclusion is a disclosed, pre-existing residual, not a closed gap; see Issue #203
+//      before treating `docs/reviews/*` as safe. `docs/decisions.md`'s append-only rows and every
+//      `*.test.ts` fixture (edited every round of this very story) are NOT given this exclusion --
+//      both stay in the checked set, generalized rather than special-cased away (fixes F2's
+//      mis-scoped exclusions).
 //   3. Every remaining {path, patternId} is checked against a pinned, already-reviewed baseline
 //      (`REVIEWED_BASELINE`, below): the sha256 hashes of the exact literal(s) present in that file
 //      when this baseline was pinned (this commit). A live match whose hash is NOT in the baseline
