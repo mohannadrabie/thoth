@@ -96,7 +96,7 @@ Branch `feat/path-b-precommit-secret-scan`, cut from `master` @ `49ff52e` (post 
 - Stage 5 audit: `node docs/receipt-check.mjs --scope path-b-precommit-secret-scan` run — flags most of the older reports REOPEN, all against rounds 1-3 (already fully read and closed out in a prior session per this file's own historical record; the flags are cosmetic checksum-off-by-one/vocabulary-classification artifacts on reports whose substantive findings are independently corroborated fixed by every subsequent round). Rounds 4-6 (this session's own work) read in full directly from disk, not receipt-trusted. Judgment call, disclosed rather than silent — re-run the command for the live, current breakdown rather than trusting a frozen figure here.
 - Logged the story's cost: `node docs/run-log.mjs story-shipped scope=path-b-precommit-secret-scan rounds=2 reports=10 findings=37 adrTokensSaved=311400 councilFired=false`.
 
-**Single next action:** Manager opens the PR (`gh pr create`, not human-only — merge is); human reviews and merges. See the Manager Summary for the exact PR link once opened.
+**PR opened:** [#204](https://github.com/mohannadrabie/thoth/pull/204) (`gh pr create`, not human-only — merge is). **Single next action:** human reviews and merges PR #204 (`gh pr merge 204 --squash` or via the GitHub UI, human-only).
 
 ## Resume point (superseded above, kept for continuity) — `s1-closeout-164-154` (Issues #164 + #154 + #180/#181/#183) — DONE, merged
 
