@@ -9,6 +9,7 @@
     "node": ">=22.18.0"
   },
   "scripts": {
+    "prepare": "node src/lib/git-hooks-install.ts",
     "build": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
@@ -31,7 +32,8 @@
     "qa:gate-manifest": "node src/qa/gate-manifest-check.ts",
     "qa:gate-latency-budget": "node src/qa/gate-latency-budget-check.ts",
     "policy:print": "node src/policy/config/print-cli.ts",
-    "oss:secret-scan": "node src/secret-scan/history-scan.ts"
+    "oss:secret-scan": "node src/secret-scan/history-scan.ts",
+    "oss:pre-commit-scan": "node src/secret-scan/pre-commit-scan.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",
