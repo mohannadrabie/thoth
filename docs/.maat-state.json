@@ -680,7 +680,7 @@
   "tier": "CRITICAL",
   "reviewRoundsSinceClean": 1,
   "reviewRoundsTotal": 2,
-  "humanRulingRequired": true,
+  "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
