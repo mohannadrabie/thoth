@@ -200,6 +200,63 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
   );
 });
 
+// GitHub Issue #199 (red-team round-3, path-b-precommit-secret-scan, [MED], security-class,
+// demonstrated): Issue #193's own fix -- reword the allowlist file's `reason` fields, delete its
+// self-grant -- correctly closed the blind spot for `docs/qa/secret-scan-allowlist.json` itself,
+// but the SAME blind spot then opened on `docs/STATE.md` and `docs/decisions.md`, when fixing a
+// LATER recurrence there needed its own whole-file `aws-access-key-id` grant on each. Red-team
+// demonstrated live: a DISTINCT key-shaped literal committed clean through both files via the real
+// installed hook while the identical literal in an ordinary file, and in the allowlist file itself,
+// was correctly refused -- because #193's own guard tests above are hardcoded to `ALLOWLIST_PATH`
+// alone and never ran against any other file.
+//
+// A first attempt at this fix derived the checked-file list live from EVERY credential-pattern
+// grant in the allowlist -- wrong scope, caught by this test itself on its first real run: it
+// immediately failed against a dozen ALREADY-ACCEPTED, intentional occurrences this project has
+// carried for a long time without incident -- test-fixture files that permanently define a
+// synthetic secret constant as their entire purpose (patterns.test.ts, simulated-commit.test.ts,
+// pre-commit-scan.test.ts, this file itself) and `docs/reviews/*.md` reports that permanently quote
+// an attack literal as required verbatim evidence (PRINCIPLES rule 19), the same way this project's
+// own established internal-hostname/email-address self-referential entries already work for those
+// lower-severity patterns. `docs/decisions.md` is the SAME category, not a gap: it is append-only by
+// explicit project rule (a row is never edited, only superseded by a new one), so its 2026-09-14 row
+// legitimately keeps the sed-command literal it was written with forever -- there is no way to make
+// its CURRENT text clean without violating that rule, the same as any of the other permanent records
+// above.
+//
+// `docs/STATE.md` is different in kind, not degree: it is not an append-only log, it is a routinely
+// REWRITTEN current-status document -- this exact file's own "Last updated"/resume-point sections get
+// replaced wholesale most sessions (including twice, live, this very session) -- so a live literal
+// there always indicates a FRESH mistake in this session's own most recent edit, not a permanent,
+// already-reasoned historical record. Red-team's own refutation makes the point precisely: commit
+// `ec11f5c` DID reword `STATE.md` to drop the literal while keeping the grant, so for `STATE.md` the
+// grant covers only a historical blob today, with no live text needing it -- exactly the property
+// this test locks in place and will re-fail the moment it stops being true.
+const NARRATIVE_STATUS_FILES = ["docs/STATE.md"];
+
+test("OSS-01 allowlist (GitHub Issue #199, red-team round-3 [MED], regression): this project's " +
+  "actively-rewritten current-status file (not its append-only historical logs, its test fixtures, " +
+  "or its evidence-quoting reports -- see the comment above for why those are a different, already-" +
+  "accepted category) has no live match for any credential-shaped pattern in its OWN current text, " +
+  "regardless of any whole-file allowlist grant covering it", async () => {
+  const offenders: string[] = [];
+  for (const path of NARRATIVE_STATUS_FILES) {
+    const raw = await readFile(path, "utf8");
+    for (const id of CREDENTIAL_SHAPED_PATTERN_IDS) {
+      const pattern = SECRET_PATTERNS.find((p) => p.id === id)!;
+      if (matchesPatternLive(raw, pattern)) offenders.push(`${path} (${id})`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `this project's current-status file(s) (${NARRATIVE_STATUS_FILES.join(", ")}) must never contain ` +
+      "a live credential-shaped match in their own CURRENT text, even where a whole-file allowlist " +
+      "grant exists to cover an old, already-reasoned historical blob -- describe an attack literal " +
+      `in prose, never reproduce it (GitHub Issue #199): ${offenders.join(", ")}`,
+  );
+});
+
 test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression, mutation-sensitivity " +
   "proof): both checks above ARE detected when a live credential-shaped literal/self-grant is " +
   "actually present -- proves the guards are real, not green-by-construction", () => {
@@ -217,6 +274,33 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression, m
     (e) => e.path === ALLOWLIST_PATH && CREDENTIAL_SHAPED_PATTERN_IDS.includes(e.patternId),
   );
   assert.equal(selfGrants.length, 1, "the self-grant detection itself must catch a credential-shaped grant when one is present");
+});
+
+test("OSS-01 allowlist (GitHub Issue #199, red-team round-3 [MED], regression, mutation-sensitivity " +
+  "proof): the check above genuinely reads each narrative-status file's real, current content -- " +
+  "not a stubbed or cached copy -- and would fail if a live literal were actually present", async () => {
+  // Reuses the same matchesPatternLive detection helper already proven live above (the #193
+  // mutation-sensitivity test); what needs proving here is narrower and specific to this test's own
+  // new plumbing -- that reading the real file and scanning its real bytes actually happens, not that
+  // pattern matching itself works. A fresh temp copy of a real narrative-status shape, seeded with a
+  // planted literal, must be caught by the exact same read-and-scan steps the real test performs.
+  const fixtureDir = await mkdtemp(join(tmpdir(), "oss01-narrative-status-"));
+  try {
+    const fixturePath = join(fixtureDir, "STATE.md");
+    await writeFile(
+      fixturePath,
+      "**Last updated:** a session note carelessly quoting AKIAFAKEFAKEFAKEFAKE verbatim\n",
+    );
+    const pattern = SECRET_PATTERNS.find((p) => p.id === "aws-access-key-id")!;
+    const raw = await readFile(fixturePath, "utf8");
+    assert.ok(
+      matchesPatternLive(raw, pattern),
+      "a real read of a fixture file containing a live literal must be detected by the same steps " +
+        "the #199 test above performs against docs/STATE.md itself",
+    );
+  } finally {
+    await rm(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 test("OSS-01: catches a fake secret planted in a NON-HEAD commit, and redacts it before logging", async () => {
