@@ -294,21 +294,69 @@ function unreviewedOccurrenceCount(raw: string, patternId: string, baselineHashe
 // exactly what a brand-new grant gets on its first run. Bump an entry only alongside a real review
 // of the new literal it would admit; anything else is exactly the "unreviewed occurrence" this
 // mechanism exists to catch.
-const REVIEWED_BASELINE: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "docs/STATE.md::aws-access-key-id": [],
-  "docs/decisions.md::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
-  "src/secret-scan/history-scan.test.ts::aws-access-key-id": [
-    "457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3",
-    "228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5",
-    // AKIABRANDNEWLITERALX -- this file's own F2 mutation-proof fixture literal (below), reviewed
-    // and pinned in this same commit.
-    "e9da1ee448bf00a9b51dc63897b3fc459d76a080a4cc900f03efb43a9fc45c08",
-  ],
-  "src/secret-scan/patterns.test.ts::aws-access-key-id": ["457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3"],
-  "src/secret-scan/patterns.test.ts::github-pat": ["69d9b3cd81135e6d313218061397834a72fca4a414f3c9fa86c9a3e703003d16"],
-  "src/secret-scan/patterns.test.ts::github-fine-grained-pat": ["f9d7b451214c89291bbfca241ea863a76e3785c4eb9e501d1d6f6160327a0d63"],
-  "src/secret-scan/simulated-commit.test.ts::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
-  "src/secret-scan/pre-commit-scan.test.ts::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+// GitHub Issue #201 (red-team round-5 F1, [MED], demonstrated): each entry now also carries a
+// non-empty `reason` -- the same field, same strictness (`typeof === "string" && .trim().length >
+// 0`), that `loadAllowlist` (history-scan.ts:150-159) already mechanically enforces on the real
+// allowlist six lines away. Without it, a new grant + a live literal + a self-computed sha256
+// baseline bump could land in one commit with zero justification -- this map is a suppression
+// list (DevOps ADR-0008) and was the only suppression surface in this repo without one.
+const REVIEWED_BASELINE: Readonly<Record<string, { readonly hashes: readonly string[]; readonly reason: string }>> = Object.freeze({
+  "docs/STATE.md::aws-access-key-id": {
+    hashes: [],
+    reason:
+      "zero-tolerance baseline: STATE.md's own \"Last updated\" section is rewritten in full every " +
+      "commit, so any live literal here is always a fresh, unreviewed mistake, never an " +
+      "already-reasoned historical record (original Issue #199 fix).",
+  },
+  "docs/decisions.md::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "the story's HARD STOP ruling row quotes the same sed search-string literal as STATE.md's " +
+      "matching row (docs/qa/secret-scan-allowlist.json's own grant reason) -- a command's search " +
+      "string can't be described instead of reproduced and still be copy-pasteable. Reviewed at pin time.",
+  },
+  "src/secret-scan/history-scan.test.ts::aws-access-key-id": {
+    hashes: [
+      "457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3",
+      "228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5",
+      // AKIABRANDNEWLITERALX -- this file's own F2 mutation-proof fixture literal (below), reviewed
+      // and pinned in this same commit.
+      "e9da1ee448bf00a9b51dc63897b3fc459d76a080a4cc900f03efb43a9fc45c08",
+    ],
+    reason:
+      "this file's own OSS-01 fixture literals: Issue #193's fake-AWS-key self-test fixture, plus " +
+      "this commit's own F2 mutation-proof fixture -- each clearly labeled fake at its point of use. Not a real credential.",
+  },
+  "src/secret-scan/patterns.test.ts::aws-access-key-id": {
+    hashes: ["457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3"],
+    reason:
+      "pattern-catalog unit test fixture proving the aws-access-key-id regex matches its target " +
+      "shape (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "src/secret-scan/patterns.test.ts::github-pat": {
+    hashes: ["69d9b3cd81135e6d313218061397834a72fca4a414f3c9fa86c9a3e703003d16"],
+    reason:
+      "pattern-catalog unit test fixture: a classic-shaped ghp_ literal proving the " +
+      "github-fine-grained-pat negative-control case (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "src/secret-scan/patterns.test.ts::github-fine-grained-pat": {
+    hashes: ["f9d7b451214c89291bbfca241ea863a76e3785c4eb9e501d1d6f6160327a0d63"],
+    reason:
+      "pattern-catalog unit test fixture proving the github-fine-grained-pat regex matches GitHub's " +
+      "real fine-grained-PAT shape (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "src/secret-scan/simulated-commit.test.ts::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "this file's own synthetic AWS-key-shaped fixture, planted directly into isolated mkdtemp git " +
+      "fixtures to prove buildSimulatedCommit() sources the real staged index (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "src/secret-scan/pre-commit-scan.test.ts::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "this file's own FAKE_SECRET constant, planted into isolated fixture repos to prove the " +
+      "pre-commit CLI and installed git hook both refuse it (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
 });
 
 test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-4 [MED]x2, " +
@@ -323,7 +371,7 @@ test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-
   const offenders: string[] = [];
   for (const { path, patternId } of grants) {
     const raw = await readFile(path, "utf8");
-    const baseline = REVIEWED_BASELINE[`${path}::${patternId}`] ?? [];
+    const baseline = REVIEWED_BASELINE[`${path}::${patternId}`]?.hashes ?? [];
     const n = unreviewedOccurrenceCount(raw, patternId, baseline);
     if (n > 0) offenders.push(`${path} (${patternId}): ${n} unreviewed occurrence(s) beyond its pinned baseline`);
   }
@@ -332,6 +380,43 @@ test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-
     [],
     "every still-mutable credential-granted file must carry no live match beyond its pinned, " +
       `already-reviewed baseline (GitHub Issue #199/#200): ${offenders.join("; ")}`,
+  );
+});
+
+// GitHub Issues #201 + #202 (red-team round-5 F1/F2, [MED]x2, both demonstrated): the checks above
+// pin WHICH occurrences are reviewed, but nothing pinned the derived set's own MEMBERSHIP or the
+// baseline's own JUSTIFICATION. Mutation M3 (widening IMMUTABLE_REPORT_PREFIX from "docs/reviews/"
+// to "docs/") silently dropped docs/STATE.md and docs/decisions.md from the checked set (8 -> 6
+// derived grants, measured) with every other test staying green (#202); separately,
+// REVIEWED_BASELINE's bare hex-hash entries carried no per-grant reason, unlike loadAllowlist's
+// mechanically-enforced `reason` field six lines away in history-scan.ts, so a new grant + a live
+// literal + a self-computed baseline hash could land in one commit with zero justification (#201).
+// Same discipline as completeness-claim-checker.ts's own DEFAULT_FILES precedent (Issue #142):
+// pin the set's exact membership and assert it, rather than trusting the derivation to keep
+// deriving the same thing forever.
+test("OSS-01 baseline integrity (GitHub Issues #201 + #202, red-team round-5 [MED]x2, " +
+  "demonstrated): REVIEWED_BASELINE's key set equals deriveMutableCredentialGrants(the real " +
+  "allowlist) exactly -- catching a silently widened/narrowed IMMUTABLE_REPORT_PREFIX (#202) -- " +
+  "and every baseline entry carries a non-empty, real per-grant reason, the same strictness " +
+  "loadAllowlist already enforces on the allowlist itself (#201)", async () => {
+  const allowlistJson: unknown = JSON.parse(await readFile(ALLOWLIST_PATH, "utf8"));
+  const allowlist = allowlistJson as { path: string; patternId: string; reason: string }[];
+  const derivedKeys = deriveMutableCredentialGrants(allowlist)
+    .map((g) => `${g.path}::${g.patternId}`)
+    .sort();
+  assert.deepEqual(
+    derivedKeys,
+    Object.keys(REVIEWED_BASELINE).sort(),
+    "REVIEWED_BASELINE's key set has drifted from the real allowlist's derived credential grants -- " +
+      "a narrowed/widened IMMUTABLE_REPORT_PREFIX, or a stale/missing baseline entry (GitHub Issue #202)",
+  );
+  const unjustified = Object.entries(REVIEWED_BASELINE)
+    .filter(([, v]) => typeof v.reason !== "string" || v.reason.trim().length === 0)
+    .map(([k]) => k);
+  assert.deepEqual(
+    unjustified,
+    [],
+    `every REVIEWED_BASELINE entry must carry a non-empty per-grant reason (GitHub Issue #201): ${unjustified.join(", ")}`,
   );
 });
 
@@ -357,7 +442,7 @@ test("OSS-01 allowlist (GitHub Issue #199 follow-up, mutation proof, red-team's 
     const raw = await readFile(fixturePath, "utf8");
     // No REVIEWED_BASELINE entry exists for this path -- `?? []`, same default a real brand-new
     // grant gets on its first run.
-    const n = unreviewedOccurrenceCount(raw, "aws-access-key-id", REVIEWED_BASELINE[`${fixturePath}::aws-access-key-id`] ?? []);
+    const n = unreviewedOccurrenceCount(raw, "aws-access-key-id", REVIEWED_BASELINE[`${fixturePath}::aws-access-key-id`]?.hashes ?? []);
     assert.ok(n > 0, "a brand-new grant's first live literal must be caught with zero prior baseline");
   } finally {
     await rm(dir, { recursive: true, force: true });
