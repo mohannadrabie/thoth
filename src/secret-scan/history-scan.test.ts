@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import { loadAllowlist, partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
@@ -204,57 +205,199 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
 // demonstrated): Issue #193's own fix -- reword the allowlist file's `reason` fields, delete its
 // self-grant -- correctly closed the blind spot for `docs/qa/secret-scan-allowlist.json` itself,
 // but the SAME blind spot then opened on `docs/STATE.md` and `docs/decisions.md`, when fixing a
-// LATER recurrence there needed its own whole-file `aws-access-key-id` grant on each. Red-team
-// demonstrated live: a DISTINCT key-shaped literal committed clean through both files via the real
-// installed hook while the identical literal in an ordinary file, and in the allowlist file itself,
-// was correctly refused -- because #193's own guard tests above are hardcoded to `ALLOWLIST_PATH`
-// alone and never ran against any other file.
+// LATER recurrence there needed its own whole-file `aws-access-key-id` grant on each.
 //
-// A first attempt at this fix derived the checked-file list live from EVERY credential-pattern
-// grant in the allowlist -- wrong scope, caught by this test itself on its first real run: it
-// immediately failed against a dozen ALREADY-ACCEPTED, intentional occurrences this project has
-// carried for a long time without incident -- test-fixture files that permanently define a
-// synthetic secret constant as their entire purpose (patterns.test.ts, simulated-commit.test.ts,
-// pre-commit-scan.test.ts, this file itself) and `docs/reviews/*.md` reports that permanently quote
-// an attack literal as required verbatim evidence (PRINCIPLES rule 19), the same way this project's
-// own established internal-hostname/email-address self-referential entries already work for those
-// lower-severity patterns. `docs/decisions.md` is the SAME category, not a gap: it is append-only by
-// explicit project rule (a row is never edited, only superseded by a new one), so its 2026-09-14 row
-// legitimately keeps the sed-command literal it was written with forever -- there is no way to make
-// its CURRENT text clean without violating that rule, the same as any of the other permanent records
-// above.
+// GitHub Issue #199 follow-up (red-team round-4, findings F1 + F2 + F3 -- Issue #199 reopened +
+// Issue #200): the first fix (commit `c96a4d5`) replaced one hardcoded path with a hardcoded
+// ONE-ELEMENT array (`NARRATIVE_STATUS_FILES = ["docs/STATE.md"]`) -- the exact same
+// hand-typed-opt-in shape this Issue itself was filed against, one file over (F1). A second,
+// independent gap (F2, Issue #200): the exclusion categories it reasoned about were unbounded in
+// TIME -- they exempted a file's FUTURE bytes forever, not just the already-reviewed bytes that
+// justified the exemption at the time (a NEW `docs/decisions.md` row, or a new trailing comment in
+// the already-granted `patterns.test.ts`, both committed clean with zero setup). F3: the exclusion
+// taxonomy itself was a hand-derived completeness claim -- CLAUDE.md forbids that for a non-trivial
+// set. All three are fixed together below by one DERIVED, data-driven mechanism, not a bigger
+// hand-typed list:
+//   1. The checked set is every {path, patternId} credential-shaped grant CURRENTLY in the real
+//      allowlist (`deriveMutableCredentialGrants`, below) -- an instrument read (JSON.parse of the
+//      real file), never a hand-typed array. A new grant on any file, anywhere, is in this set on
+//      its very next run with no code change here (fixes F1).
+//   2. Exactly ONE named, in-code exclusion: a file under `docs/reviews/`, because PRINCIPLES
+//      rule 11 makes a persisted, dated report immutable by construction -- its bytes are
+//      content-bounded for the file's whole life, not just until the next edit. Nothing else
+//      qualifies: an append-only LOG's *existing* rows are protected, but nothing stops a NEW row
+//      containing a live secret (`docs/decisions.md`); a `*.test.ts` fixture is edited every round
+//      of this very story. Both stay in the checked set, generalized rather than special-cased
+//      away (fixes F2's mis-scoped exclusions).
+//   3. Every remaining {path, patternId} is checked against a pinned, already-reviewed baseline
+//      (`REVIEWED_BASELINE`, below): the sha256 hashes of the exact literal(s) present in that file
+//      when this baseline was pinned (this commit). A live match whose hash is NOT in the baseline
+//      is, by construction, an occurrence nobody has reviewed yet -- it fails, whether it arrives
+//      via a brand-new grant (F1's class -- empty baseline, anything fails) or a new occurrence
+//      added to an already-granted file (F2's class -- the file has a baseline, but this specific
+//      value isn't in it). `docs/STATE.md`'s own baseline is the empty set, unchanged from the
+//      original #199 fix's zero-tolerance property (its "Last updated" section is routinely
+//      rewritten in full, so a live literal there is always a fresh mistake, never an
+//      already-reasoned historical record).
+// Hashes, never raw literal text, in the baseline map below -- so this file's own baseline data
+// can't itself become the next place a secret-shaped string gets reproduced (the same discipline
+// `redact()` applies in production code).
 //
-// `docs/STATE.md` is different in kind, not degree: it is not an append-only log, it is a routinely
-// REWRITTEN current-status document -- this exact file's own "Last updated"/resume-point sections get
-// replaced wholesale most sessions (including twice, live, this very session) -- so a live literal
-// there always indicates a FRESH mistake in this session's own most recent edit, not a permanent,
-// already-reasoned historical record. Red-team's own refutation makes the point precisely: commit
-// `ec11f5c` DID reword `STATE.md` to drop the literal while keeping the grant, so for `STATE.md` the
-// grant covers only a historical blob today, with no live text needing it -- exactly the property
-// this test locks in place and will re-fail the moment it stops being true.
-const NARRATIVE_STATUS_FILES = ["docs/STATE.md"];
+// This also fixes F3: there is no longer a hand-typed "these are the N files in M categories"
+// claim anywhere in this comment for a future edit to silently drift out of sync with -- the
+// derivation re-reads the real allowlist every run, and the self-check test near the end of this
+// file (which runs this very file's own text through QA-15's `completeness-claim-checker`)
+// mechanically verifies no such claim has crept back in.
 
-test("OSS-01 allowlist (GitHub Issue #199, red-team round-3 [MED], regression): this project's " +
-  "actively-rewritten current-status file (not its append-only historical logs, its test fixtures, " +
-  "or its evidence-quoting reports -- see the comment above for why those are a different, already-" +
-  "accepted category) has no live match for any credential-shaped pattern in its OWN current text, " +
-  "regardless of any whole-file allowlist grant covering it", async () => {
+const IMMUTABLE_REPORT_PREFIX = "docs/reviews/";
+
+/** Pure (F1's actual fix): every credential-shaped grant in `allowlist`, minus the one named,
+ * content-bounded exclusion (a dated `docs/reviews/*.md` report; PRINCIPLES rule 11). No
+ * hand-typed opt-in list -- add a grant on any new file anywhere and it is in this set on the very
+ * next run, with no change to this function. */
+function deriveMutableCredentialGrants(
+  allowlist: { path: string; patternId: string }[],
+): { path: string; patternId: string }[] {
+  const seen = new Set<string>();
+  const out: { path: string; patternId: string }[] = [];
+  for (const e of allowlist) {
+    if (!CREDENTIAL_SHAPED_PATTERN_IDS.includes(e.patternId)) continue;
+    if (e.path.startsWith(IMMUTABLE_REPORT_PREFIX)) continue;
+    const key = `${e.path}::${e.patternId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ path: e.path, patternId: e.patternId });
+  }
+  return out;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/** Pure: live match substrings for one patternId in one file's raw current text. */
+function liveMatchValues(raw: string, patternId: string): string[] {
+  const pattern = SECRET_PATTERNS.find((p) => p.id === patternId)!;
+  return [...raw.matchAll(new RegExp(pattern.regex.source, pattern.regex.flags))].map((m) => m[0]);
+}
+
+/** Pure (F2's actual fix): the count of live matches whose sha256 is NOT already in the pinned,
+ * already-reviewed baseline for this {path, patternId} -- i.e. occurrences nobody has reviewed. */
+function unreviewedOccurrenceCount(raw: string, patternId: string, baselineHashes: readonly string[]): number {
+  return liveMatchValues(raw, patternId).filter((v) => !baselineHashes.includes(sha256(v))).length;
+}
+
+// Pinned at this fix's own commit: the sha256 hashes of the exact, already-reviewed occurrences
+// this repo's real history carries today for each still-mutable credential-granted file (computed
+// via the same `deriveMutableCredentialGrants` + live-scan mechanism above, against real HEAD --
+// not hand-counted). A key with no entry here defaults to an EMPTY baseline (zero tolerance) --
+// exactly what a brand-new grant gets on its first run. Bump an entry only alongside a real review
+// of the new literal it would admit; anything else is exactly the "unreviewed occurrence" this
+// mechanism exists to catch.
+const REVIEWED_BASELINE: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "docs/STATE.md::aws-access-key-id": [],
+  "docs/decisions.md::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+  "src/secret-scan/history-scan.test.ts::aws-access-key-id": [
+    "457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3",
+    "228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5",
+    // AKIABRANDNEWLITERALX -- this file's own F2 mutation-proof fixture literal (below), reviewed
+    // and pinned in this same commit.
+    "e9da1ee448bf00a9b51dc63897b3fc459d76a080a4cc900f03efb43a9fc45c08",
+  ],
+  "src/secret-scan/patterns.test.ts::aws-access-key-id": ["457643f44d19aed85fd756aa50cc0cd6b57376d4e8f5a72f9f85972a522002a3"],
+  "src/secret-scan/patterns.test.ts::github-pat": ["69d9b3cd81135e6d313218061397834a72fca4a414f3c9fa86c9a3e703003d16"],
+  "src/secret-scan/patterns.test.ts::github-fine-grained-pat": ["f9d7b451214c89291bbfca241ea863a76e3785c4eb9e501d1d6f6160327a0d63"],
+  "src/secret-scan/simulated-commit.test.ts::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+  "src/secret-scan/pre-commit-scan.test.ts::aws-access-key-id": ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+});
+
+test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-4 [MED]x2, " +
+  "regression): every still-mutable file carrying a credential-pattern allowlist grant has no " +
+  "live match beyond its own pinned, already-reviewed baseline -- the checked set is DERIVED from " +
+  "the real allowlist every run (no hand-typed opt-in list, F1), and each grant's exemption is " +
+  "bounded to its already-reviewed occurrences, not the whole file forever (F2)", async () => {
+  const allowlistJson: unknown = JSON.parse(await readFile(ALLOWLIST_PATH, "utf8"));
+  const allowlist = allowlistJson as { path: string; patternId: string; reason: string }[];
+  const grants = deriveMutableCredentialGrants(allowlist);
+
   const offenders: string[] = [];
-  for (const path of NARRATIVE_STATUS_FILES) {
+  for (const { path, patternId } of grants) {
     const raw = await readFile(path, "utf8");
-    for (const id of CREDENTIAL_SHAPED_PATTERN_IDS) {
-      const pattern = SECRET_PATTERNS.find((p) => p.id === id)!;
-      if (matchesPatternLive(raw, pattern)) offenders.push(`${path} (${id})`);
-    }
+    const baseline = REVIEWED_BASELINE[`${path}::${patternId}`] ?? [];
+    const n = unreviewedOccurrenceCount(raw, patternId, baseline);
+    if (n > 0) offenders.push(`${path} (${patternId}): ${n} unreviewed occurrence(s) beyond its pinned baseline`);
   }
   assert.deepEqual(
     offenders,
     [],
-    `this project's current-status file(s) (${NARRATIVE_STATUS_FILES.join(", ")}) must never contain ` +
-      "a live credential-shaped match in their own CURRENT text, even where a whole-file allowlist " +
-      "grant exists to cover an old, already-reasoned historical blob -- describe an attack literal " +
-      `in prose, never reproduce it (GitHub Issue #199): ${offenders.join(", ")}`,
+    "every still-mutable credential-granted file must carry no live match beyond its pinned, " +
+      `already-reviewed baseline (GitHub Issue #199/#200): ${offenders.join("; ")}`,
   );
+});
+
+test("OSS-01 allowlist (Issue #199 follow-up, mutation/positive-control proof, F1): " +
+  "deriveMutableCredentialGrants includes ANY new file's credential grant -- proving the checked " +
+  "set is genuinely derived, not a hardcoded list scoped to docs/STATE.md alone", () => {
+  const fakeAllowlist = [
+    { path: "CHANGELOG.md", patternId: "aws-access-key-id" }, // a file never named anywhere in this test file
+    { path: "docs/reviews/some-report-2026-09-14.md", patternId: "aws-access-key-id" }, // the one real exclusion
+    { path: "docs/STATE.md", patternId: "email-address" }, // non-credential pattern id, excluded on that basis
+    { path: "CHANGELOG.md", patternId: "aws-access-key-id" }, // duplicate grant, deduped
+  ];
+  assert.deepEqual(deriveMutableCredentialGrants(fakeAllowlist), [{ path: "CHANGELOG.md", patternId: "aws-access-key-id" }]);
+});
+
+test("OSS-01 allowlist (GitHub Issue #199 follow-up, mutation proof, red-team's own CHANGELOG.md " +
+  "attack shape, F1): a BRAND-NEW file grant with no pinned baseline blocks on its very first live " +
+  "occurrence -- proves the empty-default baseline is real, not a silent pass", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-newgrant-"));
+  try {
+    const fixturePath = join(dir, "CHANGELOG.md");
+    await writeFile(fixturePath, "- fixed a bug, accidentally left AKIAFAKEFAKEFAKEFAKE in the notes\n");
+    const raw = await readFile(fixturePath, "utf8");
+    // No REVIEWED_BASELINE entry exists for this path -- `?? []`, same default a real brand-new
+    // grant gets on its first run.
+    const n = unreviewedOccurrenceCount(raw, "aws-access-key-id", REVIEWED_BASELINE[`${fixturePath}::aws-access-key-id`] ?? []);
+    assert.ok(n > 0, "a brand-new grant's first live literal must be caught with zero prior baseline");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("OSS-01 allowlist (GitHub Issue #200 follow-up, mutation proof, red-team's own " +
+  "docs/decisions.md-new-row / patterns.test.ts-trailing-comment attack shape, F2): an " +
+  "ALREADY-baselined file's already-reviewed literal stays clean, but ONE new, distinct live " +
+  "literal beyond its pinned baseline still blocks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-beyondbaseline-"));
+  try {
+    const fixturePath = join(dir, "already-granted.md");
+    const baseline = [sha256("AKIAFAKEFAKEFAKEFAKE")]; // simulates a real pinned baseline
+    await writeFile(
+      fixturePath,
+      "old, already-reviewed row: AKIAFAKEFAKEFAKEFAKE\nnew row nobody has reviewed: AKIABRANDNEWLITERALX\n",
+    );
+    const raw = await readFile(fixturePath, "utf8");
+    const n = unreviewedOccurrenceCount(raw, "aws-access-key-id", baseline);
+    assert.equal(n, 1, "the already-reviewed literal must not re-trip the gate, but the new distinct one must");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// GitHub Issue #199 follow-up (F3): the comment block above no longer makes a hand-typed
+// completeness claim about "N files in M categories" for a future edit to drift out of sync with
+// -- but to keep it that way, this file's own real text is run through QA-15's own instrument
+// (`completeness-claim-checker.ts`, already proven sound by its own test suite) on every
+// `npm test`, the same mechanical check CLAUDE.md's "no hand-derived completeness claims" rule
+// requires. A reintroduced "N files, M categories" claim with no `[[completeness: ...]]` marker
+// would fail this test the same way it would fail against `docs/STATE.md`/`CHANGELOG.md`.
+test("OSS-01 allowlist (GitHub Issue #199 follow-up, F3): this file's own text carries no " +
+  "un-instrumented numeric completeness claim -- mechanically verified via QA-15's " +
+  "completeness-claim-checker, not hand-asserted in a comment", async () => {
+  const { checkCompleteness } = await import("../qa/completeness-claim-checker.ts");
+  const ownText = await readFile("src/secret-scan/history-scan.test.ts", "utf8");
+  const result = await checkCompleteness(ownText, realRunner);
+  assert.equal(result.ok, true, `this file's own text failed QA-15: ${result.summary}\n${result.details.join("\n")}`);
 });
 
 test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression, mutation-sensitivity " +
