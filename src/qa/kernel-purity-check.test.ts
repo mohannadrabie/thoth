@@ -241,6 +241,26 @@ test("scanForbiddenGlobalsAst (Issue #210 fix-now, false-positive guard): a sing
   assert.deepEqual(scanForbiddenGlobalsAst("x.constructor();"), []);
 });
 
+test("scanForbiddenGlobalsAst (Issue #210 re-confirm fix-now, app-security-reviewer 2026-09-17): the bracket-notation and mixed dot/bracket variants of the prototype-pivot chain are flagged too — the undisclosed, easier bypass of the original dot-only check, requiring no variable-splitting or aliasing at all", () => {
+  const cases = [
+    '({})["constructor"]["constructor"]("return this")();',
+    '({})["constructor"].constructor("return this")();',
+    '({}).constructor["constructor"]("return this")();',
+  ];
+  for (const source of cases) {
+    const found = scanForbiddenGlobalsAst(source);
+    assert.ok(
+      found.some((f) => f.name === "constructor-pivot"),
+      `expected the constructor-pivot check to flag: ${source}`,
+    );
+  }
+});
+
+test("scanForbiddenGlobalsAst (Issue #210 re-confirm fix-now, false-positive guard): a single-level `.constructor` access via BRACKET notation is NOT flagged, same as the dot-notation guard above", () => {
+  assert.deepEqual(scanForbiddenGlobalsAst('x["constructor"].name;'), []);
+  assert.deepEqual(scanForbiddenGlobalsAst('x["constructor"]();'), []);
+});
+
 test("scanForbiddenGlobalsAst (Issue #210, disclosed residual, documented not guessed past): splitting the `.constructor.constructor` chain across two variable declarations bypasses the narrow adjacent-token check — the check is root-independent but not alias-of-`.constructor`-aware", () => {
   const found = scanForbiddenGlobalsAst(
     ["const step1 = ({}).constructor;", "const step2 = step1.constructor;", 'step2("return this")();'].join("\n"),
@@ -395,6 +415,18 @@ test("checkKernelPurity (Issue #210 fix-now, non-vacuous): the .constructor.cons
   assert.equal(violating.ok, false);
   const details = violating.details.join("\n");
   assert.match(details, /constructor-pivot\.ts.*"constructor-pivot" found/);
+
+  const clean = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/clean");
+  assert.equal(clean.ok, true, clean.details.join("\n"));
+});
+
+test("checkKernelPurity (Issue #210 re-confirm fix-now, non-vacuous): the bracket-notation and mixed dot/bracket prototype-pivot variants are caught in the VIOLATING self-test fixture, and the extended bracket-notation false-positive guards stay clean", async () => {
+  const violating = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(violating.ok, false);
+  const violatingCount = violating.details.filter(
+    (d) => d.includes("constructor-pivot.ts") && d.includes('"constructor-pivot" found'),
+  ).length;
+  assert.equal(violatingCount, 4, violating.details.join("\n"));
 
   const clean = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/clean");
   assert.equal(clean.ok, true, clean.details.join("\n"));

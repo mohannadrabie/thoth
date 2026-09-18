@@ -50,27 +50,44 @@
 //       `setInterval`/`require` specifically (property/element access on them, e.g. `.bind`/
 //       `.name`, is the unrealistic case) — without this branch, the alias-tracking the Q1 ruling
 //       added for exactly those four roots was nullified against their own primary attack surface;
-//   (d) the `<expr>.constructor.constructor(...)` prototype-pivot call — Issue #210 fix-now. A
-//       root-INDEPENDENT check: any adjacent `.constructor.constructor` property-access chain
-//       immediately called is itself the violation, regardless of what `<expr>` is — this is the
-//       textbook `Function`-constructor-via-prototype-pivot sandbox escape
-//       (`({}).constructor.constructor("return this")()`), which reaches `globalThis`/arbitrary
-//       code execution without ever writing any of the 9 tracked root identifiers as literal text,
-//       anywhere, even in a string — so alias/root tracking structurally cannot catch it, and this
-//       is a distinct detection rule, not an extension of (a)-(c). Deliberately narrow to the exact
-//       adjacent-token shape (verified against this repo's own `src/policy/kernel/**` production
-//       code and every `clean/` self-test fixture: zero matches, so zero false-positive risk from
-//       adding it) — a single-level `.constructor` access/call (`x.constructor(...)`, or
-//       `x.constructor.name`) is NOT flagged, only the double chain immediately called.
+//   (d) the `<expr>.constructor.constructor(...)` prototype-pivot call — Issue #210 fix-now,
+//       re-confirm fix-now (2026-09-17, closes the bracket-notation bypass below). A
+//       root-INDEPENDENT check: any adjacent two-hop `.constructor`-then-`.constructor` access
+//       chain immediately called is itself the violation, regardless of what `<expr>` is AND
+//       regardless of whether each hop is written with dot notation, bracket notation
+//       (`["constructor"]`, constant-folded), or a mix of the two — this is the textbook
+//       `Function`-constructor-via-prototype-pivot sandbox escape
+//       (`({}).constructor.constructor("return this")()`, or the identical
+//       `({})["constructor"]["constructor"]("return this")()`), which reaches `globalThis`/
+//       arbitrary code execution without ever writing any of the 9 tracked root identifiers as
+//       literal text, anywhere, even in a string — so alias/root tracking structurally cannot
+//       catch it, and this is a distinct detection rule, not an extension of (a)-(c). Deliberately
+//       narrow to the exact adjacent-token shape (verified against this repo's own
+//       `src/policy/kernel/**` production code and every `clean/` self-test fixture: zero matches,
+//       so zero false-positive risk from adding it) — a single-level `.constructor` access/call
+//       (`x.constructor(...)`, `x["constructor"]()`, or `x.constructor.name`) is NOT flagged, only
+//       the double chain immediately called.
 // Both layers feed the same `"forbidden-global"` violation kind. Disclosed residual of the AST
 // layer (documented, not guessed past — same convention `stripComments` below already uses): a
 // fully dynamic/runtime-computed identifier or property name (built at runtime from a value with
 // no static string form) is inherently unresolvable by static analysis and stays undetected here,
-// same as in the regex layer; and (d)'s prototype-pivot check is intentionally syntactic/adjacent-
-// token-only — splitting the chain across two variables (`const step1 = ({}).constructor; const
-// step2 = step1.constructor; step2("return this")();`) is NOT caught, because it never writes the
-// literal `.constructor.constructor` chain and (unlike (a)-(c)) this check does not track aliases
-// of `.constructor` itself. Neither gap is a defect in what shipped; both are inherent-limit/scope
+// same as in the regex layer.
+//
+// (d)'s prototype-pivot check, re-confirm fix-now (Issue #210, app-security-reviewer,
+// 2026-09-17): the original dot-only chain resolution (`.constructor.constructor(...)`) left an
+// undisclosed, easier bypass — the identical escape written with bracket notation instead
+// (`({})["constructor"]["constructor"]("return this")()`), or any mixed dot/bracket chain,
+// required no variable-splitting or aliasing at all. Both hops of the two-deep chain are now
+// resolved generically (`asConstructorAccess`): a property name OR a constant-folded bracket key
+// equal to `"constructor"`, in any combination, dot/dot, bracket/bracket, or mixed — so
+// `obj.constructor.constructor(...)`, `obj["constructor"]["constructor"](...)`, and
+// `obj.constructor["constructor"](...)` all funnel through the same check now. Remaining
+// disclosed residual, honestly narrower than before but not fully closed: the check is still
+// syntactic/adjacent-token-only and does not track aliases of `.constructor` itself — splitting
+// the chain across two variables (`const step1 = ({}).constructor; const step2 =
+// step1.constructor; step2("return this")();`) is still NOT caught, in either notation, because it
+// never writes the literal two-hop chain in one expression. Neither this residual nor the
+// resolved-globals gap above is a defect in what shipped; both are inherent-limit/scope
 // disclosures, same footing as the regex layer's own literal-text limits.
 //
 // Scope note (documented, not guessed past — PRINCIPLES.md rule 18): this checker scans every
@@ -299,10 +316,25 @@ function detectDirectCallViolation(
   };
 }
 
-/** `expr`, cast-unwrapped, when it is a `.constructor` property access — else undefined. */
-function asConstructorPropertyAccess(expr: ts.Expression): ts.PropertyAccessExpression | undefined {
+/**
+ * `expr`, cast-unwrapped, when it is a `.constructor` access via EITHER notation — dot
+ * (`x.constructor`) or bracket with a constant-folded `"constructor"` key (`x["constructor"]`,
+ * or a `+`-chain of string literals folding to that key) — else undefined. Resolving both
+ * notations through one generic check (rather than a second, parallel bracket-only branch) is
+ * what makes `obj.constructor.constructor(...)`, `obj["constructor"]["constructor"](...)`, and
+ * any mixed dot/bracket chain (`obj.constructor["constructor"](...)`) all funnel through the same
+ * two-deep resolution below (Issue #210 re-confirm, app-security-reviewer, 2026-09-17: bracket
+ * notation was an undisclosed full bypass of the dot-only original check).
+ */
+function asConstructorAccess(expr: ts.Expression): ts.Expression | undefined {
   const unwrapped = unwrapCasts(expr);
-  return ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor" ? unwrapped : undefined;
+  if (ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor") {
+    return unwrapped.expression;
+  }
+  if (ts.isElementAccessExpression(unwrapped) && foldStringConcat(unwrapped.argumentExpression) === "constructor") {
+    return unwrapped.expression;
+  }
+  return undefined;
 }
 
 /**
@@ -310,20 +342,21 @@ function asConstructorPropertyAccess(expr: ts.Expression): ts.PropertyAccessExpr
  * sandbox-escape idiom (`({}).constructor.constructor("return this")()`) that reaches
  * `Function`-constructor-equivalent power without ever writing any of the 9 tracked root
  * identifiers as literal text, anywhere. Root-independent by design: flags the exact adjacent
- * `.constructor.constructor` chain immediately called, regardless of what the base `<expr>` is —
- * this shape does not occur in legitimate code (verified against this repo's own
- * `src/policy/kernel/**` production code and every `clean/` self-test fixture: zero matches).
- * Narrow on purpose — see the header comment for the disclosed residual this narrowness leaves.
+ * `.constructor.constructor` chain immediately called, regardless of what the base `<expr>` is or
+ * which notation (dot, bracket, or mixed) links each hop — this shape does not occur in legitimate
+ * code (verified against this repo's own `src/policy/kernel/**` production code and every
+ * `clean/` self-test fixture: zero matches). Narrow on purpose — see the header comment for the
+ * disclosed residual this narrowness still leaves.
  */
 function detectConstructorPivotViolation(node: ts.CallExpression): AstFinding | null {
-  const outer = asConstructorPropertyAccess(node.expression);
+  const outer = asConstructorAccess(node.expression);
   if (!outer) return null;
-  if (!asConstructorPropertyAccess(outer.expression)) return null;
+  if (!asConstructorAccess(outer)) return null;
   return {
     name: "constructor-pivot",
     detail:
-      '".constructor.constructor(...)" prototype-pivot call — reaches Function-constructor-equivalent ' +
-      "power regardless of the base expression, independent of any tracked root identifier",
+      '".constructor.constructor(...)" prototype-pivot call (dot, bracket, or mixed notation) — reaches ' +
+      "Function-constructor-equivalent power regardless of the base expression, independent of any tracked root identifier",
   };
 }
 

@@ -23,3 +23,17 @@ export function pivotViaAliasedEmptyObject(): unknown {
   const pivot = obj as unknown as DoubleConstructorPivot;
   return pivot.constructor.constructor("return this")();
 }
+
+// Re-confirm fix-now (Issue #210, app-security-reviewer, 2026-09-17): the identical escape
+// written with bracket notation instead of dot notation, and a mixed dot/bracket chain — both
+// require no variable-splitting or aliasing at all, and were an undisclosed full bypass of the
+// original dot-only check.
+export function pivotViaBracketNotation(): unknown {
+  const pivot = {} as unknown as DoubleConstructorPivot;
+  return pivot["constructor"]["constructor"]("return this")();
+}
+
+export function pivotViaMixedNotation(): unknown {
+  const pivot = {} as unknown as DoubleConstructorPivot;
+  return pivot.constructor["constructor"]("return this")();
+}
