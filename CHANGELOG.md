@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `fix-215-ratify-claude-docs` (Issue #215): `AC1-b` pin updated for the 8th known connector, `claude.ai Claude Docs`
+
+STANDARD tier (ratified by the Manager, `docs/run-log.jsonl`'s tier-ratified event, scope `fix-215-ratify-claude-docs`). No `test-writer` dispatch: no new/changed UI flow or API surface; a test pin plus a decisions row, no runtime change.
+
+- `src/policy/tools/central-classification.test.ts`: `AC1-b`'s pinned `knownConnectors` array gains `"claude.ai Claude Docs"` as the 8th entry, same order as `docs/qa/s5-central-classification.json`. Title, failure message, and every other test unchanged.
+- Cause: direct commit `83b6af9` added the entry to the fixture without updating the pin, so `AC1-b` failed with 878 passing and 1 failing.
+- `docs/decisions.md`: one new 2026-09-18 row. The human ratified the entry retroactively ("I added it myself"); shares the same connector-name spoofability as the other entries (Issue #90), its own capabilities not separately assessed; `expiresOn` (2026-10-07) untouched.
+- The same row records a human design ruling as direction only: the exact-pin-plus-separate-ratification-row mechanism is not a good one, since an entry present in the fixture JSON is itself the approval and these files are not user-editable at runtime. Nothing about the mechanism changes here; follow-up Issue #217 tracks replacing it. The ruling's premise conflicts with `docs/backlog.md` line 47 (an in-repo fixture is reachable by a session with commit access, and commit `83b6af9` is the counter-example); reconciling it and implementing the ruling needs an ADR-0021 amendment or a new ADR (PRINCIPLES rule 9), tracked in #217, so this row is not precedent that the mechanism has been changed.
+- `docs/.maat-state.json`: scope transitioned to `fix-215-ratify-claude-docs` / STANDARD, prior scope pushed into `priorScope`.
+- Not touched: `docs/qa/s5-central-classification.json`, `hooks/*`, `.claude/settings.json`.
+
 ### Added — Issue #63: AST-based hardening for `kernel-purity-check.ts`'s forbidden-globals scan
 
 STANDARD tier (ratified by the Manager, `docs/run-log.jsonl`'s tier-ratified event, scope `kernel-purity-ast-hardening`). No `test-writer` dispatch: a QA/CI instrument's own internal detection logic, no new/changed UI flow or API surface — covered by `story-implementer`'s own unit tests per this project's test-first carve-out.
