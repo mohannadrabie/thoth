@@ -40,3 +40,4 @@
 {"at":"2026-09-15T03:05:27.004Z","event":"story-shipped","scope":"path-b-precommit-secret-scan","rounds":"2","reports":"10","findings":"37","adrTokensSaved":"311400","councilFired":"false"}
 {"at":"2026-09-17T23:56:01.860Z","event":"tier-ratified","scope":"friendly-halt-messages","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"named sensitive area (policy enforcement/session gates), hard rule is unconditional regardless of edit size, file has history of real defects found on small message edits"}
 {"at":"2026-09-18T01:38:40.354Z","event":"story-shipped","scope":"friendly-halt-messages","rounds":"0","reports":"4","findings":"8","adrTokensSaved":"86500","councilFired":"false"}
+{"at":"2026-09-18T02:17:52.987Z","event":"tier-ratified","scope":"kernel-purity-ast-hardening","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"QA instrument hardening, additive/union-only, no sensitive-area file touched, no live gate wired"}
