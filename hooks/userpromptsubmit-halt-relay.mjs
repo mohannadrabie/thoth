@@ -114,11 +114,19 @@ const UNLOCK_HINTS = Object.freeze({
     "unlock: the exemption fixture ITSELF has expired (this is NOT the same as an unlisted name -- re-adding an already-listed tool/connector name will NOT unlock this, since expiry reverts BOTH allowlists regardless of their contents) -- re-ratify with a NEW expiresOn via a fresh, dated docs/decisions.md row and update docs/qa/s5-central-classification.json accordingly, or remove the exemption outright, then resume or start a new session -- SessionStart reconciles this reason automatically once the fixture is renewed",
 });
 
+/** FIX-NOW (CRITICAL-tier review round, `red-team`): a reason key shaped like `constructor`,
+ * `__proto__`, `hasOwnProperty`, or `valueOf` resolves through the JS prototype chain via a bare
+ * `MAP[key] ?? fallback` lookup (every plain object inherits these from `Object.prototype`, so the
+ * lookup never actually misses and `??`'s own nullish-fallback never fires), rendering
+ * `function Object() { [native code] }` (or similar) as the label instead of falling back to the
+ * generic, still-actionable text. This still fails closed (exit 2 is unaffected either way) but
+ * names neither the real reason nor a real unlock. `Object.hasOwn(UNLOCK_HINTS, reasonKey)` checks
+ * membership without walking the prototype chain, so a reason key matching an inherited
+ * Object.prototype member now correctly falls through to the generic fallback below. */
 function unlockHintFor(reasonKey) {
-  return (
-    UNLOCK_HINTS[reasonKey] ??
-    `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`
-  );
+  return Object.hasOwn(UNLOCK_HINTS, reasonKey)
+    ? UNLOCK_HINTS[reasonKey]
+    : `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`;
 }
 
 /** `friendly-halt-messages` story: short, human-readable labels for the 4 SUR-03-owned reason keys
@@ -133,8 +141,12 @@ const FRIENDLY_LABELS = Object.freeze({
   "SUR-03-central-fixture-expired": "Allowlist exemption expired",
 });
 
+/** Same prototype-chain fix as `unlockHintFor` above (FIX-NOW, `red-team`, CRITICAL-tier review
+ * round): `Object.hasOwn` instead of a bare `??` lookup, so a reason key shaped like `constructor`
+ * etc. falls back to the raw key itself rather than resolving to an inherited
+ * `Object.prototype` member. */
 function friendlyLabelFor(reasonKey) {
-  return FRIENDLY_LABELS[reasonKey] ?? reasonKey;
+  return Object.hasOwn(FRIENDLY_LABELS, reasonKey) ? FRIENDLY_LABELS[reasonKey] : reasonKey;
 }
 
 function readStdin() {
