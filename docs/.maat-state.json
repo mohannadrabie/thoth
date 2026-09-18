@@ -676,15 +676,26 @@
       }
     ]
   },
-  "scope": "friendly-halt-messages",
-  "tier": "CRITICAL",
+  "scope": "kernel-purity-ast-hardening",
+  "tier": "STANDARD",
   "reviewRoundsSinceClean": 0,
-  "reviewRoundsTotal": 0,
+  "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
+  "note_2026-09-17": "kernel-purity-ast-hardening: story-implementer proposed STANDARD (QA instrument hardening, additive/union-only, no sensitive-area file touched, no live gate wired); Manager ratified as proposed, unchanged (run-log.mjs tier-ratified logged 2026-09-18T03:11:00Z -- this transition itself was the fix for cross-domain-reviewer's Finding 2/Issue-class gap: the event was missing on this branch at build time, backfilled here before this story's tier-ratification is reused by /maat:verify). Stage-3 round-1: app-security-reviewer REWORK (1 HIGH #211 + 1 MED #210, both demonstrated) + cross-domain-reviewer REWORK (1 HIGH, independently concurring #211, + 1 MED code-traced -- this very state-transition gap). reviewRoundsSinceClean/Total both 1 (first REWORK-class round). Manager-decided fix-now round (this session) closed all three findings in one round: Issue #211 (ts.isCallExpression handling added to detectUsages, closing the alias-then-call bypass for fetch/setTimeout/setInterval/require -- the dominant real invocation shape for those 4 roots), Issue #210 (a root-independent `.constructor.constructor(...)` prototype-pivot check added, narrow by design, verified zero false positives against real src/policy/kernel/** and every clean/ fixture), and this state-transition itself. Both new checks mutation-verified: 5 new tests confirmed red against the pre-fix code (git-stash before/after), green after. Awaiting targeted re-confirm from both reviewers on the delta only.",
   "priorScope": {
+    "scope": "friendly-halt-messages",
+    "tier": "CRITICAL",
+    "reviewRoundsSinceClean": 0,
+    "reviewRoundsTotal": 0,
+    "humanRulingRequired": false,
+    "councilHeld": false,
+    "councilVerdict": null,
+    "roundsSinceLastGo": 0,
+    "note_2026-09-17": "friendly-halt-messages: SHIPPABLE, PR #208 open, awaiting human review + merge. See docs/STATE.md's own resume-point section for the full round-1/fix-now/round-2 account (red-team go/clean-class + app-security-reviewer APPROVE + cross-domain-reviewer APPROVE-WITH-CONDITIONS round-1; one fix-now round closing the quote-forgery/prototype-leak findings; red-team round-2 re-confirm go/clean-class). run-log.mjs story-shipped logged 2026-09-18T01:38:40Z.",
+    "priorScope": {
     "scope": "path-b-precommit-secret-scan",
     "tier": "CRITICAL",
     "reviewRoundsSinceClean": 0,
@@ -761,4 +772,5 @@
       }
     }
   }
+}
 }
