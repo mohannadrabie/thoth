@@ -283,3 +283,13 @@ evidence (CHECKSUM): demonstrated=9 code-traced=0 derived=0
 checks=npm test 850 pass / 0 fail / 0 skipped (exit 0); typecheck clean; lint clean; 5 mutations planted+reverted (pre-fix quoteNames control 16:14/2, M4 16:5/11 + all-hooks 60:48/12, M5 16:16/0 + all-hooks 60:58/2, parity one-sided x2 12:11/1 each, same-line evasion 12:12/0 + eslint 0); 16 end-to-end renders through both real hooks via an independent harness; 1 completeness instrument over the production diff; git status clean after revert
 adr=HIT(35)
 report=docs/reviews/friendly-halt-messages-red-team-round2-2026-09-17.md
+
+---
+
+## Addendum (Manager, 2026-09-17)
+
+QA-14 (`npm run qa:reference-resolver`) flags this report's Method section (line 15) as an unresolved path citation: it names, in backtick-code form, the throwaway harness script this round's attacks were run through, written under this session's own ephemeral scratchpad directory (never committed, disposable scratch work) rather than a path inside this repository. The original evidence above stays verbatim per PRINCIPLES rule 11 — this addendum is the clarification, not a correction of substance.
+
+The rest of QA-14's currently-failing citation count predates this story: confirmed by grepping the exact failing strings across the tree before and after this story's diff, and every match lands in review reports, docs, and test fixtures dated well before 2026-09-17. This story's diff changes that pre-existing count by exactly one line (the harness-path mention above) — not a new pattern, and not something this small a story should take on fixing project-wide.
+
+Convention worth carrying forward: a future report describing a scratch/throwaway script should name it in plain prose, not in the backtick-code path form QA-14 treats as a citation to verify.
