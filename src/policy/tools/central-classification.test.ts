@@ -52,6 +52,7 @@ test("AC1-b: the committed knownConnectors fixture is pinned exactly -- any edit
       "claude.ai Adobe for creativity",
       "claude.ai Canva",
       "claude.ai Spotify",
+      "claude.ai Claude Docs",
     ],
     "knownConnectors drifted from the pinned, reviewed fixture contents -- a NEW entry here requires a fresh, dated, human-ratified docs/decisions.md row, never a silent addition",
   );
