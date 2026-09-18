@@ -114,11 +114,39 @@ const UNLOCK_HINTS = Object.freeze({
     "unlock: the exemption fixture ITSELF has expired (this is NOT the same as an unlisted name -- re-adding an already-listed tool/connector name will NOT unlock this, since expiry reverts BOTH allowlists regardless of their contents) -- re-ratify with a NEW expiresOn via a fresh, dated docs/decisions.md row and update docs/qa/s5-central-classification.json accordingly, or remove the exemption outright, then resume or start a new session -- SessionStart reconciles this reason automatically once the fixture is renewed",
 });
 
+/** FIX-NOW (CRITICAL-tier review round, `red-team`): a reason key shaped like `constructor`,
+ * `__proto__`, `hasOwnProperty`, or `valueOf` resolves through the JS prototype chain via a bare
+ * `MAP[key] ?? fallback` lookup (every plain object inherits these from `Object.prototype`, so the
+ * lookup never actually misses and `??`'s own nullish-fallback never fires), rendering
+ * `function Object() { [native code] }` (or similar) as the label instead of falling back to the
+ * generic, still-actionable text. This still fails closed (exit 2 is unaffected either way) but
+ * names neither the real reason nor a real unlock. `Object.hasOwn(UNLOCK_HINTS, reasonKey)` checks
+ * membership without walking the prototype chain, so a reason key matching an inherited
+ * Object.prototype member now correctly falls through to the generic fallback below. */
 function unlockHintFor(reasonKey) {
-  return (
-    UNLOCK_HINTS[reasonKey] ??
-    `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`
-  );
+  return Object.hasOwn(UNLOCK_HINTS, reasonKey)
+    ? UNLOCK_HINTS[reasonKey]
+    : `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`;
+}
+
+/** `friendly-halt-messages` story: short, human-readable labels for the 4 SUR-03-owned reason keys
+ * (see hooks/sessionstart-tool-enum.mjs's own *_REASON_KEY constants), used as the prefix in place
+ * of the raw, hyphenated reason-key string (Manager-approved 2026-09-17). A reason key with no entry
+ * here falls back to the raw key itself via `friendlyLabelFor` below, mirroring `unlockHintFor`'s own
+ * existing generic-fallback pattern -- a future/unrecognized reason key never renders as `undefined`. */
+const FRIENDLY_LABELS = Object.freeze({
+  "SUR-03-unclassified-tool": "Unrecognized tool",
+  "SUR-03-unclassified-connector": "Unrecognized connector",
+  "SUR-03-enumeration-failed": "Tool/connector check failed",
+  "SUR-03-central-fixture-expired": "Allowlist exemption expired",
+});
+
+/** Same prototype-chain fix as `unlockHintFor` above (FIX-NOW, `red-team`, CRITICAL-tier review
+ * round): `Object.hasOwn` instead of a bare `??` lookup, so a reason key shaped like `constructor`
+ * etc. falls back to the raw key itself rather than resolving to an inherited
+ * `Object.prototype` member. */
+function friendlyLabelFor(reasonKey) {
+  return Object.hasOwn(FRIENDLY_LABELS, reasonKey) ? FRIENDLY_LABELS[reasonKey] : reasonKey;
 }
 
 function readStdin() {
@@ -216,10 +244,11 @@ function blockWithMessage(sessionId, humanMessage) {
 }
 
 /** Renders every active `[key, entry]` pair (already validated by `inspectHaltState`) as one
- * human-readable line each: the sanitized detail, followed by that key's own concrete unlock hint
- * (PRINCIPLES.md rule 2 / GitHub Issue #94) -- never just the bare problem restated. */
+ * human-readable line each: a friendly label (`friendlyLabelFor`, `friendly-halt-messages` story) in
+ * place of the raw reason key, followed by the sanitized detail, followed by that key's own concrete
+ * unlock hint (PRINCIPLES.md rule 2 / GitHub Issue #94) -- never just the bare problem restated. */
 function describeActiveReasons(activeReasons) {
-  return activeReasons.map(([key, entry]) => `${key}: ${sanitizeDetail(entry.detail)} (${unlockHintFor(key)})`);
+  return activeReasons.map(([key, entry]) => `${friendlyLabelFor(key)}: ${sanitizeDetail(entry.detail)} (${unlockHintFor(key)})`);
 }
 
 async function main() {
