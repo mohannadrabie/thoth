@@ -6,6 +6,7 @@ import {
   extractImportSpecifiers,
   scanFileContent,
   scanForbiddenGlobals,
+  scanForbiddenGlobalsAst,
   stripComments,
 } from "./kernel-purity-check.ts";
 
@@ -99,6 +100,92 @@ test("scanForbiddenGlobals: a real import statement for a module is not itself a
   assert.deepEqual(scanForbiddenGlobals(source), []);
 });
 
+// --- scanForbiddenGlobalsAst (Issue #63 AST hardening) --------------------------------
+
+test("scanForbiddenGlobalsAst: catches a bare (non-aliased) usage of each of the nine tracked roots via property access", () => {
+  const cases: [string, string][] = [
+    ["globalThis", "return globalThis.eval;"],
+    ["global", "return global.process;"],
+    ["Reflect", 'return Reflect.get(o, "x");'],
+    ["eval", "return eval.name;"],
+    ["Function", "return Function.name;"],
+    ["fetch", "return fetch.name;"],
+    ["setTimeout", "return setTimeout.name;"],
+    ["setInterval", "return setInterval.name;"],
+    ["require", "return require.resolve;"],
+  ];
+  for (const [name, snippet] of cases) {
+    const found = scanForbiddenGlobalsAst(snippet);
+    assert.ok(found.some((f) => f.name === name), `expected AST layer to flag "${name}" in: ${snippet}`);
+  }
+});
+
+test("scanForbiddenGlobalsAst: an alias assigned via a variable declaration is resolved when used through property access", () => {
+  const found = scanForbiddenGlobalsAst("const g = globalThis;\ng.eval;");
+  assert.ok(found.some((f) => f.name === "globalThis" && /property access "\.eval"/.test(f.detail)));
+});
+
+test("scanForbiddenGlobalsAst: an alias assigned via plain reassignment (not a declaration) is also resolved", () => {
+  const found = scanForbiddenGlobalsAst("let g;\ng = global;\ng.process;");
+  assert.ok(found.some((f) => f.name === "global" && /property access "\.process"/.test(f.detail)));
+});
+
+test("scanForbiddenGlobalsAst: an alias chain resolves transitively (b aliases a, a aliases globalThis)", () => {
+  const found = scanForbiddenGlobalsAst("const a = globalThis;\nconst b = a;\nb.eval;");
+  assert.ok(found.some((f) => f.name === "globalThis" && /property access "\.eval"/.test(f.detail)));
+});
+
+test("scanForbiddenGlobalsAst: a computed/bracket element access on an alias constant-folds a string-literal-only `+` chain into the detail", () => {
+  const found = scanForbiddenGlobalsAst('const g = globalThis;\ng["ev" + "al"];');
+  assert.ok(found.some((f) => f.name === "globalThis" && f.detail.includes('["eval"]')));
+});
+
+test("scanForbiddenGlobalsAst: a computed/bracket element access is still flagged (without a resolved key) when the key does not constant-fold, since the base object is what's forbidden", () => {
+  const found = scanForbiddenGlobalsAst('const g = globalThis;\nconst key = String(Math.random());\ng[key];');
+  assert.ok(found.some((f) => f.name === "globalThis" && f.detail.includes("[...]")));
+});
+
+test("scanForbiddenGlobalsAst: sees through `as`/`satisfies`/non-null/legacy-angle-bracket casts to resolve the underlying identifier (this codebase's own idiom for indexing globalThis/global under strict TS)", () => {
+  const asChain = scanForbiddenGlobalsAst('(globalThis as unknown as Record<string, unknown>)["eval"];');
+  assert.ok(asChain.some((f) => f.name === "globalThis"), "as-cast chain must still resolve");
+
+  const nonNull = scanForbiddenGlobalsAst("(globalThis!).eval;");
+  assert.ok(nonNull.some((f) => f.name === "globalThis"), "non-null assertion must still resolve");
+});
+
+test("scanForbiddenGlobalsAst: a destructure bound directly off a forbidden root is flagged immediately, independent of how the bound name is later used", () => {
+  const found = scanForbiddenGlobalsAst("const { get } = Reflect;\nvoid get;");
+  assert.ok(found.some((f) => f.name === "Reflect" && /destructured "get"/.test(f.detail)));
+});
+
+test("scanForbiddenGlobalsAst (false-positive guard): a destructure off a global NOT in the tracked forbidden-roots set (Math) is not flagged", () => {
+  const found = scanForbiddenGlobalsAst("const { round } = Math;\nvoid round;");
+  assert.deepEqual(found, []);
+});
+
+test("scanForbiddenGlobalsAst (false-positive guard): a local variable name that merely resembles a forbidden root, or is aliased to a non-forbidden value, is not flagged", () => {
+  const found = scanForbiddenGlobalsAst(
+    ["const globalConfig = { flag: true };", "globalConfig.flag;", "const notAGlobal = {};", "const alias = notAGlobal;", "alias.foo;"].join(
+      "\n",
+    ),
+  );
+  assert.deepEqual(found, []);
+});
+
+test("scanForbiddenGlobalsAst (false-positive guard): ordinary bracket/element access on a plain array or object literal is not flagged", () => {
+  const found = scanForbiddenGlobalsAst('const arr = [1, 2, 3];\nconst obj = { a: 1 };\narr[0];\nobj["a"];');
+  assert.deepEqual(found, []);
+});
+
+test("scanForbiddenGlobalsAst (disclosed residual, documented not guessed past): a bare CALL reached directly through a tracked alias, with no further property/element access on the alias itself, is NOT flagged — only a `.foo`/`[\"foo\"]` access on the alias is", () => {
+  const found = scanForbiddenGlobalsAst('const f = fetch;\nf("https://example.com");');
+  assert.deepEqual(found, [], "documents the layer's own disclosed scope boundary, not a defect");
+});
+
+test("scanForbiddenGlobalsAst: pure code with none of the tracked roots produces zero findings", () => {
+  assert.deepEqual(scanForbiddenGlobalsAst("export function add(a: number, b: number) { return a + b; }"), []);
+});
+
 // --- extractImportSpecifiers ---------------------------------------------------
 
 test("extractImportSpecifiers: extracts named, type, and bare (side-effect) imports", () => {
@@ -182,6 +269,56 @@ test("checkKernelPurity (Issue #63 addendum, S2 re-confirm, non-vacuous): the ba
   const details = result.details.join("\n");
   assert.match(details, /obfuscated-globals\.ts/);
   assert.match(details, /forbidden global\/pattern "global" found/);
+});
+
+test("scanFileContent: the regex and AST forbidden-global layers both feed the same violation kind and run independently (AST-only violation is caught even though the regex layer also fires on the same literal token)", () => {
+  const source = "const g = globalThis;\ng.eval;";
+  const violations = scanFileContent("src/policy/kernel/kernel.ts", source, "src/policy/kernel");
+  assert.ok(violations.every((v) => v.kind === "forbidden-global"));
+  assert.ok(violations.some((v) => /\(AST: property access "\.eval"/.test(v.detail)), "AST layer's finding must appear");
+  assert.ok(
+    violations.some((v) => v.detail === 'forbidden global/pattern "globalThis" found'),
+    "regex layer's own finding must still appear unchanged, additively",
+  );
+});
+
+test("checkKernelPurity (Issue #63 AST hardening, non-vacuous): an aliased globalThis/global reached via property/element access is caught in the VIOLATING self-test fixture", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /aliased-globalthis\.ts.*\(AST: computed element access \["eval"\] on forbidden global "globalThis"/);
+  assert.match(details, /aliased-globalthis\.ts.*\(AST: property access "\.process" on forbidden global "global"/);
+});
+
+test("checkKernelPurity (Issue #63 AST hardening, non-vacuous): a destructure bound directly off Reflect is caught in the VIOLATING self-test fixture", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /destructured-reflect\.ts.*\(AST: destructured "get" directly off forbidden global "Reflect"\)/);
+});
+
+test("checkKernelPurity (Issue #63 AST hardening, non-vacuous): a string-concatenation-obfuscated computed bracket access on globalThis is caught in the VIOLATING self-test fixture", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /computed-bracket-access\.ts.*\(AST: computed element access \["eval"\] on forbidden global "globalThis"/);
+});
+
+test("checkKernelPurity (Issue #63 Q1 Manager ruling, non-vacuous): aliased fetch/setTimeout/setInterval/require reached via property access are all caught in the VIOLATING self-test fixture", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /aliased-network-timer\.ts.*"fetch" found \(AST: property access "\.bind"/);
+  assert.match(details, /aliased-network-timer\.ts.*"setTimeout" found \(AST: property access "\.name"/);
+  assert.match(details, /aliased-network-timer\.ts.*"setInterval" found \(AST: property access "\.name"/);
+  assert.match(details, /aliased-network-timer\.ts.*"require" found \(AST: property access "\.resolve"/);
+});
+
+test("checkKernelPurity (Issue #63 AC5 regression): a renamed non-relative import is caught by the existing classifyImport check, independent of the AST forbidden-globals layer", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /renamed-import\.ts: \[non-relative-import\] import "node:child_process"/);
 });
 
 test("checkKernelPurity: an empty/nonexistent root -> vacuous pass, disclosed loudly", async () => {
