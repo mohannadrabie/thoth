@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — `friendly-halt-messages`: human-readable labels on SUR-03 halt messages
+
+CRITICAL tier (ratified unchanged: `hooks/userpromptsubmit-halt-relay.mjs`/`hooks/sessionstart-tool-enum.mjs` are CLAUDE.md's named "Policy enforcement / session gates" sensitive area, regardless of edit size; `docs/run-log.jsonl`'s 2026-09-17T23:56:01 tier-ratified event, scope `friendly-halt-messages`). No `test-writer` dispatch: no new UI flow or API surface, only the wording of an existing operator-facing hook message.
+
+- **`hooks/userpromptsubmit-halt-relay.mjs`:** new `FRIENDLY_LABELS` frozen map + `friendlyLabelFor(reasonKey)`, used as `describeActiveReasons()`'s message-line prefix in place of the raw, hyphenated reason-key string. Covers the SUR-03-owned reason keys below:
+  - `SUR-03-unclassified-tool` → "Unrecognized tool"
+  - `SUR-03-unclassified-connector` → "Unrecognized connector"
+  - `SUR-03-enumeration-failed` → "Tool/connector check failed"
+  - `SUR-03-central-fixture-expired` → "Allowlist exemption expired"
+
+  An unmapped reason key falls back to showing its own raw key as the label (unchanged fallback shape, mirroring `unlockHintFor`'s own existing generic fallback). `UNLOCK_HINTS`/`unlockHintFor`/`sanitizeDetail`/`blockWithMessage`/`inspectHaltState` untouched.
+- **`hooks/sessionstart-tool-enum.mjs`:** new `quoteNames(names)` helper, individually double-quoting each unclassified tool/connector name (`"foo", "bar"`), used at both `reconcileReason(...)` call sites for `SUR-03-unclassified-tool`/`SUR-03-unclassified-connector`. The previous redundant `unclassified:`/`connector identity present:` detail-text prefixes are dropped — the relay's new friendly label already carries that meaning. `ENUMERATION_FAILED_REASON_KEY`/`FIXTURE_EXPIRED_REASON_KEY` detail construction untouched.
+
+**Two edge cases shipped unhandled, by explicit ratification (no escaping/truncation-boundary logic):** a literal `"` inside a tool/connector name breaks the visual quote boundary; `sanitizeDetail`'s own 200-char cap may truncate a long multi-name list mid-quote.
+
+**Verification, real:** `npm run typecheck`/`npm run lint` clean; `npm test` **842/842 pass, 0 fail, 0 skipped** (834 carried + 8 new, `hooks/userpromptsubmit-halt-relay-friendly-labels.test.ts` 5, `hooks/sessionstart-tool-enum-friendly-labels.test.ts` 3); both new files RED-CONFIRMED before implementation (7/8 failing on the unimplemented behavior, the 8th — the unmapped-key fallback — passing by construction since it required no change). ADR cache `HIT` (35 ADRs, fingerprint `83b2e3e`, unchanged — no ADR-relevant surface touched). test-writer's own `hooks/userpromptsubmit-halt-relay.test.ts`, `hooks/userpromptsubmit-halt-relay-fixnow.test.ts`, `hooks/sessionstart-tool-enum.test.ts`, `hooks/sessionstart-tool-enum-fixnow.test.ts` left completely unmodified and confirmed still passing.
+
 ### Added — Path B: a standing, blocking git pre-commit secret-scan check on the simulated-commit tree
 CRITICAL tier (ratified unchanged: `src/secret-scan/*` is CLAUDE.md's named "Secret scanning / CI gates" sensitive area, same file family as `cifix`'s own CRITICAL-tier precedent every round; `docs/run-log.jsonl`'s 2026-09-14T17:06:26 tier-ratified event, scope `path-b-precommit-secret-scan`). Reviewers: `red-team` + `app-security-reviewer` + `cross-domain-reviewer`. No `test-writer` dispatch: a git pre-commit hook / CLI instrument, same class as this project's existing QA instruments — no UI flow, no API surface.
 

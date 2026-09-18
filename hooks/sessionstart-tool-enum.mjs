@@ -133,6 +133,21 @@ function haltStatePath(sessionId) {
   return join(projectDir(), ".thoth", "halt-state", `${sessionId}.json`);
 }
 
+/** `friendly-halt-messages` story: individually double-quotes each name so a multi-name list reads
+ * unambiguously (`"foo", "bar"` rather than a bare comma-joined `foo, bar`, where an embedded comma
+ * in a single name could otherwise misread as a boundary). Used at both reconcileReason(...) call
+ * sites below for SUR-03-unclassified-tool/-connector in place of the previous
+ * "unclassified:"/"connector identity present:" prefixes, which are now redundant --
+ * hooks/userpromptsubmit-halt-relay.mjs's own new FRIENDLY_LABELS prefix ("Unrecognized tool" /
+ * "Unrecognized connector") already carries that meaning. Two edge cases are deliberately left
+ * unhandled per this pass's own ratified scope (Manager-approved 2026-09-17, ship as disclosed
+ * residuals, no escaping/truncation-boundary logic): a literal `"` inside a name breaks the visual
+ * quote boundary, and hooks/userpromptsubmit-halt-relay.mjs's own sanitizeDetail may truncate this
+ * string mid-quote on a long multi-name list. */
+function quoteNames(names) {
+  return names.map((name) => `"${name}"`).join(", ");
+}
+
 /** Best-effort read of an already-existing halt-state file for merge purposes. A malformed
  * existing file is NOT this script's fail-closed concern (that property belongs to
  * hooks/userpromptsubmit-halt-relay.mjs, tested there) — treated as "nothing to merge with" so this
@@ -436,7 +451,7 @@ async function main() {
       sessionId,
       UNCLASSIFIED_REASON_KEY,
       inventoryResult.haltRequired,
-      `unclassified: ${inventoryResult.unclassified.join(", ")}`,
+      quoteNames(inventoryResult.unclassified),
       fixtureLocation,
     );
     reconcileReason(
@@ -444,7 +459,7 @@ async function main() {
       sessionId,
       UNCLASSIFIED_CONNECTOR_REASON_KEY,
       unknownConnectorNames.length > 0,
-      `connector identity present: ${unknownConnectorNames.join(", ")}`,
+      quoteNames(unknownConnectorNames),
       fixtureLocation,
     );
     // Distinct, nameable cause for "the exemption fixture itself has expired" (see

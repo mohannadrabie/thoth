@@ -121,6 +121,22 @@ function unlockHintFor(reasonKey) {
   );
 }
 
+/** `friendly-halt-messages` story: short, human-readable labels for the 4 SUR-03-owned reason keys
+ * (see hooks/sessionstart-tool-enum.mjs's own *_REASON_KEY constants), used as the prefix in place
+ * of the raw, hyphenated reason-key string (Manager-approved 2026-09-17). A reason key with no entry
+ * here falls back to the raw key itself via `friendlyLabelFor` below, mirroring `unlockHintFor`'s own
+ * existing generic-fallback pattern -- a future/unrecognized reason key never renders as `undefined`. */
+const FRIENDLY_LABELS = Object.freeze({
+  "SUR-03-unclassified-tool": "Unrecognized tool",
+  "SUR-03-unclassified-connector": "Unrecognized connector",
+  "SUR-03-enumeration-failed": "Tool/connector check failed",
+  "SUR-03-central-fixture-expired": "Allowlist exemption expired",
+});
+
+function friendlyLabelFor(reasonKey) {
+  return FRIENDLY_LABELS[reasonKey] ?? reasonKey;
+}
+
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
     let data = "";
@@ -216,10 +232,11 @@ function blockWithMessage(sessionId, humanMessage) {
 }
 
 /** Renders every active `[key, entry]` pair (already validated by `inspectHaltState`) as one
- * human-readable line each: the sanitized detail, followed by that key's own concrete unlock hint
- * (PRINCIPLES.md rule 2 / GitHub Issue #94) -- never just the bare problem restated. */
+ * human-readable line each: a friendly label (`friendlyLabelFor`, `friendly-halt-messages` story) in
+ * place of the raw reason key, followed by the sanitized detail, followed by that key's own concrete
+ * unlock hint (PRINCIPLES.md rule 2 / GitHub Issue #94) -- never just the bare problem restated. */
 function describeActiveReasons(activeReasons) {
-  return activeReasons.map(([key, entry]) => `${key}: ${sanitizeDetail(entry.detail)} (${unlockHintFor(key)})`);
+  return activeReasons.map(([key, entry]) => `${friendlyLabelFor(key)}: ${sanitizeDetail(entry.detail)} (${unlockHintFor(key)})`);
 }
 
 async function main() {
