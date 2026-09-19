@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s1-qa-probe-hardening` (Issues #175, #179, #182): the two QA-14 probes now agree on their file list, reject stray arguments, and disclose untracked files in the count
+
+STANDARD tier (ratified by the Manager; scope `s1-qa-probe-hardening`). No `test-writer` dispatch: an internal CLI's argv and stderr contract, no UI flow or HTTP API. `src/lib/git.ts` and `docs/qa/secret-scan-allowlist.json` are untouched.
+
+- **#179, `continuation-residual-probe.ts` fails loud on a stray argument.** A token that is not `--field=...` (a leftover ref, `HEAD~5`, `--bogus-flag`) used to print a count and exit 0. It now exits non-zero, names the token on stderr (with a Node stack trace, as the twin probe's gate does), prints nothing on stdout, and is rejected before any file collection. Valid invocations are unchanged. The new `assertKnownArgs` mirrors the twin probe's and is deliberately not shared.
+- **#175, `continuation-residual-probe.ts` counts untracked scannable files.** Its file list came from `git ls-tree HEAD` while content came from the working tree, so a new untracked file was invisible. The list now comes from `git.lsFilesWorkingTree()`, the source `marker-corpus-probe.ts` has used since Issue #172. Submodule gitlinks and untracked nested repositories stay excluded.
+- **#182, both probes warn on stderr when untracked files are inside the count.** New shared `src/qa/untracked-scan-warning.ts` names the number of untracked scannable files and lists up to 10 paths, one call per probe's `main()`. Human ruling, 2026-09-19: the number, stdout and exit code are unchanged, so `[[completeness: ...]]` markers and `KNOWN_INSTRUMENTS` keep reading the same single integer. This supersedes the "disclosed, not fixed" comment recorded for #182 on 2026-09-13.
+
+> **Behavior change.** `--field=continuation-residual` now sends citations found in untracked files to `gh`, so a large scratch file can push the run past the distinct-issue cap (`QA14_MAX_ISSUES`, default 300) and fail loud with exit 1. The stderr warning names the untracked files behind the change.
+
+Tests: T179-1..4, T175-1..2, TW-1..8 (`untracked-scan-warning.test.ts`, fake `Runner`), TWR-1..3 (real subprocess in isolated `mkdtemp` repos). The earlier test that pinned the silent-accept behavior as a known gap is replaced by T179-3, the ordered successor its own comment named. Mutations applied by hand and shown red: removed and reordered gate, relaxed gate, list source reverted, git arguments changed, each filter and the path cap dropped, warning moved to stdout, warning call removed, warning changing exit code or count.
+
+Not part of this change: #226 (a duplicated `--field=` resolves first-wins) stays its own Issue.
+
 ### Changed — `fixture-single-source-of-truth` (Issue #217): `docs/qa/s5-central-classification.json` is the single source of truth; the expiry timer and the exact pins are removed
 
 Human directive, 2026-09-18: "remove the timer, remove the pinned list, the json is the single source of truth". CRITICAL tier (ratified by the Manager, `docs/run-log.jsonl`'s tier-ratified event, scope `fixture-single-source-of-truth`; sensitive areas: `hooks/*` session gates, policy delivery, halt-state reason set). No `test-writer` dispatch: no new/changed UI flow or API surface (hook stdin/stdout contract and halt-state shape unchanged; one reason key retired, one hint reworded).

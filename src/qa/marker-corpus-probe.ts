@@ -30,6 +30,7 @@ import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import { scanReferences, shouldScanFile } from "./reference-resolver.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { printInstrumentResult } from "../lib/instrument.ts";
+import { warnIfUntrackedScannable } from "./untracked-scan-warning.ts";
 
 // GitHub Issue #164 fix (mirrors the already-shipped Issue #161 fix on this file's own twin
 // instrument, continuation-residual-probe.ts — same root cause, same closure): this file used to
@@ -190,13 +191,9 @@ export async function readFileTexts(
  * GitHub Issue #172 fix (see the header comment for the full repro/rationale): the file LIST now
  * comes from `git.lsFilesWorkingTree()` — tracked + untracked-but-not-ignored paths in the CURRENT
  * working tree — the same tree state CONTENT is read from below, never a `ls-tree`-at-a-ref
- * snapshot. This is a deliberate, new divergence from `continuation-residual-probe.ts`'s own
- * `collectFullTreeFileTexts` — checked directly, structurally identical to this function's own
- * pre-fix shape (its list still comes from `resolveChangedFiles(..., "HEAD")`, unchanged by this
- * fix). That file carries the identical list/content-tree-state mismatch this fix closes here; it
- * is a live, separate defect, flagged as its own follow-up rather than silently fixed alongside a
- * differently-scoped Issue — one enumeration mechanism per file, not a second copy of either's
- * marker/list-continuation regex logic.
+ * snapshot. `continuation-residual-probe.ts`'s own `collectFullTreeFileTexts` had the same
+ * list/content mismatch and was fixed the same way (GitHub Issue #175), so both probes now draw
+ * their list from `git.lsFilesWorkingTree()`.
  *
  * GitHub Issue #176 fix-now: exported (was module-private) so a test can call it directly,
  * in-process, against an isolated `mkdtemp` git repo fixture — never a live CLI subprocess spawned
@@ -210,11 +207,9 @@ export async function readFileTexts(
 export async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
   const workingTreeFiles = await git.lsFilesWorkingTree();
-  // GitHub Issue #182 (disclosed residual, not fixed — s1-closeout-164-154 council Path A,
-  // 2026-09-13): `lsFilesWorkingTree()` includes untracked-but-not-ignored paths, so the published
-  // total can include transient untracked scratch files in the working tree and drift
-  // session-to-session (measured live: 1087 -> 1106 -> 1110 in one review session). Disclosed, not
-  // fixed — see docs/decisions.md's corresponding row for the ruling.
+  // `lsFilesWorkingTree()` includes untracked-but-not-ignored paths, so the published total can
+  // include transient scratch files and drift between sessions. GitHub Issue #182: `main()` says so
+  // on stderr (untracked-scan-warning.ts); the number itself is deliberately not changed.
   return readFileTexts(workingTreeFiles.map((f) => resolve(repoRoot, f)));
 }
 
@@ -225,6 +220,8 @@ async function main(): Promise<void> {
   const field = parseMarkerCorpusField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
+  // Issue #182: disclose untracked files inside the count on stderr; the number and stdout are unchanged.
+  await warnIfUntrackedScannable(realRunner, repoRoot, (message) => console.error(message));
 
   const stats = computeMarkerCorpusStats(fileTexts);
   const pct = stats.total > 0 ? Math.round((stats.unmarked / stats.total) * 100) : 0;

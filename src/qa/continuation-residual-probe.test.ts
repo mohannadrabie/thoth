@@ -1,14 +1,58 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { realRunner } from "../lib/exec.ts";
 import type { Runner } from "../lib/exec.ts";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
 import {
+  assertKnownArgs,
+  collectFullTreeFileTexts,
   computeContinuationMarkedCount,
   computeContinuationResidual,
   parseContinuationResidualField,
   readFileTexts,
 } from "./continuation-residual-probe.ts";
+
+const PROBE_PATH = fileURLToPath(new URL("./continuation-residual-probe.ts", import.meta.url));
+
+/** Isolated fixture repo (a throwaway `mkdtemp` directory, never this repo's own working tree — the
+ * same shape marker-corpus-probe.test.ts uses). One committed file, `tracked.md`, whose continuation
+ * list `Closes #1, #2.` contributes exactly 1 to `continuation-marked` (#2). Commits use `-c`
+ * identity overrides so no address-shaped string is written anywhere. */
+async function withIsolatedGitRepo(fn: (repoDir: string) => Promise<void>): Promise<void> {
+  const repoDir = await mkdtemp(join(tmpdir(), "qa14-continuation-probe-"));
+  try {
+    async function run(...args: string[]): Promise<void> {
+      const res = await realRunner("git", args, { cwd: repoDir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+    }
+    await run("init", "-q", "-b", "main");
+    await writeFile(join(repoDir, "tracked.md"), "Closes #1, #2.\n");
+    await run("add", ".");
+    await run("-c", "user.name=fixture", "-c", "user.email=fixture", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init");
+    await fn(repoDir);
+  } finally {
+    await rm(repoDir, { recursive: true, force: true });
+  }
+}
+
+/** A plain directory that is NOT a git repository — any git call made from it fails with "not a git
+ * repository", which is how the gate-before-collection ordering is observed. */
+async function withNonGitDir(fn: (dir: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "qa14-continuation-probe-nogit-"));
+  try {
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function runProbe(cwd: string, args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  return realRunner("node", [PROBE_PATH, ...args], { cwd, encoding: "utf8", env });
+}
 
 // GitHub Issue #154 / council Path A (docs/decisions.md, 2026-09-11 "Path-Forward Brief" row):
 // these pin the denominator (pure, sync) and numerator (real-`gh`-reusing, capped) halves of the
@@ -184,41 +228,137 @@ test("QA-14 continuation-residual-probe (real subprocess): --field=continuation-
   assert.doesNotMatch(fieldRun.stdout, /pure\/sync/, "field mode must not contain the default mode's own explanatory prose");
 });
 
-// Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
-// report, finding 2): the probe used to accept a positional `ref` argument that only ever changed
-// the FILE LIST (via `resolveChangedFiles`), never the CONTENT (always read from the working tree
-// via `readFile`) — a demonstrated ref/content-mismatch bug (`--field=continuation-marked a26e55a`
-// reported 273 against a26e55a's true content of 271). No real caller ever passed a non-default
-// ref (confirmed by grep across production code, CI, package.json scripts and this test file
-// itself); the parameter is deleted, not fixed — this pins that a stray positional argument is now
-// simply ignored (working-tree-only, same result with or without it), rather than silently
-// activating the old mismatch again.
+// GitHub Issue #179: a stray positional argument or an unknown flag used to be silently ignored
+// (a count on stdout, exit 0). It is now a hard error before any file collection runs, mirroring the
+// twin probe's `assertKnownArgs`. This replaces the earlier test that pinned the silent-accept
+// behavior as a known gap.
 //
-// GitHub Issue #170 fix-now (s1-closeout-164-154 cross-domain review, filed against this file's
-// twin, marker-corpus-probe.test.ts, but this test shares the identical shape and root cause —
-// same catch previously swallowed any read error, not just a genuinely-gone file, in this file's
-// own `collectFullTreeFileTexts`): the original version of this test asserted byte-identical
-// stdout across TWO live subprocess spawns of a full-tree-scanning probe, demonstrated flaky under
-// real `npm test` concurrency. This is reduced to ONE spawn (with the stray argument present),
-// asserting the output SHAPE rather than comparing it against a second live walk — the stray
-// argument's zero-effect property is separately, deterministically pinned above by
-// `parseContinuationResidualField`'s own pure unit tests, with no I/O and no live-tree race.
+// T179-1: the pure gate throws on each bad shape and names the offending token.
+test("QA-14 continuation-residual-probe (Issue #179): assertKnownArgs throws on a stray positional, a ref, an unknown flag, or a SHA beside a valid --field, and quotes the token", () => {
+  const cases: Array<{ args: string[]; offender: string }> = [
+    { args: ["not-a-ref-at-all"], offender: "not-a-ref-at-all" },
+    { args: ["HEAD~5"], offender: "HEAD~5" },
+    { args: ["--bogus-flag"], offender: "--bogus-flag" },
+    { args: ["--field=continuation-marked", "a26e55a"], offender: "a26e55a" },
+  ];
+  for (const { args, offender } of cases) {
+    assert.throws(
+      () => assertKnownArgs(args),
+      (err: unknown) =>
+        err instanceof Error && /unrecognized argument/.test(err.message) && err.message.includes(JSON.stringify(offender)),
+      `argv ${JSON.stringify(args)} must throw an error that says "unrecognized argument" and quotes ${JSON.stringify(offender)}`,
+    );
+  }
+});
+
+// T179-2: the gate is silent on every valid shape.
+test("QA-14 continuation-residual-probe (Issue #179): assertKnownArgs is silent for no arguments and for each valid --field value", () => {
+  assert.doesNotThrow(() => assertKnownArgs([]));
+  assert.doesNotThrow(() => assertKnownArgs(["--field=continuation-marked"]));
+  assert.doesNotThrow(() => assertKnownArgs(["--field=continuation-residual"]));
+});
+
+// T179-3: real subprocess, run from a directory that is NOT a git repository. If the gate runs first
+// the failure names the token; if collection ran first the failure would be git's own "not a git
+// repository" and the token would never appear (that is the ordering half of the assertion).
+test("QA-14 continuation-residual-probe (Issue #179, real subprocess): every bad argv exits non-zero, names the token on stderr, prints no count, and fails BEFORE any git call", async () => {
+  await withNonGitDir(async (dir) => {
+    const cases: Array<{ args: string[]; offender: string }> = [
+      { args: ["not-a-ref-at-all"], offender: "not-a-ref-at-all" },
+      { args: ["HEAD~5"], offender: "HEAD~5" },
+      { args: ["--field=continuation-marked", "a26e55a"], offender: "a26e55a" },
+      { args: ["--bogus-flag"], offender: "--bogus-flag" },
+    ];
+    for (const { args, offender } of cases) {
+      // GIT_CEILING_DIRECTORIES stops git walking up out of `dir`: if the OS temp dir sits inside a git
+      // worktree, `dir` would otherwise resolve to that worktree and the ordering half would be vacuous.
+      const result = await runProbe(dir, args, { GIT_CEILING_DIRECTORIES: dirname(dir) });
+      const label = `argv ${JSON.stringify(args)}`;
+      assert.notEqual(result.code, 0, `${label}: expected a non-zero exit; stdout: ${result.stdout}`);
+      assert.match(result.stderr, /unrecognized argument/, `${label}: stderr: ${result.stderr}`);
+      assert.ok(result.stderr.includes(JSON.stringify(offender)), `${label}: stderr must quote the token; stderr: ${result.stderr}`);
+      assert.doesNotMatch(result.stderr, /not a git repository/, `${label}: the gate must run before any git call; stderr: ${result.stderr}`);
+      assert.equal(result.stdout, "", `${label}: no count may reach stdout`);
+    }
+  });
+});
+
+// T179-4: the valid invocations are unchanged (the two KNOWN_INSTRUMENTS entries depend on them).
+test("QA-14 continuation-residual-probe (Issue #179, real subprocess): valid invocations still exit 0 and print their number", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const bare = await runProbe(repoDir, []);
+    assert.equal(bare.code, 0, `no-args run must exit 0; stderr: ${bare.stderr}`);
+    assert.match(bare.stdout, /continuation-marked=1 /, `stdout: ${bare.stdout}`);
+
+    const marked = await runProbe(repoDir, ["--field=continuation-marked"]);
+    assert.equal(marked.code, 0, `stderr: ${marked.stderr}`);
+    assert.match(marked.stdout, /continuation-marked=1\s*$/, `stdout must END in the single field integer; stdout: ${marked.stdout}`);
+
+    // The fixture has no origin remote, so the gh-backed pass makes no gh call (null repo slug).
+    const residual = await runProbe(repoDir, ["--field=continuation-residual"]);
+    assert.equal(residual.code, 0, `stderr: ${residual.stderr}`);
+    assert.match(residual.stdout, /continuation-residual=\d+/, `stdout: ${residual.stdout}`);
+  });
+});
+
+// GitHub Issue #175: the file LIST used to come from `git ls-tree HEAD` (tracked blobs at HEAD)
+// while CONTENT was read from the working tree, so a new, untracked, uncommitted, scannable file was
+// invisible to the count. The list now comes from `git.lsFilesWorkingTree()` — the same tree state
+// the content is read from, and the same source the twin probe uses. Both tests call
+// `collectFullTreeFileTexts` in-process against an isolated `mkdtemp` repo (no live-tree subprocess).
 //
-// GitHub Issue #179 — KNOWN GAP, NOT A CONTRACT (red-team round-2 attack 5, demonstrated): this
-// test pins CURRENT behavior only — it is not an endorsement that silently accepting a stray
-// positional/unknown flag is correct. `marker-corpus-probe.ts`'s twin gap (Issue #173) was fixed
-// with a fail-loud `assertKnownArgs` gate; this file's own equivalent gap is still open, tracked
-// in Issue #179, deliberately deferred this round given the round's own risk budget (two prior
-// rounds each introduced a new bug while fixing the previous round's findings). When #179 is
-// fixed, this test must be REPLACED with one asserting a non-zero exit and a message naming the
-// offending token — the same shape as marker-corpus-probe.test.ts's own
-// "a stray positional argument or an unknown flag now fails loud" test above (in the twin file).
-test("QA-14 continuation-residual-probe (KNOWN GAP, tracked in Issue #179 — not a contract): a stray positional argument is currently silently ignored, producing a valid working-tree answer rather than failing loud", async () => {
-  const result = await realRunner("node", [
-    "src/qa/continuation-residual-probe.ts",
-    "--field=continuation-marked",
-    "a26e55a",
-  ]);
-  assert.equal(result.code, 0, `probe currently exits 0 even for a stray argument (Issue #179, open); stderr: ${result.stderr}`);
-  assert.match(result.stdout, /continuation-marked=\d+/, "a stray positional argument must not change the --field output shape");
+// T175-1: an untracked file with a three-citation list raises the count by exactly its two
+// continuation members (#11 and #12; #10 is the direct one).
+test("QA-14 continuation-residual-probe (Issue #175, isolated): an untracked, uncommitted, scannable file IS counted — list and content agree on the same tree state", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const before = computeContinuationMarkedCount(await collectFullTreeFileTexts(repoDir));
+    assert.equal(before.continuationMarked, 1, `baseline is the committed tracked.md's one continuation member; got: ${JSON.stringify(before)}`);
+
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+    const statusRun = await realRunner("git", ["status", "--porcelain", "--", "untracked.md"], { cwd: repoDir, encoding: "utf8" });
+    assert.match(statusRun.stdout, /^\?\?/, `the new file must be untracked; git status: ${statusRun.stdout}`);
+
+    const after = computeContinuationMarkedCount(await collectFullTreeFileTexts(repoDir));
+    assert.equal(
+      after.continuationMarked,
+      before.continuationMarked + 2,
+      "an untracked file with 1 direct + 2 continuation citations must raise the count by exactly 2",
+    );
+    assert.equal(after.filesScanned, before.filesScanned + 1);
+  });
+});
+
+// T175-2: an untracked NESTED git repository is reported by git as a trailing-slash directory entry;
+// it must not crash the read (EISDIR) and none of its files may reach the scan.
+test("QA-14 continuation-residual-probe (Issue #175, isolated): an untracked nested git repository neither crashes the probe nor leaks its files into the scan", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const nestedDir = join(repoDir, "zz-nested");
+    await mkdir(nestedDir);
+    const init = await realRunner("git", ["init", "-q", "-b", "main"], { cwd: nestedDir, encoding: "utf8" });
+    assert.equal(init.code, 0, `nested git init failed: ${init.stderr}`);
+    await writeFile(join(nestedDir, "note.md"), "Closes #900041, #900042 inside a nested repo — must not be scanned.\n");
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+
+    const texts = await collectFullTreeFileTexts(repoDir);
+    assert.ok(![...texts.keys()].some((f) => f.includes("zz-nested")), `the nested repo must not be scanned; keys: ${[...texts.keys()].join(", ")}`);
+    const stats = computeContinuationMarkedCount(texts);
+    assert.equal(stats.continuationMarked, 3, "tracked.md (1) + untracked.md (2); the nested repo's own citations must not leak in");
+  });
+});
+
+// GitHub Issue #182 (applied to this probe now that #175 makes it count untracked files): the
+// shared warning (untracked-scan-warning.ts) goes to STDERR only. The counted number, the exit code,
+// and stdout (which must still END in the single field integer) are unchanged.
+//
+// TWR-3: subprocess in a fixture repo holding one untracked scannable file.
+test("QA-14 continuation-residual-probe (Issue #182, real subprocess): an untracked scannable file draws a stderr warning; stdout, the count and the exit code are unchanged", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+    const run = await runProbe(repoDir, ["--field=continuation-marked"]);
+    assert.equal(run.code, 0, `stderr: ${run.stderr}`);
+    assert.match(run.stdout, /continuation-marked=3\s*$/, `1 tracked + 2 untracked; stdout must END in the field integer; stdout: ${run.stdout}`);
+    assert.doesNotMatch(run.stdout, /untracked|WARNING/i, `the warning must never reach stdout; stdout: ${run.stdout}`);
+    assert.match(run.stderr, /WARNING: 1 untracked file/, `stderr: ${run.stderr}`);
+    assert.ok(run.stderr.includes("untracked.md"), `stderr must name the path; stderr: ${run.stderr}`);
+  });
 });

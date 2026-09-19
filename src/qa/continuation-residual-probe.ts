@@ -40,7 +40,7 @@
 //
 // Deliberately NOT wired to a `[[completeness: cmd="..." expect=N]]` blocking marker (Issue #150's
 // own round-3 lesson, re-applied here before it could recur a 5th time on this same story's own
-// numeric-claim-drift class): this metric's corpus is the whole tracked tree, which moves on
+// numeric-claim-drift class): this metric's corpus is the tracked plus untracked-but-not-ignored working-tree files, which moves on
 // nearly every commit — see completeness-claim-checker.ts's own DEFAULT_FILES/header reasoning for
 // why a moving corpus cannot back an exact blocking `expect=N` assertion. Registered in
 // `KNOWN_INSTRUMENTS` as a real, callable, ON-DEMAND instrument only — prose may point at the
@@ -50,7 +50,7 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
+import { makeGitOps } from "../lib/git.ts";
 import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
@@ -58,6 +58,7 @@ import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import { resolveIssueCitations, resolveWithinRepo, scanReferences, shouldScanFile } from "./reference-resolver.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { printInstrumentResult } from "../lib/instrument.ts";
+import { warnIfUntrackedScannable } from "./untracked-scan-warning.ts";
 
 // Same stub shape as marker-corpus-probe.ts's own `stubDeps` — no real `gh` call, no network, no
 // credential; only the CLASSIFICATION mechanism (markedVia) is read by
@@ -84,6 +85,24 @@ export function parseContinuationResidualField(args: string[]): ContinuationResi
   const value = flag.slice("--field=".length);
   if (value === "continuation-marked" || value === "continuation-residual") return value;
   throw new Error(`--field must be one of continuation-marked|continuation-residual, got "${value}"`);
+}
+
+/**
+ * GitHub Issue #179: a stray positional argument (a leftover ref, `not-a-ref-at-all`, `HEAD~5`, ...)
+ * or an unknown flag (`--bogus-flag`) used to be silently ignored — the probe printed a working-tree
+ * count and exited 0. Any token that is not itself a `--field=...` flag is now a hard error, and
+ * `main()` calls this before it collects any file. Pure — throws, never exits or logs itself.
+ * Mirrors `assertKnownArgs` in marker-corpus-probe.ts (deliberately not shared, so the reviewed
+ * argv code of that probe stays byte-identical).
+ */
+export function assertKnownArgs(args: string[]): void {
+  const unknown = args.filter((a) => !a.startsWith("--field="));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unrecognized argument(s): ${unknown.map((a) => JSON.stringify(a)).join(", ")} — this probe only accepts ` +
+        `--field=continuation-marked|continuation-residual (no positional ref and no other flag)`,
+    );
+  }
 }
 
 export interface ContinuationMarkedStats {
@@ -192,38 +211,42 @@ export async function readFileTexts(
   return fileTexts;
 }
 
-/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
- * `resolveChangedFiles`, driven here directly rather than via a real diff), same as
- * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it.
+/**
+ * GitHub Issue #175 fix: the file LIST comes from `git.lsFilesWorkingTree()` — tracked plus
+ * untracked-but-not-ignored paths in the CURRENT working tree (submodule gitlinks and untracked
+ * nested repositories excluded, see `src/lib/git.ts`) — the same tree state the CONTENT is read
+ * from below, and the same source marker-corpus-probe.ts uses. It used to be a `git ls-tree HEAD`
+ * read (via `resolveChangedFiles` and the zero-SHA sentinel), so a new, untracked, uncommitted,
+ * scannable file was invisible to the count while its content sat in the working tree.
  *
  * Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
- * report, finding 2): this file's content is ALWAYS read from the working tree (`readFile` below),
- * regardless of which ref the file LIST comes from — the exact ref/working-tree content-mismatch
- * bug the council explicitly rejected Candidate B over in `marker-corpus-probe.ts`
- * (`node src/qa/continuation-residual-probe.ts --field=continuation-marked a26e55a` demonstrably
- * reported the a26e55a file list read against HEAD's working-tree content, a tree state that never
- * existed: true a26e55a content=271, probe's answer=273). No real caller anywhere in this repo
- * (production code, `.github/workflows/ci.yml`, `package.json` scripts, or this file's own test
- * suite) ever passed a non-default ref — confirmed by grep — so there is no fix-the-mismatch-
- * properly obligation to honor; deleting the parameter and always reading the current working tree
- * (the only state this function has ever correctly supported) is the minimal closure.
+ * report, finding 2): content is ALWAYS read from the working tree, never from a ref, so this
+ * function takes no ref (`--field=continuation-marked a26e55a` once reported a file list from that
+ * ref against HEAD's working-tree content, a tree state that never existed).
  *
- * Paths returned by `lsTree`/`resolveChangedFiles` are repo-relative; resolved against `repoRoot`
- * before reading (mirrors marker-corpus-probe.ts's own Issue #176 fix-now) so a caller passing a
- * `repoRoot` other than `process.cwd()` (e.g. a test fixture) reads the right file. */
-async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
+ * Exported so a test can call it in-process against an isolated `mkdtemp` git repo. Paths returned
+ * by `lsFilesWorkingTree()` are repo-relative; they are resolved against `repoRoot` before reading
+ * (mirrors marker-corpus-probe.ts's own Issue #176 fix-now) so a caller passing a `repoRoot` other
+ * than `process.cwd()` (e.g. a test fixture) reads the right file.
+ *
+ * Because untracked files are now counted, `main()` also warns on stderr when any are in the scan
+ * (untracked-scan-warning.ts, Issue #182); the count and stdout are unchanged by that warning.
+ */
+export async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
-  const trackedFiles = resolved?.changedFiles ?? [];
-  return readFileTexts(trackedFiles.map((f) => resolve(repoRoot, f)));
+  const workingTreeFiles = await git.lsFilesWorkingTree();
+  return readFileTexts(workingTreeFiles.map((f) => resolve(repoRoot, f)));
 }
 
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const argv = process.argv.slice(2);
+  assertKnownArgs(argv);
   const field = parseContinuationResidualField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
+  // Issue #182: disclose untracked files inside the count on stderr; the number and stdout are unchanged.
+  await warnIfUntrackedScannable(realRunner, repoRoot, (message) => console.error(message));
 
   if (field === null || field === "continuation-marked") {
     const denom = computeContinuationMarkedCount(fileTexts);
