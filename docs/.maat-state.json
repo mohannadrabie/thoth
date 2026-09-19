@@ -7,7 +7,7 @@
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-19d": "s1-226-duplicate-field (GitHub Issue #226): story-implementer PROPOSED STANDARD (two pure argv validators in src/qa/marker-corpus-probe.ts and src/qa/continuation-residual-probe.ts, about 8 source lines; neither file is a CLAUDE.md sensitive area). Awaiting Manager ratification. Re-tier if the diff must touch completeness-claim-checker.ts, src/lib/git.ts, docs/qa/secret-scan-allowlist.json or ci.yml. Placement: check lives inside parse*Field, not assertKnownArgs. R6 (identical repeat rejected) is a Manager ruling, human-preapproved. Plan: docs/plans/s1-226-duplicate-field-phase1-2026-09-19.md.",
+  "note_2026-09-19d": "s1-226-duplicate-field (GitHub Issue #226): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified) (two pure argv validators in src/qa/marker-corpus-probe.ts and src/qa/continuation-residual-probe.ts, about 8 source lines; neither file is a CLAUDE.md sensitive area). Re-tier if the diff must touch completeness-claim-checker.ts, src/lib/git.ts, docs/qa/secret-scan-allowlist.json or ci.yml. Placement: check lives inside parse*Field, not assertKnownArgs. R6 (identical repeat rejected) is a Manager ruling, human-preapproved. Plan: docs/plans/s1-226-duplicate-field-phase1-2026-09-19.md.",
   "priorScope": {
     "scope": "s1-227-cleanup-race",
     "tier": "STANDARD",
