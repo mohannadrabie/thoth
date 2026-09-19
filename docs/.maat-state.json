@@ -7,7 +7,7 @@
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-19e": "s1-135-pat-regression-test (GitHub Issue #135, Story B part S-B1): story-implementer PROPOSED STANDARD, awaiting Manager ratification. Test-only: two new tests in src/secret-scan/patterns.test.ts (prose negatives with the red-team name folded in, and a truncated prefix-only positive), plus a CHANGELOG entry. Reviewers: code-reviewer + cross-domain-reviewer (s1-227 precedent). Re-tier to CRITICAL if the diff must touch src/secret-scan/patterns.ts, docs/qa/secret-scan-allowlist.json, history-scan.ts, pre-commit-scan.ts or ci.yml. Plan: docs/plans/s1-135-pat-regression-test-phase1-2026-09-19.md.",
+  "note_2026-09-19e": "s1-135-pat-regression-test (GitHub Issue #135, Story B part S-B1): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). Test-only: two new tests in src/secret-scan/patterns.test.ts (prose negatives with the red-team name folded in, and a truncated prefix-only positive), plus a CHANGELOG entry. Reviewers: code-reviewer + cross-domain-reviewer (s1-227 precedent). Re-tier to CRITICAL if the diff must touch src/secret-scan/patterns.ts, docs/qa/secret-scan-allowlist.json, history-scan.ts, pre-commit-scan.ts or ci.yml. Plan: docs/plans/s1-135-pat-regression-test-phase1-2026-09-19.md.",
   "priorScope": {
     "scope": "s1-226-duplicate-field",
     "tier": "STANDARD",
