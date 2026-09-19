@@ -72,6 +72,38 @@ test("github-fine-grained-pat: matches GitHub's fine-grained PAT format (regress
   assert.equal(p.regex.test("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789AB"), false);
 });
 
+// Synthetic fixtures for the two github-fine-grained-pat tests below, built at runtime so this
+// file's own text never contains the literal prefix followed by 20+ alphanumerics (Issue #136
+// hygiene: new positive fixtures should not lean on the whole-file allowlist entry).
+const PAT_PREFIX = "github" + "_pat_";
+const PAT_IDENTIFIER_SEGMENT = "ABCDEFGHIJKLMNOPQRSTUV"; // 22 alphanumerics, visibly synthetic
+const PAT_SECRET_SEGMENT = "abcdefghijklmnopqrstuvwxyz1234567890"; // visibly synthetic
+
+test("github-fine-grained-pat: does NOT match ordinary PAT-discussion prose (regression -- " +
+  "Issue #135: the snake_case false-positive class the fix removed; a synthetic real-format " +
+  "token still matches in the same test) [github-fine-grained-pat-word-boundary-test]", () => {
+  const exemplars = [
+    "load_github_pat_for_submodule_checkout",
+    "read_github_pat_from_environment_variable",
+    "const github_pat_env_var_name_constant = 1",
+    "my.github_pat_helper_function_name_here()",
+  ];
+  for (const text of exemplars) {
+    const p = findPattern("github-fine-grained-pat");
+    assert.equal(p.regex.test(text), false, `must not match prose: ${text}`);
+  }
+  const contrast = PAT_PREFIX + PAT_IDENTIFIER_SEGMENT + "_" + PAT_SECRET_SEGMENT;
+  const p = findPattern("github-fine-grained-pat");
+  assert.ok(p.regex.test(contrast), "the synthetic real-format token must still match");
+});
+
+test("github-fine-grained-pat: matches a truncated prefix-only disclosure (22-char identifier " +
+  "segment, empty secret segment; Issue #89 exemplar shape)", () => {
+  const truncated = PAT_PREFIX + PAT_IDENTIFIER_SEGMENT + "_";
+  const p = findPattern("github-fine-grained-pat");
+  assert.deepEqual(truncated.match(p.regex), [truncated], "the whole truncated fixture is the match");
+});
+
 test("ipv4-private: matches a private-range address, not a public one", () => {
   const priv = findPattern("ipv4-private");
   assert.ok(priv.regex.test("server at 10.0.1.5 is internal"));
