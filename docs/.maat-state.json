@@ -676,15 +676,25 @@
       }
     ]
   },
-  "scope": "fix-215-ratify-claude-docs",
-  "tier": "STANDARD",
+  "scope": "fixture-single-source-of-truth",
+  "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 0,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-18": "fix-215-ratify-claude-docs: GitHub Issue #215 (AC1-b in src/policy/tools/central-classification.test.ts pinned 7 knownConnectors; the fixture has 8 after direct commit 83b6af9 added claude.ai Claude Docs, which the human confirmed adding deliberately). story-implementer built (Phase 2, human-directed, no plan-approval gate): AC1-b's pin updated to 8 entries, one new docs/decisions.md row (2026-09-18) ratifying the entry retroactively and recording the human's pin-mechanism design ruling as direction only. story-implementer proposed STANDARD; Manager ratified as proposed, unchanged (run-log.mjs tier-ratified logged 2026-09-18T23:32:47Z, test pin plus decisions row, no runtime change, adjacent to the policy-delivery sensitive area). Fixture, expiresOn, hooks/*, and .claude/settings.json untouched. Issue #90's re-ratify-or-remove decision is still pending the human.",
+  "note_2026-09-19": "fixture-single-source-of-truth: human directive 2026-09-18/19 (verbatim) \"remove the timer, remove the pinned list, the json is the single source of truth\" on docs/qa/s5-central-classification.json (GitHub Issue #217). story-implementer proposed CRITICAL (removes the SUR-03 session-gate expiry and the exact-pin test tripwire; sensitive areas: hooks/* session gates, policy delivery/config surface, halt-state reason set); Manager ratified CRITICAL, unchanged (docs/run-log.jsonl tier-ratified event). ADR path (b): project-tier ADR under docs/adr/. Issue #90 disposition (close not_planned after merge) is the Manager's job.",
+  "priorScope": {
+    "scope": "fix-215-ratify-claude-docs",
+    "tier": "STANDARD",
+    "reviewRoundsSinceClean": 0,
+    "reviewRoundsTotal": 0,
+    "humanRulingRequired": false,
+    "councilHeld": false,
+    "councilVerdict": null,
+    "roundsSinceLastGo": 0,
+    "note_2026-09-18": "fix-215-ratify-claude-docs: GitHub Issue #215 (AC1-b in src/policy/tools/central-classification.test.ts pinned 7 knownConnectors; the fixture has 8 after direct commit 83b6af9 added claude.ai Claude Docs, which the human confirmed adding deliberately). story-implementer built (Phase 2, human-directed, no plan-approval gate): AC1-b's pin updated to 8 entries, one new docs/decisions.md row (2026-09-18) ratifying the entry retroactively and recording the human's pin-mechanism design ruling as direction only. story-implementer proposed STANDARD; Manager ratified as proposed, unchanged (run-log.mjs tier-ratified logged 2026-09-18T23:32:47Z, test pin plus decisions row, no runtime change, adjacent to the policy-delivery sensitive area). Fixture, expiresOn, hooks/*, and .claude/settings.json untouched. Issue #90's re-ratify-or-remove decision is still pending the human.",
   "priorScope": {
     "scope": "kernel-purity-ast-hardening",
     "tier": "STANDARD",
@@ -782,6 +792,7 @@
       }
     }
   }
+}
 }
 }
 }
