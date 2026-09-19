@@ -28,7 +28,7 @@ test("history-scan: 0 matches -> real (non-vacuous) pass", () => {
 
 test("history-scan: matches present -> FAIL, details carry only redacted values", () => {
   const result = summarizeMatches([
-    { commit: "abc123", path: "config.ts", patternId: "aws-access-key-id", description: "AWS key", redacted: "AKIA…[REDACTED 20 chars]" },
+    { commit: "abc123", path: "config.ts", patternId: "aws-access-key-id", description: "AWS key", redacted: "AKIA…[REDACTED 20 chars]", valueSha256: sha256("fixture-a") },
   ]);
   assert.equal(result.ok, false);
   assert.match(result.details[0] ?? "", /REDACTED/);
@@ -37,11 +37,11 @@ test("history-scan: matches present -> FAIL, details carry only redacted values"
 
 test("OSS-01 allowlist: partitionAllowlisted splits matches by exact path+patternId", () => {
   const matches = [
-    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "r" },
-    { commit: "b", path: "src/config.ts", patternId: "aws-access-key-id", description: "x", redacted: "r" },
+    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "r", valueSha256: sha256("fixture-a") },
+    { commit: "b", path: "src/config.ts", patternId: "aws-access-key-id", description: "x", redacted: "r", valueSha256: sha256("fixture-a") },
   ];
   const { blocking, allowlisted } = partitionAllowlisted(matches, [
-    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", reason: "test fixture" },
+    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "test fixture" },
   ]);
   assert.equal(allowlisted.length, 1);
   assert.equal(blocking.length, 1);
@@ -50,10 +50,10 @@ test("OSS-01 allowlist: partitionAllowlisted splits matches by exact path+patter
 
 test("OSS-01 allowlist: an allowlisted match does not fail the gate, but IS still reported (never silently dropped)", () => {
   const matches = [
-    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "AKIA…[REDACTED]" },
+    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "AKIA…[REDACTED]", valueSha256: sha256("fixture-a") },
   ];
   const result = summarizeMatches(matches, [
-    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", reason: "test fixture" },
+    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "test fixture" },
   ]);
   assert.equal(result.ok, true, "allowlisted-only matches must not fail the gate");
   assert.match(result.details.join("\n"), /ALLOWLISTED/, "an allowlisted match must still appear in the report");
@@ -61,11 +61,11 @@ test("OSS-01 allowlist: an allowlisted match does not fail the gate, but IS stil
 
 test("OSS-01 allowlist: a match NOT on the allowlist still fails the gate even if other matches ARE allowlisted", () => {
   const matches = [
-    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "r1" },
-    { commit: "b", path: "src/config.ts", patternId: "aws-access-key-id", description: "x", redacted: "r2" },
+    { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "r1", valueSha256: sha256("fixture-a") },
+    { commit: "b", path: "src/config.ts", patternId: "aws-access-key-id", description: "x", redacted: "r2", valueSha256: sha256("fixture-a") },
   ];
   const result = summarizeMatches(matches, [
-    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", reason: "test fixture" },
+    { path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "test fixture" },
   ]);
   assert.equal(result.ok, false);
   assert.match(result.summary, /1 secret-shaped match/);
@@ -76,7 +76,7 @@ test("OSS-01 allowlist loader: an entry WITH a non-empty reason is accepted (pos
   try {
     const p = join(dir, "allowlist.json");
     await writeFile(p, JSON.stringify([
-      { path: "src/foo.ts", patternId: "aws-access-key-id", reason: "documented test fixture" },
+      { path: "src/foo.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "documented test fixture" },
     ]));
     const loaded = await loadAllowlist(p);
     assert.equal(loaded.length, 1, "an entry with a real reason must be honored");
@@ -91,9 +91,9 @@ test("OSS-01 allowlist loader: an entry WITHOUT a reason (missing, or whitespace
   try {
     const p = join(dir, "allowlist.json");
     await writeFile(p, JSON.stringify([
-      { path: "src/foo.ts", patternId: "aws-access-key-id" }, // no `reason` field at all
-      { path: "src/bar.ts", patternId: "aws-access-key-id", reason: "   " }, // whitespace-only
-      { path: "src/baz.ts", patternId: "aws-access-key-id", reason: "real, non-empty reason" },
+      { path: "src/foo.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")] }, // no `reason` field at all
+      { path: "src/bar.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "   " }, // whitespace-only
+      { path: "src/baz.ts", patternId: "aws-access-key-id", valueSha256: [sha256("fixture-a")], reason: "real, non-empty reason" },
     ]));
     const loaded = await loadAllowlist(p);
     assert.equal(loaded.length, 1, "only the entry with a real, non-empty reason may survive");
@@ -103,7 +103,7 @@ test("OSS-01 allowlist loader: an entry WITHOUT a reason (missing, or whitespace
     // the gate, not pass silently — this is the actual security property red-team's finding
     // demonstrated was missing.
     const matches = [
-      { commit: "a", path: "src/foo.ts", patternId: "aws-access-key-id", description: "x", redacted: "r" },
+      { commit: "a", path: "src/foo.ts", patternId: "aws-access-key-id", description: "x", redacted: "r", valueSha256: sha256("fixture-a") },
     ];
     const result = summarizeMatches(matches, loaded);
     assert.equal(result.ok, false, "a match against a reason-less (rejected) entry must fail the gate");
@@ -115,8 +115,7 @@ test("OSS-01 allowlist loader: an entry WITHOUT a reason (missing, or whitespace
 test("OSS-01 (dogfood): the real repo, scanned with the real allowlist, is a clean (blocking) pass", async () => {
   const git = makeGitOps(realRunner, process.cwd());
   const matches = await scanHistory(git);
-  const allowlistJson: unknown = JSON.parse(await readFile("docs/qa/secret-scan-allowlist.json", "utf8"));
-  const allowlist = allowlistJson as { path: string; patternId: string; reason: string }[];
+  const allowlist = await loadAllowlist("docs/qa/secret-scan-allowlist.json");
   const result = summarizeMatches(matches, allowlist);
   assert.equal(result.ok, true, `expected a clean pass, got: ${result.summary}\n${result.details.join("\n")}`);
 });

@@ -83,7 +83,7 @@ test("GitHub Issue #194 (red-team round-2, [MED], regression): a PASSING run's s
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "allowed.js", patternId: "aws-access-key-id", reason: "test fixture, not a real credential" },
+        { path: "allowed.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture, not a real credential" },
       ]),
     );
     await writeFile(join(repoDir, "allowed.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -135,7 +135,7 @@ test("R2: an allowlisted-but-real match does not fail the exit code -- the under
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "config.js", patternId: "aws-access-key-id", reason: "test fixture, not a real credential" },
+        { path: "config.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture, not a real credential" },
       ]),
     );
     await writeFile(join(repoDir, "config.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -152,7 +152,7 @@ test("R2: a match NOT on the allowlist still fails, even alongside an allowliste
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "allowed.js", patternId: "aws-access-key-id", reason: "test fixture" },
+        { path: "allowed.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture" },
       ]),
     );
     await writeFile(join(repoDir, "allowed.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -371,7 +371,8 @@ test("sb2-partial-migration-does-not-leave-legacy-shape-entries-honored (pre-com
       { path: "b.js", patternId: "aws-access-key-id", reason: "legacy shape: path and pattern only" },
       valid("c.js"),
     ]);
-    for (const f of ["a.js", "b.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}";\n`);
+    // Distinct bytes per file: the scanner dedupes byte-identical blobs, evaluating only the first path.
+    for (const f of ["a.js", "b.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}"; // ${f}\n`);
     await gitOk(repoDir, "add", ".");
     const res = await runScanCli(repoDir);
     assert.notEqual(res.code, 0, "the legacy-shaped entry must not exempt b.js");
@@ -383,7 +384,7 @@ test("sb2-partial-migration-control-all-valid-entries-are-honored (pre-commit CL
   await withIsolatedGitRepo(async (repoDir) => {
     const valid = (path: string) => ({ ...GRANT_FAKE, path });
     await writeAllowlist(repoDir, [valid("a.js"), valid("c.js")]);
-    for (const f of ["a.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}";\n`);
+    for (const f of ["a.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}"; // ${f}\n`);
     await gitOk(repoDir, "add", ".");
     const res = await runScanCli(repoDir);
     assert.equal(res.code, 0, `control: value-scoped entries for the granted literal must pass:\n${res.stdout}`);
