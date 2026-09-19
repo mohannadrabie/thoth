@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s1-135-pat-regression-test` (Issue #135): the regression test the `cifix` entry claimed for the `github-fine-grained-pat` fix was missing; added now
+
+STANDARD tier (ratified by the Manager; scope `s1-135-pat-regression-test`). Test-only. No `test-writer` dispatch: no UI flow or API surface. The `cifix` entry below says "Regression test added pinning both classes"; no such test existed, only the full-format true-positive test. That entry is history and is not edited. Plan: `docs/plans/s1-135-pat-regression-test-phase1-2026-09-19.md`.
+
+- **Code touched:** `src/secret-scan/patterns.test.ts` only, two tests appended after the existing `github-fine-grained-pat` test; no existing test line edited. `src/secret-scan/patterns.ts` and `docs/qa/secret-scan-allowlist.json` are byte-identical to the base.
+- **Prose test.** The four snake_case exemplars Issue #135 named do not match. The same test asserts a synthetic full-format token still matches. Its title carries both names the reviewers proposed: the Issue #135 regression wording and the bracketed `github-fine-grained-pat-word-boundary-test`.
+- **Truncated-prefix test.** The prefix, a 22-character alphanumeric identifier segment and the trailing separator, with an empty secret segment, match, and the match is the whole fixture (the shape of Issue #89's exemplar). No test covered this shape before.
+- **Fixtures built at runtime** from constants, so the new text never holds the prefix followed by twenty alphanumerics. The new positive fixtures therefore need no allowlist entry and add no member to Issue #136's value-hash migration set. Measured, not typed: the `github-fine-grained-pat` match count over the test file is one at the base and one in the working tree.
+- **No red-first.** The fix already shipped, so both tests pass on first run. Red evidence is four mutations of a scratch copy of `patterns.ts` (the tracked file is never edited): the old `\w{20,255}` form turns the prose test red; requiring a non-empty secret segment turns the truncated test red; lowering the identifier floor to one turns the prose test red; raising it to twenty-three turns the truncated test red (and the other two tests of this pattern too, since their identifier segments are shorter than twenty-three).
+- **Disclosed, not designed for.** A camelCase shape (the prefix, twenty or more alphanumerics, then an underscore) still matches. It is unmeasured beyond a scan of the tracked tree, which found no unexplained match. A demonstrated one becomes its own Issue.
+
 ### Fixed — `s1-226-duplicate-field` (Issue #226): a duplicated `--field=` to either QA-14 probe now fails loud instead of resolving first-wins
 
 STANDARD tier (ratified by the Manager; scope `s1-226-duplicate-field`). No `test-writer` dispatch: an internal CLI's argv, stderr and exit-code contract, no UI flow or HTTP API. `src/lib/git.ts`, `src/qa/completeness-claim-checker.ts`, `docs/qa/secret-scan-allowlist.json` and the CI workflow are untouched.
