@@ -86,6 +86,24 @@ export function parseContinuationResidualField(args: string[]): ContinuationResi
   throw new Error(`--field must be one of continuation-marked|continuation-residual, got "${value}"`);
 }
 
+/**
+ * GitHub Issue #179: a stray positional argument (a leftover ref, `not-a-ref-at-all`, `HEAD~5`, ...)
+ * or an unknown flag (`--bogus-flag`) used to be silently ignored — the probe printed a working-tree
+ * count and exited 0. Any token that is not itself a `--field=...` flag is now a hard error, and
+ * `main()` calls this before it collects any file. Pure — throws, never exits or logs itself.
+ * Mirrors `assertKnownArgs` in marker-corpus-probe.ts (deliberately not shared, so the reviewed
+ * argv code of that probe stays byte-identical).
+ */
+export function assertKnownArgs(args: string[]): void {
+  const unknown = args.filter((a) => !a.startsWith("--field="));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unrecognized argument(s): ${unknown.map((a) => JSON.stringify(a)).join(", ")} — this probe only accepts ` +
+        `--field=continuation-marked|continuation-residual (no positional ref and no other flag)`,
+    );
+  }
+}
+
 export interface ContinuationMarkedStats {
   continuationMarked: number;
   filesScanned: number;
@@ -221,6 +239,7 @@ async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, s
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const argv = process.argv.slice(2);
+  assertKnownArgs(argv);
   const field = parseContinuationResidualField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
