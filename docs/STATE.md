@@ -1,22 +1,23 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-19 (session handoff, branch `docs/state-post-217`). **No story in flight; `master` is at `8513b58`.** `fixture-single-source-of-truth` (Issue #217) shipped: [PR #225](https://github.com/mohannadrabie/thoth/pull/225) merged 2026-09-19T07:34:18Z (CRITICAL; `THOTH-ADR-0001` accepted by the human; the fixture JSON is the single source of truth; expiry timer and pin tests removed). **Housekeeping done this session:** #90 closed `not_planned` (accepted permanent residual, backlink #224); #217, #219, #220, #221, #222, #212, #174 and #134 closed `completed` with evidence; #206 homed in S5, #135 and #136 homed in S1. #213 (`docs/receipt-check.mjs` filename parser), #223 (`docs/adr-cache.mjs` false cache hit when `adr/` is empty) and #224 (out-of-repo classification source, owner of the ADR's removal trigger) are deliberately left without a milestone: no milestone owns them. **Milestone S2 closed** (0 open). **Real checks on `master`:** `npm test` 869 tests, 869 pass, 0 fail, 0 skipped; `QA-14 reference-resolver` is red from pre-existing debt (none of the unresolved citations come from lines the last story added). **Open milestones with residual bugs:** S1 (6), S5 (7), S6 (5). S7 to S15 are unstarted (0 issues).
+**Last updated:** 2026-09-19 (session handoff, branch `fix/s1-qa-probe-hardening`, docs-only commits, not pushed). **S1 Story A (Issues #175, #179, #182) is PLAN-READY, awaiting human approval; nothing is built.** Plan: `docs/plans/S1-storyA-probe-hardening-phase1-2026-09-19.md` (STANDARD ratified, logged in `docs/run-log.jsonl`, scope `s1-qa-probe-hardening`). Human decisions on record: #182 is fixed by a stderr warning with the number and stdout unchanged; the twin probe gets the same treatment. `master` is at `8513b58`; `fixture-single-source-of-truth` (Issue #217, PR #225) is shipped. **CI on `master` is red for two reasons:** (1) `Test (full node:test suite)` failed once on `8513b58` on a flaky cleanup race in `src/secret-scan/pre-commit-scan.test.ts` R4 (`ENOTEMPTY`, Issue #227; local `npm test` is 869 pass, 0 fail, 0 skipped); (2) `QA-14 reference-resolver` is red from pre-existing debt. **Done this session:** #90 closed `not_planned`; #217, #219 to #222, #212, #174 and #134 closed `completed` with evidence; S2 milestone closed; #93 re-homed to S7; #206 homed in S5; #135 and #136 homed in S1; new Issues #226 (duplicated `--field=` resolves first-wins, LOW, S1) and #227 (CI flake, MED, S1). #213, #223 and #224 stay without a milestone (no owner). **Open per milestone:** S1 (8), S5 (6), S6 (5), S7 (1); S8 to S15 are unstarted.
 
-## Next: close the milestones in order (proposed 2026-09-19, awaiting human approval of the dispositions)
+## Next: close the milestones in order (dispositions approved 2026-09-19: Story A first; #93 re-homed to S7)
 
 A milestone closes only when every Issue in it is fixed, declined, or re-homed; never with stories still open.
 
-- **S1 Protect the baseline (6 open):**
-  - Story A, STANDARD: #175, #179, #182 (`continuation-residual-probe.ts` and `marker-corpus-probe.ts` list/arg/scratch-file bugs).
+- **To resume:** `git checkout fix/s1-qa-probe-hardening`, read the plan file, then approve or amend it. Two choices for the human at that gate: (a) approve Story A as planned and start Phase 2 step 0 (baseline run); (b) fix #227 first, a small test-only change that turns `master`'s Test step green (the file is in the secret-scanning sensitive area, so it draws a named reviewer). Recommendation: (b) first, since every later PR's CI is red on it until then. Also decide whether to fold #226 into Story A (default: leave it separate).
+- **S1 Protect the baseline (8 open):**
+  - Story A, STANDARD: #175, #179, #182 (`continuation-residual-probe.ts` and `marker-corpus-probe.ts` list, argv and scratch-file bugs). Plan ready.
+  - #227 (CI flake) and #226 (LOW): small.
   - Story B, CRITICAL (secret-scanning sensitive area): #136 (HIGH: an allowlist entry exempts a pattern in that file forever), #135 (OSS-01 PAT pattern false positives), #203 (guard exclusion rests on a misreading of PRINCIPLES rule 11). Needs a human design call on value-scoped allowlist entries.
-- **S5 Deny-by-default + hook wiring (7 open):**
+- **S5 Deny-by-default + hook wiring (6 open):**
   - Close with evidence, no story: #86 and #87 (run `npm run qa:gate-latency-budget` and `npm run qa:gate-command-path`), #88 (superseded by the single-source fixture).
   - Human-only: #89 (rotate or ignore the truncated PAT exemplar in an S5 round-2 review report).
-  - #93: blocked on reactivating `hooks/pretooluse-kernel-gate.mjs` (built, not wired; needs its own intake). Human call: re-home to a later milestone or decline.
   - Stories, CRITICAL (hooks): #96 (spike first: is the session id in a hook's real process env?) and #206 (a crafted connector name can forge an unlock hint).
 - **S6 Policy centralization (5 open, all MED):** one CRITICAL story for #107, #108, #110, #112, #124 (policy loader, printer and pin).
-- **S7 to S15 (unstarted):** S7 (INT-01, 02, 03, 06) and S8 (INT-05) are both unblocked today; S9 needs both. Whether to start them before S1, S5 and S6 close is a human call. Reactivating the PreToolUse gate has no stated requirements yet and needs an intake.
+- **S7 (1 open) to S15:** S7 holds #93 (centralLayer class is inert), blocked on reactivating `hooks/pretooluse-kernel-gate.mjs` (built, not wired; needs its own intake). S7 (INT-01, 02, 03, 06) and S8 (INT-05) are both unblocked today; S9 needs both. Whether to start them before S1, S5 and S6 close is a human call.
 
 ## Prior resume point (superseded above, kept for continuity) — `fixture-single-source-of-truth` — SHIPPED, merged as PR #225 (2026-09-19T07:34:18Z)
 
