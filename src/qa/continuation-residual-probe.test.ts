@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { realRunner } from "../lib/exec.ts";
 import type { Runner } from "../lib/exec.ts";
@@ -50,8 +50,8 @@ async function withNonGitDir(fn: (dir: string) => Promise<void>): Promise<void> 
   }
 }
 
-async function runProbe(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  return realRunner("node", [PROBE_PATH, ...args], { cwd, encoding: "utf8" });
+async function runProbe(cwd: string, args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  return realRunner("node", [PROBE_PATH, ...args], { cwd, encoding: "utf8", env });
 }
 
 // GitHub Issue #154 / council Path A (docs/decisions.md, 2026-09-11 "Path-Forward Brief" row):
@@ -270,7 +270,9 @@ test("QA-14 continuation-residual-probe (Issue #179, real subprocess): every bad
       { args: ["--bogus-flag"], offender: "--bogus-flag" },
     ];
     for (const { args, offender } of cases) {
-      const result = await runProbe(dir, args);
+      // GIT_CEILING_DIRECTORIES stops git walking up out of `dir`: if the OS temp dir sits inside a git
+      // worktree, `dir` would otherwise resolve to that worktree and the ordering half would be vacuous.
+      const result = await runProbe(dir, args, { GIT_CEILING_DIRECTORIES: dirname(dir) });
       const label = `argv ${JSON.stringify(args)}`;
       assert.notEqual(result.code, 0, `${label}: expected a non-zero exit; stdout: ${result.stdout}`);
       assert.match(result.stderr, /unrecognized argument/, `${label}: stderr: ${result.stderr}`);

@@ -10,7 +10,7 @@
 // One shared implementation so the two probes cannot drift. The untracked set is read here, through
 // an injected `Runner`, rather than by adding a method to `src/lib/git.ts`: that file is shared with
 // the secret scan and the QA-14 resolver, and this needs only the `--others` half of what
-// `GitOps.lsFilesWorkingTree()` already reads (same git arguments, same exclusions).
+// `GitOps.lsFilesWorkingTree()` already reads (same git arguments and exclusions, plus the probes' own `shouldScanFile` filter).
 import type { Runner } from "../lib/exec.ts";
 import { shouldScanFile } from "./reference-resolver.ts";
 

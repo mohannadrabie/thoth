@@ -40,7 +40,7 @@
 //
 // Deliberately NOT wired to a `[[completeness: cmd="..." expect=N]]` blocking marker (Issue #150's
 // own round-3 lesson, re-applied here before it could recur a 5th time on this same story's own
-// numeric-claim-drift class): this metric's corpus is the whole tracked tree, which moves on
+// numeric-claim-drift class): this metric's corpus is the tracked plus untracked-but-not-ignored working-tree files, which moves on
 // nearly every commit — see completeness-claim-checker.ts's own DEFAULT_FILES/header reasoning for
 // why a moving corpus cannot back an exact blocking `expect=N` assertion. Registered in
 // `KNOWN_INSTRUMENTS` as a real, callable, ON-DEMAND instrument only — prose may point at the
