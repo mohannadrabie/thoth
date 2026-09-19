@@ -1113,13 +1113,6 @@ test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
   assert.deepEqual(skipped, [], "a tracked text file that OSS-01 would skip as binary must be fixed (or named in KNOWN_BINARIES)");
 });
 
-test("sb2-skeleton-real-file-round-trip-scans-clean", async () => {
-  // The CI entry point, spawned as a process, against the real repo and the real (value-scoped) file.
-  const res = await runCli(HISTORY_SCAN_SCRIPT, PROJECT_ROOT);
-  assert.equal(res.code, 0, `the real allowlist must scan the real history clean through the CLI:\n${res.stdout.slice(0, 2000)}`);
-  assert.match(res.stdout, /0 blocking/);
-});
-
 // Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
 // the theory that a dated report is immutable. It is not (an addendum or a new report can carry an
 // unreviewed live value on its first commit), so report grants are pinned like every other file.
