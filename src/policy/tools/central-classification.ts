@@ -29,12 +29,14 @@
 // the review. Consequence, stated plainly: adding a name to either list silently suppresses that
 // name's SUR-03 halt at the next SessionStart, and no test fails. The exemption is a scoped, standing
 // exception to ADR-0021 INT-07, recorded in the project-tier ADR under docs/adr/ and in
-// docs/decisions.md's 2026-09-19 row; it ends when an out-of-repo policy source ships (S6).
+// docs/decisions.md's 2026-09-19 row; it ends when an out-of-repo classification source ships
+// (owned by GitHub Issue #224).
 //
 // What DOES still protect the JSON's integrity: this parser throws loudly on any malformed field (the
 // hook's own top-level try/catch then records SUR-03-enumeration-failed, never "no exemption"
-// silently), and no environment variable of any kind chooses which fixture file loads (GitHub Issue
-// #99; see hooks/sessionstart-tool-enum.mjs's `resolveFixtureLocation`).
+// silently), and no environment variable can select an arbitrary fixture FILE (GitHub Issue #99; see
+// hooks/sessionstart-tool-enum.mjs's `resolveFixtureLocation`). The project root the fixture is read
+// from comes from CLAUDE_PROJECT_DIR, or the hook's working directory when it is unset.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

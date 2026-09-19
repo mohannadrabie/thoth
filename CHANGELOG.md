@@ -23,7 +23,7 @@ Human directive, 2026-09-18: "remove the timer, remove the pinned list, the json
 - Comment-only edits in `builtin-tool-inventory.ts` and `mcp-enumeration.ts` (they claimed a runtime expiry and a "dated" ratification).
 - Not touched: `hooks/sessionstart-tool-enum.test.ts`, `hooks/userpromptsubmit-halt-relay.test.ts`, `hooks/test-support/*` (`test-writer` scope; `fixture-tree.ts:107` still says "SYNTHETIC/expired" in a comment), the `adr/` submodule, Issue #90 (the Manager closes it after merge).
 - **Verification, real:** `npm run typecheck` and `npm run lint` clean. `npm test`: 869 tests, 869 pass, 0 fail, 0 skipped (baseline 879 pass, 0 fail, 0 skipped). `node src/qa/completeness-claim-checker.ts` PASS. `node src/qa/recurring-findings-registry.ts` PASS. `npm run qa:reference-resolver` (QA-14) is red on `master` from pre-existing debt; it is diff-scoped, and none of its unresolved citations originate in lines this diff adds (verified by red-team and cross-domain-reviewer, 2026-09-19). The earlier before/after comparison in this bullet did not reproduce and is withdrawn.
-- **Mutation proof (M1), throwaway git worktree, since removed:** with the JSON edited (one connector added, one removed, one tool added, one class changed) and no test edited, `npm test` gave 869 tests, 869 pass, 0 fail, 0 skipped, the same as the unmutated copy.
+- **JSON-edit mutation proof, throwaway git worktree, since removed:** with the JSON edited (one connector added, one removed, one tool added, one class changed) and no test edited, `npm test` gave 869 tests, 869 pass, 0 fail, 0 skipped, the same as the unmutated copy.
 
 ### Fixed — `fix-215-ratify-claude-docs` (Issue #215): `AC1-b` pin updated for the 8th known connector, `claude.ai Claude Docs`
 
