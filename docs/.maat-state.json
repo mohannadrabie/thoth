@@ -1,6 +1,6 @@
 {
   "adrCatalog": {
-    "version": "c80e33854abc66da648df350257bffb85063079e",
+    "version": "5dba38415a5439ec2217e87f4a4c99f3402eb0ab",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
@@ -681,7 +681,7 @@
       {
         "id": "THOTH-ADR-0001",
         "title": "Standing exception to ADR-0021 INT-07 for the central-classification fixture (docs/qa/s5-central-classification.json)",
-        "status": "proposed",
+        "status": "accepted",
         "path": "docs\\adr\\thoth-0001-central-classification-fixture-standing-exception.md",
         "applicableTo": [
           "security",

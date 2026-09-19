@@ -50,3 +50,4 @@
 {"at":"2026-09-19T05:23:42.807Z","event":"receipt-reopened","scope":"fixture-single-source-of-truth","agent":"app-security-reviewer","trigger":"conditional-verdict+1-SUSPICION","report":"docs/reviews/fixture-single-source-of-truth-app-security-2026-09-19.md"}
 {"at":"2026-09-19T05:23:42.898Z","event":"receipt-reopened","scope":"fixture-single-source-of-truth","agent":"cross-domain-reviewer","trigger":"conditional-verdict+1-SUSPICION","report":"docs/reviews/fixture-single-source-of-truth-cross-domain-2026-09-19.md"}
 {"at":"2026-09-19T05:23:42.992Z","event":"receipt-reopened","scope":"fixture-single-source-of-truth","agent":"red-team","trigger":"clean-verdict-with-2-ISSUE+3-SUSPICION","report":"docs/reviews/fixture-single-source-of-truth-red-team-2026-09-19.md"}
+{"at":"2026-09-19T06:40:59.443Z","event":"story-shipped","scope":"fixture-single-source-of-truth","rounds":"0","reports":"4","findings":"20","adrTokensSaved":"106800","councilFired":"false"}

@@ -1,7 +1,7 @@
 ---
 id: THOTH-ADR-0001
 title: Standing exception to ADR-0021 INT-07 for the central-classification fixture (docs/qa/s5-central-classification.json)
-status: proposed
+status: accepted
 date: 2026-09-19
 applicableTo:
   - security
@@ -21,7 +21,7 @@ constraints:
 
 # THOTH-ADR-0001: Standing exception to ADR-0021 INT-07 for the central-classification fixture
 
-- **Status:** Proposed (2026-09-19). The status stays `proposed` until the human sets it to `accepted`; agents MUST NOT self-accept (SE ADR-0001). The exception binds only from acceptance (PRINCIPLES.md rule 9, SE ADR-0001), and the human accepts BEFORE the PR that carries this ADR merges. The ADR catalog (`docs/adr-cache.mjs`) serves a `proposed` ADR's rules exactly like an accepted one's (Issue #220), so readers check this field, not the catalog.
+- **Status:** Accepted (2026-09-19), by `mohannadrabie` (the human), in session, before the PR carrying this ADR merges. Proposed by `story-implementer` (Ptah); agents MUST NOT self-accept (SE ADR-0001), and the status edit was made by the Manager on the human's explicit instruction. The exception binds from acceptance (PRINCIPLES.md rule 9, SE ADR-0001). The ADR catalog (`docs/adr-cache.mjs`) serves a `proposed` ADR's rules exactly like an accepted one's (Issue #220), so readers check this field, not the catalog.
 - **Date:** 2026-09-19
 - **Deciders:** `story-implementer` (Ptah), proposed; `mohannadrabie`, directed the mechanism and the ADR path on 2026-09-19.
 - **Tier:** project (this repository only). Lives under `docs/adr/`, listed in `maat.json` `adr.dir`.
