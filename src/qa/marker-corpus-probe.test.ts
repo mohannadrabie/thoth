@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   assertKnownArgs,
   collectFullTreeFileTexts,
@@ -11,6 +12,8 @@ import {
   readFileTexts,
 } from "./marker-corpus-probe.ts";
 import { realRunner } from "../lib/exec.ts";
+
+const PROBE_PATH = fileURLToPath(new URL("./marker-corpus-probe.ts", import.meta.url));
 
 /** Same isolated-fixture shape `src/secret-scan/history-scan.test.ts` already uses: a throwaway
  * `mkdtemp` directory, `git init`-ed, never this repo's own real working tree. GitHub Issue #176
@@ -282,5 +285,33 @@ test("QA-14 marker-corpus-probe (Issue #178, regression): a nested untracked git
     assert.ok(![...texts.keys()].some((f) => f.startsWith("zz-nested")), "the nested repo's directory entry must not be scanned as a file");
     const stats = computeMarkerCorpusStats(texts);
     assert.equal(stats.total, 1, "only the one committed tracked.md citation — the nested repo's own #900031 must not leak in");
+  });
+});
+
+// GitHub Issue #182: `collectFullTreeFileTexts` counts untracked-but-not-ignored files, so a stray
+// scratch file changes the published number. The probe now says so on STDERR (the shared
+// untracked-scan-warning.ts); the number, the exit code and stdout are unchanged, and stdout still
+// ENDS in the single field integer that completeness-claim-checker.ts reads.
+//
+// TWR-1: subprocess in a fixture repo holding one untracked scannable file.
+test("QA-14 marker-corpus-probe (Issue #182, real subprocess): an untracked scannable file draws a stderr warning; stdout, the count and the exit code are unchanged", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "untracked.md"), "Fixes #900001 today. See (#900002) for context.\n", "utf8");
+    const run = await realRunner("node", [PROBE_PATH, "--field=total"], { cwd: repoDir, encoding: "utf8" });
+    assert.equal(run.code, 0, `stderr: ${run.stderr}`);
+    assert.match(run.stdout, /total=3\s*$/, `1 tracked + 2 untracked; stdout must END in the field integer; stdout: ${run.stdout}`);
+    assert.doesNotMatch(run.stdout, /untracked|WARNING/i, `the warning must never reach stdout; stdout: ${run.stdout}`);
+    assert.match(run.stderr, /WARNING: 1 untracked file/, `stderr: ${run.stderr}`);
+    assert.ok(run.stderr.includes("untracked.md"), `stderr must name the path; stderr: ${run.stderr}`);
+  });
+});
+
+// TWR-2: a clean fixture repo (nothing untracked) produces no warning at all.
+test("QA-14 marker-corpus-probe (Issue #182, real subprocess): no untracked scannable file means no warning", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const run = await realRunner("node", [PROBE_PATH, "--field=total"], { cwd: repoDir, encoding: "utf8" });
+    assert.equal(run.code, 0, `stderr: ${run.stderr}`);
+    assert.match(run.stdout, /total=1\s*$/, `stdout: ${run.stdout}`);
+    assert.doesNotMatch(run.stderr, /WARNING|untracked/i, `stderr must carry no warning; stderr: ${run.stderr}`);
   });
 });

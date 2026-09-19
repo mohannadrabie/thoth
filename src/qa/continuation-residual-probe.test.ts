@@ -343,3 +343,20 @@ test("QA-14 continuation-residual-probe (Issue #175, isolated): an untracked nes
     assert.equal(stats.continuationMarked, 3, "tracked.md (1) + untracked.md (2); the nested repo's own citations must not leak in");
   });
 });
+
+// GitHub Issue #182 (applied to this probe now that #175 makes it count untracked files): the
+// shared warning (untracked-scan-warning.ts) goes to STDERR only. The counted number, the exit code,
+// and stdout (which must still END in the single field integer) are unchanged.
+//
+// TWR-3: subprocess in a fixture repo holding one untracked scannable file.
+test("QA-14 continuation-residual-probe (Issue #182, real subprocess): an untracked scannable file draws a stderr warning; stdout, the count and the exit code are unchanged", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+    const run = await runProbe(repoDir, ["--field=continuation-marked"]);
+    assert.equal(run.code, 0, `stderr: ${run.stderr}`);
+    assert.match(run.stdout, /continuation-marked=3\s*$/, `1 tracked + 2 untracked; stdout must END in the field integer; stdout: ${run.stdout}`);
+    assert.doesNotMatch(run.stdout, /untracked|WARNING/i, `the warning must never reach stdout; stdout: ${run.stdout}`);
+    assert.match(run.stderr, /WARNING: 1 untracked file/, `stderr: ${run.stderr}`);
+    assert.ok(run.stderr.includes("untracked.md"), `stderr must name the path; stderr: ${run.stderr}`);
+  });
+});

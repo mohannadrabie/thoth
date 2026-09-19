@@ -30,6 +30,7 @@ import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import { scanReferences, shouldScanFile } from "./reference-resolver.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { printInstrumentResult } from "../lib/instrument.ts";
+import { warnIfUntrackedScannable } from "./untracked-scan-warning.ts";
 
 // GitHub Issue #164 fix (mirrors the already-shipped Issue #161 fix on this file's own twin
 // instrument, continuation-residual-probe.ts — same root cause, same closure): this file used to
@@ -225,6 +226,8 @@ async function main(): Promise<void> {
   const field = parseMarkerCorpusField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
+  // Issue #182: disclose untracked files inside the count on stderr; the number and stdout are unchanged.
+  await warnIfUntrackedScannable(realRunner, repoRoot, (message) => console.error(message));
 
   const stats = computeMarkerCorpusStats(fileTexts);
   const pct = stats.total > 0 ? Math.round((stats.unmarked / stats.total) * 100) : 0;

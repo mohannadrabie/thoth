@@ -58,6 +58,7 @@ import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
 import { resolveIssueCitations, resolveWithinRepo, scanReferences, shouldScanFile } from "./reference-resolver.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { printInstrumentResult } from "../lib/instrument.ts";
+import { warnIfUntrackedScannable } from "./untracked-scan-warning.ts";
 
 // Same stub shape as marker-corpus-probe.ts's own `stubDeps` — no real `gh` call, no network, no
 // credential; only the CLASSIFICATION mechanism (markedVia) is read by
@@ -244,6 +245,8 @@ async function main(): Promise<void> {
   const field = parseContinuationResidualField(argv);
 
   const fileTexts = await collectFullTreeFileTexts(repoRoot);
+  // Issue #182: disclose untracked files inside the count on stderr; the number and stdout are unchanged.
+  await warnIfUntrackedScannable(realRunner, repoRoot, (message) => console.error(message));
 
   if (field === null || field === "continuation-marked") {
     const denom = computeContinuationMarkedCount(fileTexts);
