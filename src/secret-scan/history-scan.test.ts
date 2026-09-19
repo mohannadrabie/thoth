@@ -1,12 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, unlink } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, unlink, mkdir, cp } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
-import { loadAllowlist, partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
+import type { AllowlistEntry, HistoryMatch } from "./history-scan.ts";
+import { isValidAllowlistEntry, loadAllowlist, partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
 import { redact, SECRET_PATTERNS } from "./patterns.ts";
 import { readFile } from "node:fs/promises";
 
@@ -429,11 +432,14 @@ test("OSS-01 allowlist (Issue #199 follow-up, mutation/positive-control proof, F
   "set is genuinely derived, not a hardcoded list scoped to docs/STATE.md alone", () => {
   const fakeAllowlist = [
     { path: "CHANGELOG.md", patternId: "aws-access-key-id" }, // a file never named anywhere in this test file
-    { path: "docs/reviews/some-report-2026-09-14.md", patternId: "aws-access-key-id" }, // the one real exclusion
+    { path: "docs/reviews/some-report-2026-09-14.md", patternId: "aws-access-key-id" }, // a report grant: no longer excluded (issue 203)
     { path: "docs/STATE.md", patternId: "email-address" }, // non-credential pattern id, excluded on that basis
     { path: "CHANGELOG.md", patternId: "aws-access-key-id" }, // duplicate grant, deduped
   ];
-  assert.deepEqual(deriveMutableCredentialGrants(fakeAllowlist), [{ path: "CHANGELOG.md", patternId: "aws-access-key-id" }]);
+  assert.deepEqual(deriveMutableCredentialGrants(fakeAllowlist), [
+    { path: "CHANGELOG.md", patternId: "aws-access-key-id" },
+    { path: "docs/reviews/some-report-2026-09-14.md", patternId: "aws-access-key-id" },
+  ]);
 });
 
 test("OSS-01 allowlist (GitHub Issue #199 follow-up, mutation proof, red-team's own CHANGELOG.md " +
@@ -612,4 +618,512 @@ test("OSS-01: a working-tree-only view would miss the planted secret (proves 'fu
   } finally {
     await rm(repoDir, { recursive: true, force: true });
   }
+});
+
+// ================================================================================================
+// Issues 136 and 203 (story S-B2): value-scoped allowlist entries. An entry exempts a match only
+// when its path, its patternId AND the sha256 of the matched bytes all agree. Every literal below
+// is built at RUNTIME from fragments so this file's own text never holds a secret-shaped string
+// (the fixtures need no allowlist entry, and the scanner reading this file finds nothing new).
+// Hashes in assertions come from the independent `sha256` helper defined earlier in this file,
+// never from the production hashing code.
+// ================================================================================================
+
+const HISTORY_SCAN_SCRIPT = fileURLToPath(new URL("./history-scan.ts", import.meta.url));
+const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const REVIEWS_DIR = ["docs", "reviews"].join("/");
+
+function pad(seed: string, len: number, fill: string): string {
+  return (seed + fill.repeat(len)).slice(0, len);
+}
+function tag(n: number): string {
+  return n.toString(36);
+}
+
+/** One builder per pattern id: `text` is a file line holding exactly one match, `match` is the exact
+ * substring the pattern's regex captures (the bytes that get hashed). `n` makes the value distinct. */
+const NOVEL: Record<string, (n: number) => { text: string; match: string }> = {
+  "aws-access-key-id": (n) => {
+    const m = "AKIA" + pad(tag(n).toUpperCase(), 16, "Q");
+    return { text: `k = ${m}`, match: m };
+  },
+  "aws-secret-access-key": (n) => {
+    const m = `${["aws", "secret", "access", "key"].join("_")} = "${pad(tag(n), 40, "a")}"`;
+    return { text: m, match: m };
+  },
+  "github-pat": (n) => {
+    const m = ["ghp", pad(tag(n), 36, "b")].join("_");
+    return { text: `t ${m}`, match: m };
+  },
+  "github-fine-grained-pat": (n) => {
+    const m = ["github", "pat", pad(tag(n), 22, "c"), pad(tag(n), 30, "d")].join("_");
+    return { text: `t ${m}`, match: m };
+  },
+  "slack-token": (n) => {
+    const m = ["xoxb", pad(tag(n), 12, "e")].join("-");
+    return { text: `t ${m}`, match: m };
+  },
+  "private-key-block": (n) => {
+    const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const end = ["-----END", "PRIVATE KEY-----"].join(" ");
+    const m = [begin, pad("MIIB" + tag(n), 32, "A"), end].join("\n");
+    return { text: m, match: m };
+  },
+  "generic-password-assignment": (n) => {
+    const m = `${["pass", "word"].join("")} = "${pad(tag(n), 12, "x")}"`;
+    return { text: m, match: m };
+  },
+  "internal-hostname": (n) => {
+    const m = [`novel${tag(n)}`, "internal"].join(".");
+    return { text: `h ${m}`, match: m };
+  },
+  "ipv4-private": (n) => {
+    const m = ["10", String(n), "3", "4"].join(".");
+    return { text: `a ${m}`, match: m };
+  },
+  "email-address": (n) => {
+    const m = [`novel${tag(n)}.person`, "mail.example.org"].join("@");
+    return { text: `e ${m}`, match: m };
+  },
+};
+
+function novel(patternId: string, n: number): { text: string; match: string } {
+  const build = NOVEL[patternId];
+  if (build === undefined) assert.fail(`no runtime literal builder for pattern id ${patternId} -- add one to NOVEL`);
+  return build(n);
+}
+
+function matchFor(path: string, patternId: string, valueSha256: string): HistoryMatch {
+  return { commit: "c0ffee000000", path, patternId, description: "d", redacted: "r", valueSha256 };
+}
+
+function removeDir(dir: string): Promise<void> {
+  return rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+/** A throwaway git repo with `files` committed in one commit. The committer identity is built at
+ * runtime. The caller's callback gets the repo directory; cleanup always runs. */
+async function withRepo<T>(files: Record<string, string>, fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-"));
+  try {
+    const run = async (...args: string[]): Promise<void> => {
+      const res = await realRunner("git", args, { cwd: dir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+    };
+    await run("init", "-q", "-b", "main");
+    await run("config", "user.email", ["ci", "example.org"].join("@"));
+    await run("config", "user.name", "Test");
+    await run("config", "commit.gpgsign", "false");
+    for (const [p, content] of Object.entries(files)) {
+      const abs = join(dir, ...p.split("/"));
+      await mkdir(join(abs, ".."), { recursive: true });
+      await writeFile(abs, content);
+    }
+    await run("add", ".");
+    await run("commit", "-q", "-m", "fixture");
+    return await fn(dir);
+  } finally {
+    await removeDir(dir);
+  }
+}
+
+function allowlistJson(entries: unknown[]): string {
+  return JSON.stringify(entries, null, 2) + "\n";
+}
+
+function runCli(script: string, cwd: string, args: string[] = []): Promise<{ code: number; stdout: string; stderr: string }> {
+  return realRunner("node", [script, ...args], { cwd, encoding: "utf8", timeoutMs: 120_000 });
+}
+
+test("oss01-entry-exempts-only-its-granted-values", () => {
+  const granted = sha256("granted-value");
+  const other = sha256("some-other-value");
+  const entry: AllowlistEntry = { path: "src/a.txt", patternId: "aws-access-key-id", valueSha256: [granted], reason: "fixture" };
+  const matches = [
+    matchFor("src/a.txt", "aws-access-key-id", granted), // cell 1: same path, same pattern, granted hash
+    matchFor("src/a.txt", "aws-access-key-id", other), // cell 2: same path, same pattern, other hash
+    matchFor("src/a.txt", "github-pat", granted), // cell 3: same hash, other pattern
+    matchFor("src/b.txt", "aws-access-key-id", granted), // cell 4: same hash, other path
+  ];
+  const { blocking, allowlisted } = partitionAllowlisted(matches, [entry]);
+  assert.deepEqual(allowlisted, [matches[0]], "only the fully agreeing cell may be exempt");
+  assert.deepEqual(blocking, [matches[1], matches[2], matches[3]]);
+});
+
+test("oss01-allowlisted-file-still-blocks-a-novel-secret", async () => {
+  const granted = novel("aws-access-key-id", 1);
+  const fresh = novel("aws-access-key-id", 2);
+  const entries = [{ path: "fixture.txt", patternId: "aws-access-key-id", valueSha256: [sha256(granted.match)], reason: "synthetic fixture" }];
+  await withRepo({ "fixture.txt": `${granted.text}\n${fresh.text}\n`, [ALLOWLIST_PATH]: allowlistJson(entries) }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const result = summarizeMatches(matches, allowlist);
+    const output = [result.summary, ...result.details].join("\n");
+    assert.equal(result.ok, false, "a novel value in a granted file must block");
+    assert.match(result.summary, /^1 secret-shaped match/, "exactly the novel value blocks");
+    assert.ok(result.details.some((d) => d.startsWith("ALLOWLISTED") && d.includes("fixture.txt")), "the granted literal is still reported");
+    assert.ok(result.details.some((d) => /UNLOCK/.test(d)), "the block names its unlock (PRINCIPLES rule 2)");
+    for (const secret of [granted.match, fresh.match, sha256(fresh.match), sha256(granted.match)]) {
+      assert.ok(!output.includes(secret), "no raw value and no hash appears in the block output");
+    }
+  });
+});
+
+test("oss01-reviewed-literal-stays-allowlisted-and-reported", () => {
+  const h = sha256("reviewed-fixture-literal");
+  const result = summarizeMatches(
+    [matchFor("src/fixture.txt", "aws-access-key-id", h)],
+    [{ path: "src/fixture.txt", patternId: "aws-access-key-id", valueSha256: [h], reason: "reviewed fixture" }],
+  );
+  assert.equal(result.ok, true);
+  assert.ok(result.details.some((d) => d.startsWith("ALLOWLISTED") && d.includes("src/fixture.txt")), "an allowlisted match is still reported");
+});
+
+test("oss01-real-allowlist-refuses-a-novel-value-in-every-granted-pair", async () => {
+  const entries = await loadAllowlist(ALLOWLIST_PATH);
+  assert.ok(entries.length > 0, "the real allowlist must not be empty (derived from the file, not typed)");
+  const perPath = new Map<string, string[]>();
+  entries.forEach((e, i) => {
+    const lines = perPath.get(e.path) ?? [];
+    lines.push(novel(e.patternId, i + 1).text);
+    perPath.set(e.path, lines);
+  });
+  const files: Record<string, string> = {};
+  for (const [p, lines] of perPath) files[p] = lines.join("\n") + "\n";
+  await withRepo(files, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, entries);
+    assert.equal(allowlisted.length, 0, "a novel value must never be exempt by the real allowlist");
+    assert.equal(blocking.length, matches.length);
+    for (const e of entries) {
+      assert.ok(
+        blocking.some((m) => m.path === e.path && m.patternId === e.patternId),
+        `expected a blocking novel value at a granted pair (pattern ${e.patternId}, path ${e.path})`,
+      );
+    }
+  });
+});
+
+test("sb2-three-human-named-pairs-are-value-scoped", async () => {
+  const entries = await loadAllowlist(ALLOWLIST_PATH);
+  const file = ["src", "secret-scan", "patterns.test.ts"].join("/");
+  const raw = JSON.parse(await readFile(ALLOWLIST_PATH, "utf8")) as Array<{ path: string; patternId: string; valueSha256?: unknown }>;
+  for (const id of ["github-fine-grained-pat", "github-pat", "internal-hostname"]) {
+    const found = raw.filter((e) => e.path === file && e.patternId === id);
+    assert.equal(found.length, 1, `exactly one entry for ${id} on the pattern catalog test file`);
+    const e = found[0]!;
+    assert.ok(isValidAllowlistEntry(e), `${id}: entry must be a valid value-scoped entry`);
+    assert.ok(Array.isArray(e.valueSha256) && e.valueSha256.length > 0, `${id}: entry must carry a non-empty hash list`);
+    const { blocking } = partitionAllowlisted([matchFor(file, id, sha256(`novel-${id}`))], entries);
+    assert.equal(blocking.length, 1, `${id}: a novel value must block on the once-whole-file pair`);
+  }
+});
+
+const MALFORMED_SCOPES: Array<[string, (h: string) => unknown]> = [
+  ["missing valueSha256", () => undefined],
+  ["empty list", () => []],
+  ["a string, not a list", (h) => h],
+  ["null", () => null],
+  ["a non-hex character", (h) => [h.slice(0, 63) + "g"]],
+  ["uppercase hex", (h) => [h.toUpperCase()]],
+  ["wrong length (short)", (h) => [h.slice(0, 63)]],
+  ["wrong length (long)", (h) => [h + "a"]],
+  ["a non-string element", () => [123]],
+  ["one valid hash plus one malformed", (h) => [h, "zz"]],
+];
+
+test("sb2-malformed-or-missing-scope-is-rejected-and-blocks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-malformed-"));
+  try {
+    const good = sha256("control-value");
+    const entries: unknown[] = [];
+    const matches: HistoryMatch[] = [];
+    MALFORMED_SCOPES.forEach(([, scope], i) => {
+      const h = sha256(`malformed-${i}`);
+      const value = scope(h);
+      entries.push({ path: `bad-${i}.txt`, patternId: "aws-access-key-id", ...(value === undefined ? {} : { valueSha256: value }), reason: "fixture" });
+      matches.push(matchFor(`bad-${i}.txt`, "aws-access-key-id", h));
+    });
+    entries.push({ path: "control.txt", patternId: "aws-access-key-id", valueSha256: [good], reason: "fixture" });
+    matches.push(matchFor("control.txt", "aws-access-key-id", good));
+    const p = join(dir, "allowlist.json");
+    await writeFile(p, allowlistJson(entries));
+    const loaded = await loadAllowlist(p);
+    assert.deepEqual(loaded.map((e) => e.path), ["control.txt"], "only the well-formed control entry survives the loader");
+    const { blocking, allowlisted } = partitionAllowlisted(matches, loaded);
+    assert.deepEqual(allowlisted.map((m) => m.path), ["control.txt"]);
+    assert.equal(blocking.length, MALFORMED_SCOPES.length, "every malformed entry's match blocks");
+  } finally {
+    await removeDir(dir);
+  }
+});
+
+test("sb2-partial-migration-does-not-leave-legacy-shape-entries-honored", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-partial-"));
+  try {
+    const hashes = ["a", "b", "c"].map((k) => sha256(`partial-${k}`));
+    const p = join(dir, "allowlist.json");
+    await writeFile(p, allowlistJson([
+      { path: "a.txt", patternId: "aws-access-key-id", valueSha256: [hashes[0]], reason: "fixture" },
+      { path: "b.txt", patternId: "aws-access-key-id", reason: "legacy shape: path and pattern only" },
+      { path: "c.txt", patternId: "aws-access-key-id", valueSha256: [hashes[2]], reason: "fixture" },
+    ]));
+    const loaded = await loadAllowlist(p);
+    assert.deepEqual(loaded.map((e) => e.path), ["a.txt", "c.txt"], "the legacy-shaped entry must not be loaded");
+    const matches = [
+      matchFor("a.txt", "aws-access-key-id", hashes[0]!),
+      matchFor("b.txt", "aws-access-key-id", hashes[1]!),
+      matchFor("c.txt", "aws-access-key-id", hashes[2]!),
+    ];
+    const { blocking } = partitionAllowlisted(matches, loaded);
+    assert.deepEqual(blocking.map((m) => m.path), ["b.txt"], "only the legacy-shaped entry's match blocks");
+  } finally {
+    await removeDir(dir);
+  }
+});
+
+test("sb2-partial-migration-control-all-valid-entries-are-honored", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-partial-ctl-"));
+  try {
+    const h = sha256("partial-control");
+    const p = join(dir, "allowlist.json");
+    await writeFile(p, allowlistJson([{ path: "a.txt", patternId: "aws-access-key-id", valueSha256: [h], reason: "fixture" }]));
+    const loaded = await loadAllowlist(p);
+    assert.equal(loaded.length, 1);
+    assert.equal(partitionAllowlisted([matchFor("a.txt", "aws-access-key-id", h)], loaded).blocking.length, 0);
+  } finally {
+    await removeDir(dir);
+  }
+});
+
+test("sb2-regex-edit-invalidates-entries-loudly", async () => {
+  // Same literal, two boundaries for one pattern id: A matches a 6-character prefix, B matches 8.
+  const boundaryA = [{ id: "custom", description: "boundary A", regex: /zq[a-z]{4}/g }];
+  const boundaryB = [{ id: "custom", description: "boundary B", regex: /zq[a-z]{6}/g }];
+  const literal = ["zq", "abcdef"].join("");
+  await withRepo({ "notes.txt": `x ${literal}\n` }, async (dir) => {
+    const git = makeGitOps(realRunner, dir);
+    const entries: AllowlistEntry[] = [{ path: "notes.txt", patternId: "custom", valueSha256: [sha256("zqabcd")], reason: "hashed under boundary A" }];
+    const underA = summarizeMatches(await scanHistory(git, { patterns: boundaryA }), entries);
+    assert.equal(underA.ok, true, "control: the entry hashed under the boundary it was derived from is honored");
+    const underB = summarizeMatches(await scanHistory(git, { patterns: boundaryB }), entries);
+    assert.equal(underB.ok, false, "the boundary moved, the entry is stale, the match must block");
+    assert.ok(underB.details.some((d) => /UNLOCK/.test(d)), "and the block says how to re-derive it");
+  });
+});
+
+test("sb2-scanner-hashes-at-match-time-and-stores-no-raw-text", async () => {
+  const aws = novel("aws-access-key-id", 5);
+  const key = novel("private-key-block", 6);
+  const pwText = `${["pass", "word"].join("")} = "caféxyz12"`; // one non-ASCII character inside the match
+  await withRepo({ "one.txt": `${aws.text}\n`, "two.txt": `${key.text}\n`, "three.txt": `${pwText}\n` }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const byPath = new Map(matches.map((m) => [m.path, m]));
+    assert.equal(byPath.get("one.txt")?.valueSha256, sha256(aws.match));
+    assert.equal(byPath.get("two.txt")?.valueSha256, sha256(key.match), "a match spanning lines hashes the raw bytes");
+    assert.equal(byPath.get("three.txt")?.valueSha256, sha256(pwText), "a non-ASCII match hashes the file's own UTF-8 bytes");
+    const serialized = JSON.stringify(matches);
+    for (const raw of [aws.match, key.match, pwText]) assert.ok(!serialized.includes(raw), "raw matched text is never stored on the match");
+  });
+});
+
+test("sb2-real-allowlist-loads-with-no-rejected-entry", async () => {
+  const raw: unknown = JSON.parse(await readFile(ALLOWLIST_PATH, "utf8"));
+  assert.ok(Array.isArray(raw));
+  const loaded = await loadAllowlist(ALLOWLIST_PATH);
+  assert.equal(loaded.length, raw.length, "the loader silently dropped an entry of the real file");
+  assert.deepEqual(loaded.rejected, [], "the real file must load with nothing rejected");
+  for (const e of loaded) assert.ok(Array.isArray(e.valueSha256) && e.valueSha256.length > 0);
+});
+
+test("sb2-rejected-entry-is-named-in-blocking-output", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-rejected-"));
+  try {
+    const good = sha256("named-good");
+    const upper = sha256("named-upper").toUpperCase();
+    const blocked = matchFor("blocked.txt", "aws-access-key-id", sha256("named-blocked"));
+    const entriesFile = join(dir, "entries.json");
+    await writeFile(entriesFile, allowlistJson([
+      { path: "ok.txt", patternId: "aws-access-key-id", valueSha256: [good], reason: "fixture" },
+      { path: "upper.txt", patternId: "github-pat", valueSha256: [upper], reason: "fixture" },
+      { path: "legacy.txt", patternId: "email-address", reason: "legacy shape" },
+    ]));
+    const loaded = await loadAllowlist(entriesFile);
+    const text = summarizeMatches([blocked], loaded).details.join("\n");
+    assert.match(text, /REJECTED-ENTRY index=1 path=upper\.txt pattern=github-pat: .*valueSha256/, "the malformed-hash entry is named");
+    assert.match(text, /REJECTED-ENTRY index=2 path=legacy\.txt pattern=email-address: .*valueSha256/, "the legacy-shaped entry is named");
+    for (const secret of [good, upper, upper.toLowerCase(), blocked.valueSha256]) assert.ok(!text.includes(secret), "no hash in the block output");
+
+    // File-level rejections: a BOM-prefixed file, a non-array document, a missing file.
+    const bomFile = join(dir, "bom.json");
+    await writeFile(bomFile, "﻿" + allowlistJson([{ path: "ok.txt", patternId: "aws-access-key-id", valueSha256: [good], reason: "fixture" }]));
+    const objectFile = join(dir, "object.json");
+    await writeFile(objectFile, "{}");
+    const fileCases: Array<[string, string]> = [
+      [bomFile, "not-valid-json"],
+      [objectFile, "not-an-array"],
+      [join(dir, "absent.json"), "unreadable-or-missing"],
+    ];
+    for (const [file, reasonClass] of fileCases) {
+      const l = await loadAllowlist(file);
+      assert.equal(l.length, 0, "an unusable file yields no entries, every match blocks");
+      const t = summarizeMatches([blocked], l).details.join("\n");
+      assert.match(t, /REJECTED-ALLOWLIST-FILE/);
+      assert.ok(t.includes(reasonClass), `the file-level reason class ${reasonClass} is named`);
+    }
+  } finally {
+    await removeDir(dir);
+  }
+});
+
+test("sb2-history-scan-cli-exits-nonzero-on-novel-secret-in-granted-file", async () => {
+  const granted = novel("aws-access-key-id", 7);
+  const fresh = novel("aws-access-key-id", 8);
+  const entries = [{ path: "fixture.txt", patternId: "aws-access-key-id", valueSha256: [sha256(granted.match)], reason: "synthetic fixture" }];
+  await withRepo({ "fixture.txt": `${granted.text}\n${fresh.text}\n`, [ALLOWLIST_PATH]: allowlistJson(entries) }, async (dir) => {
+    const res = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(res.code, 0, `the CI entry point must fail on a novel secret in a granted file:\n${res.stdout}`);
+    assert.match(res.stdout, /UNLOCK/, "the failing run names its unlock");
+    assert.ok(!res.stdout.includes(fresh.match) && !res.stdout.includes(granted.match), "no raw value on stdout");
+  });
+});
+
+test("sb2-history-scan-cli-control-granted-literal-alone-exits-zero", async () => {
+  const granted = novel("aws-access-key-id", 9);
+  const entries = [{ path: "fixture.txt", patternId: "aws-access-key-id", valueSha256: [sha256(granted.match)], reason: "synthetic fixture" }];
+  await withRepo({ "fixture.txt": `${granted.text}\n`, [ALLOWLIST_PATH]: allowlistJson(entries) }, async (dir) => {
+    const res = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(res.code, 0, `positive control: a fully granted literal must pass:\n${res.stdout}\n${res.stderr}`);
+  });
+});
+
+test("sb2-report-file-omits-value-hash-for-blocking-matches", async () => {
+  const granted = novel("aws-access-key-id", 10);
+  const fresh = novel("aws-access-key-id", 11);
+  const entries = [{ path: "granted.txt", patternId: "aws-access-key-id", valueSha256: [sha256(granted.match)], reason: "synthetic fixture" }];
+  await withRepo({ "granted.txt": `${granted.text}\n`, "blocked.txt": `${fresh.text}\n`, [ALLOWLIST_PATH]: allowlistJson(entries) }, async (dir) => {
+    const res = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(res.code, 0);
+    const reportText = await readFile(join(dir, "docs", "qa", "history-scan-report.json"), "utf8");
+    const report = JSON.parse(reportText) as { matches: Array<{ path: string; valueSha256?: string }> };
+    const blockedMatch = report.matches.find((m) => m.path === "blocked.txt");
+    const grantedMatch = report.matches.find((m) => m.path === "granted.txt");
+    assert.ok(blockedMatch !== undefined && grantedMatch !== undefined);
+    assert.ok(!("valueSha256" in blockedMatch), "a blocking match carries no value hash (a guessable hash of a possibly-real secret)");
+    assert.equal(grantedMatch.valueSha256, sha256(granted.match), "an allowlisted match may carry its hash");
+    assert.ok(!reportText.includes(sha256(fresh.match)), "the blocking value's hash appears nowhere in the report");
+    assert.ok(!reportText.includes(fresh.match) && !reportText.includes(granted.match), "no raw value in the report");
+    assert.ok(!res.stdout.includes(sha256(fresh.match)), "and not in the log either");
+  });
+});
+
+test("sb2-unlock-command-output-is-accepted-by-the-gate", async () => {
+  // For every pattern id the catalog carries (derived, so a new pattern without a builder fails here).
+  for (const pattern of SECRET_PATTERNS) {
+    const lit = novel(pattern.id, 12);
+    await withRepo({ "fixture.txt": `${lit.text}\n`, [ALLOWLIST_PATH]: allowlistJson([]) }, async (dir) => {
+      const blocked = await runCli(HISTORY_SCAN_SCRIPT, dir);
+      assert.notEqual(blocked.code, 0, `${pattern.id}: an ungranted literal must block`);
+      assert.match(blocked.stdout, /regex MATCH/, "the unlock names what is hashed");
+      assert.match(blocked.stdout, /generic-password-assignment/);
+      assert.match(blocked.stdout, /aws-secret-access-key/);
+      const line = blocked.stdout.split("\n").find((l) => l.includes("HASH-COMMAND") && l.includes(`[${pattern.id}]`));
+      assert.ok(line !== undefined, `${pattern.id}: the unlock prints a hash command for the blocked pair`);
+      const command = /: (node .*)$/.exec(line.trimEnd())?.[1];
+      assert.ok(command !== undefined, `${pattern.id}: could not read the printed command`);
+
+      // The printed command names a repo-relative tool: give the fixture repo its own copy.
+      await mkdir(join(dir, "src"), { recursive: true });
+      await cp(join(PROJECT_ROOT, "src", "lib"), join(dir, "src", "lib"), { recursive: true });
+      await cp(join(PROJECT_ROOT, "src", "secret-scan"), join(dir, "src", "secret-scan"), { recursive: true });
+      const shellRun = spawnSync(command, { cwd: dir, shell: true, encoding: "utf8" });
+      assert.equal(shellRun.status, 0, `${pattern.id}: the printed command must run in the platform shell: ${shellRun.stderr}`);
+      const hashes = shellRun.stdout.split("\n").map((l) => /^([0-9a-f]{64})\s/.exec(l)?.[1]).filter((h): h is string => h !== undefined);
+      assert.deepEqual(hashes, [sha256(lit.match)], `${pattern.id}: the command yields the hash of the regex match text`);
+
+      await writeFile(
+        join(dir, ...ALLOWLIST_PATH.split("/")),
+        allowlistJson([{ path: "fixture.txt", patternId: pattern.id, valueSha256: hashes, reason: "synthetic fixture" }]),
+      );
+      const after = await runCli(HISTORY_SCAN_SCRIPT, dir);
+      assert.equal(after.code, 0, `${pattern.id}: the gate must accept the hash the command printed:\n${after.stdout}`);
+    });
+  }
+});
+
+test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
+  // The scanner's own rule (history-scan.ts looksBinary): a NUL byte in the first 8000 bytes means the
+  // file is skipped, unscanned. A tracked text file with one is invisible to OSS-01. Derived from git.
+  const KNOWN_BINARIES: string[] = []; // name a real binary asset here by path; none is tracked today
+  const res = await realRunner("git", ["ls-files", "-s", "-z"], { cwd: PROJECT_ROOT, encoding: "latin1" });
+  assert.equal(res.code, 0, res.stderr);
+  const skipped: string[] = [];
+  for (const rec of res.stdout.split("\0")) {
+    const tab = rec.indexOf("\t");
+    if (tab === -1) continue;
+    if (rec.slice(0, tab).startsWith("160000")) continue; // a submodule gitlink is a directory on disk
+    const path = rec.slice(tab + 1);
+    if (KNOWN_BINARIES.includes(path)) continue;
+    const buf = await readFile(join(PROJECT_ROOT, ...path.split("/")));
+    if (buf.subarray(0, Math.min(buf.length, 8000)).includes(0)) skipped.push(path);
+  }
+  assert.deepEqual(skipped, [], "a tracked text file that OSS-01 would skip as binary must be fixed (or named in KNOWN_BINARIES)");
+});
+
+test("sb2-skeleton-real-file-round-trip-scans-clean", async () => {
+  // The CI entry point, spawned as a process, against the real repo and the real (value-scoped) file.
+  const res = await runCli(HISTORY_SCAN_SCRIPT, PROJECT_ROOT);
+  assert.equal(res.code, 0, `the real allowlist must scan the real history clean through the CLI:\n${res.stdout.slice(0, 2000)}`);
+  assert.match(res.stdout, /0 blocking/);
+});
+
+// Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
+// the theory that a dated report is immutable. It is not (an addendum or a new report can carry an
+// unreviewed live value on its first commit), so report grants are pinned like every other file.
+
+test("OSS-01 allowlist: a docs/reviews/* credential grant is pinned to a baseline at grant time like every other file, not excluded", async () => {
+  const allowlist = JSON.parse(await readFile(ALLOWLIST_PATH, "utf8")) as { path: string; patternId: string }[];
+  const reportPrefix = REVIEWS_DIR + "/";
+  const reportGrants = allowlist.filter((e) => e.path.startsWith(reportPrefix) && CREDENTIAL_SHAPED_PATTERN_IDS.includes(e.patternId));
+  assert.ok(reportGrants.length > 0, "control: the real allowlist has credential-shaped report grants (derived from the file)");
+  const derivedKeys = new Set(deriveMutableCredentialGrants(allowlist).map((g) => `${g.path}::${g.patternId}`));
+  for (const g of reportGrants) {
+    const key = `${g.path}::${g.patternId}`;
+    assert.ok(derivedKeys.has(key), `a report grant must be in the derived checked set: ${key}`);
+    const pinned = REVIEWED_BASELINE[key];
+    assert.ok(pinned !== undefined && pinned.hashes.length > 0, `a report grant must carry a non-empty pinned baseline: ${key}`);
+  }
+});
+
+test("oss01-attack-e-legacy-shaped-report-grant-blocks-at-the-gate", async () => {
+  const lit = novel("aws-access-key-id", 13);
+  const report = `${REVIEWS_DIR}/zz-attack-e-2026-09-19.md`;
+  const legacyGrant = [{ path: report, patternId: "aws-access-key-id", reason: "attacker-supplied whole-file grant" }];
+  await withRepo({ [report]: `${lit.text}\n`, [ALLOWLIST_PATH]: allowlistJson(legacyGrant) }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const result = summarizeMatches(matches, await loadAllowlist(join(dir, ALLOWLIST_PATH)));
+    assert.equal(result.ok, false, "a new report with a live literal and a legacy-shaped whole-file grant must block at the gate");
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(cli.code, 0, "and through the CI entry point");
+  });
+});
+
+test("oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseline-guard", async () => {
+  // Stated residual: the gate has no oracle to tell an attacker's hash from a reviewed one, so a
+  // report grant that carries the literal's own correct hash PASSES the gate. What catches it is the
+  // baseline guard (an omitted pin) and the pull request diff (a deliberate one). This test proves the
+  // first half only; it does not claim the gate blocks a deliberate self-hashed grant.
+  const lit = novel("aws-access-key-id", 14);
+  const report = `${REVIEWS_DIR}/zz-attack-e-selfhash-2026-09-19.md`;
+  const grant = { path: report, patternId: "aws-access-key-id", valueSha256: [sha256(lit.match)], reason: "attacker-supplied, self-hashed" };
+  await withRepo({ [report]: `${lit.text}\n`, [ALLOWLIST_PATH]: allowlistJson([grant]) }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const result = summarizeMatches(matches, await loadAllowlist(join(dir, ALLOWLIST_PATH)));
+    assert.equal(result.ok, true, "stated residual: a self-hashed report grant passes the gate (no oracle)");
+    const derived = deriveMutableCredentialGrants([grant]);
+    assert.deepEqual(derived, [{ path: report, patternId: "aws-access-key-id" }], "the report grant is in the guard's checked set");
+    const raw = await readFile(join(dir, ...report.split("/")), "utf8");
+    const key = `${report}::aws-access-key-id`;
+    assert.ok(unreviewedOccurrenceCount(raw, "aws-access-key-id", REVIEWED_BASELINE[key]?.hashes ?? []) > 0, "with no pinned baseline the live literal is reported as unreviewed");
+  });
 });
