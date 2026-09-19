@@ -1,16 +1,30 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-19 (session handoff, branch `feat/fixture-single-source-of-truth`). **Story `fixture-single-source-of-truth` (Issue #217) is built, reviewed and ready: awaiting human push, PR and merge; merge before 2026-10-07.** CRITICAL tier. Human directive: "remove the timer, remove the pinned list, the json is the single source of truth". `docs/qa/s5-central-classification.json` now has no `expiresOn`, no `ratifiedBy` and no exact-pin tests; the expiry code and its reason key are gone; the Issue #99 protection and the malformed-fixture halt are kept. Project-tier `THOTH-ADR-0001` (status `accepted` by the human, 2026-09-19) records the standing exception to ADR-0021 INT-07, and CLAUDE.md's Policy delivery bullet carves fixture-entry-only PRs out of the fresh-review-report rule (human ruling). Reviews: `red-team` go; `app-security-reviewer` and `cross-domain-reviewer` APPROVE-WITH-CONDITIONS in round 1; `cross-domain-reviewer` APPROVE-WITH-CONDITIONS on the round-2 re-confirm, whose one gating condition (ADR acceptance) is now met. Real checks: `npm test` 869 tests, 869 pass, 0 fail, 0 skipped; typecheck and lint clean; QA-15 PASS. QA-14 `reference-resolver` is red on `master` from pre-existing debt (none of the unresolved citations come from lines this branch adds), so CI on the PR shows that step red. **On merge, Manager closes:** #217, #219, #220, #221, #222 (fixed on this branch) and #90 as `not_planned` with a backlink to #224. **Stay open:** #223 (`docs/adr-cache.mjs` reports a false cache hit when the `adr/` submodule is empty), #224 (out-of-repo classification source, owner of the ADR's removal trigger), #213 (`docs/receipt-check.mjs` filename parser).
+**Last updated:** 2026-09-19 (session handoff, branch `docs/state-post-217`). **No story in flight; `master` is at `8513b58`.** `fixture-single-source-of-truth` (Issue #217) shipped: [PR #225](https://github.com/mohannadrabie/thoth/pull/225) merged 2026-09-19T07:34:18Z (CRITICAL; `THOTH-ADR-0001` accepted by the human; the fixture JSON is the single source of truth; expiry timer and pin tests removed). **Housekeeping done this session:** #90 closed `not_planned` (accepted permanent residual, backlink #224); #217, #219, #220, #221, #222, #212, #174 and #134 closed `completed` with evidence; #206 homed in S5, #135 and #136 homed in S1. #213 (`docs/receipt-check.mjs` filename parser), #223 (`docs/adr-cache.mjs` false cache hit when `adr/` is empty) and #224 (out-of-repo classification source, owner of the ADR's removal trigger) are deliberately left without a milestone: no milestone owns them. **Milestone S2 closed** (0 open). **Real checks on `master`:** `npm test` 869 tests, 869 pass, 0 fail, 0 skipped; `QA-14 reference-resolver` is red from pre-existing debt (none of the unresolved citations come from lines the last story added). **Open milestones with residual bugs:** S1 (6), S5 (7), S6 (5). S7 to S15 are unstarted (0 issues).
 
-## Next candidates (after `fixture-single-source-of-truth` merges)
+## Next: close the milestones in order (proposed 2026-09-19, awaiting human approval of the dispositions)
 
-- **S5 residuals (intake 2026-09-18, code-read only):** the S5 requirement set already shipped; what is left is small.
-  - **#96:** spike first: is the session id present in a hook's real process env? Sensitive area (hooks).
-  - **#93:** blocked on reactivating `hooks/pretooluse-kernel-gate.mjs` (built, not wired). That needs its own intake; the baseline-policy-content story has no stated requirements. The human ruled 2026-09-18 that S5 does not include reactivation.
-  - **#89:** human-only: rotate or ignore the truncated PAT exemplar in an S5 round-2 review report.
-  - **#86, #87:** look fixed on master; close with `qa:gate-latency-budget` / `qa:gate-command-path` evidence. **#88:** superseded by the fixture (fold and close).
-- **S6 — Policy centralization** (5 open): `gh issue list --milestone "S6 — Policy centralization" --state open` to see them.
+A milestone closes only when every Issue in it is fixed, declined, or re-homed; never with stories still open.
+
+- **S1 Protect the baseline (6 open):**
+  - Story A, STANDARD: #175, #179, #182 (`continuation-residual-probe.ts` and `marker-corpus-probe.ts` list/arg/scratch-file bugs).
+  - Story B, CRITICAL (secret-scanning sensitive area): #136 (HIGH: an allowlist entry exempts a pattern in that file forever), #135 (OSS-01 PAT pattern false positives), #203 (guard exclusion rests on a misreading of PRINCIPLES rule 11). Needs a human design call on value-scoped allowlist entries.
+- **S5 Deny-by-default + hook wiring (7 open):**
+  - Close with evidence, no story: #86 and #87 (run `npm run qa:gate-latency-budget` and `npm run qa:gate-command-path`), #88 (superseded by the single-source fixture).
+  - Human-only: #89 (rotate or ignore the truncated PAT exemplar in an S5 round-2 review report).
+  - #93: blocked on reactivating `hooks/pretooluse-kernel-gate.mjs` (built, not wired; needs its own intake). Human call: re-home to a later milestone or decline.
+  - Stories, CRITICAL (hooks): #96 (spike first: is the session id in a hook's real process env?) and #206 (a crafted connector name can forge an unlock hint).
+- **S6 Policy centralization (5 open, all MED):** one CRITICAL story for #107, #108, #110, #112, #124 (policy loader, printer and pin).
+- **S7 to S15 (unstarted):** S7 (INT-01, 02, 03, 06) and S8 (INT-05) are both unblocked today; S9 needs both. Whether to start them before S1, S5 and S6 close is a human call. Reactivating the PreToolUse gate has no stated requirements yet and needs an intake.
+
+## Prior resume point (superseded above, kept for continuity) — `fixture-single-source-of-truth` — SHIPPED, merged as PR #225 (2026-09-19T07:34:18Z)
+
+- Human directive: "remove the timer, remove the pinned list, the json is the single source of truth". Removed `expiresOn`, `ratifiedBy`, the runtime expiry code and reason key, and the exact-pin tests (16 test names out, 6 in). Kept the loader's malformed-input halt and the Issue #99 protection.
+- CRITICAL tier. `red-team` go; `app-security-reviewer` and `cross-domain-reviewer` APPROVE-WITH-CONDITIONS; `cross-domain-reviewer` round 2 APPROVE-WITH-CONDITIONS (the one gating condition, ADR acceptance, was met before merge). Reports: `docs/reviews/fixture-single-source-of-truth-*-2026-09-19.md`.
+- Human rulings: `THOTH-ADR-0001` accepted (standing exception to ADR-0021 INT-07, scoped to the one fixture); a PR that only adds or removes a fixture entry needs no fresh review report (CLAUDE.md Policy delivery bullet amended).
+- Deferred with owners: #223 (`docs/adr-cache.mjs` false hit on an empty `adr/`), #224 (out-of-repo classification source), plus backlog lines for the QA-14 id scheme, the `central` layer label, a symlinked fixture path, and the QA-15 timeout.
+
 - `docs/backlog.md`'s "Open" section also carries ~30 smaller deferred items (mostly disclosed residuals from already-shipped stories). This story's own disclosed residual: the `.constructor.constructor(...)` prototype-pivot check is syntactic/adjacent-token-only, so splitting the chain across two variable declarations bypasses it (both dot and bracket notation); a fully dynamic/runtime-computed identifier or property name also stays undetected (inherent to static analysis). Neither is exploitable today (kernel not wired to a live gate).
 - **New from this session:** GitHub Issue #213 (`docs/receipt-check.mjs` filename-parser bug, silently drops a report from its audit count — see below).
 
