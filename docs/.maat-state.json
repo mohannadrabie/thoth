@@ -1,6 +1,6 @@
 {
   "adrCatalog": {
-    "version": "4c11208f33e6a48965713e4e46a0a9bf90067264",
+    "version": "64d7e9e407c1cf4cb63d61fed0d306a92f7dba47",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
@@ -685,15 +685,17 @@
         "path": "docs\\adr\\thoth-0001-central-classification-fixture-standing-exception.md",
         "applicableTo": [
           "security",
-          "architecture"
+          "architecture",
+          "code"
         ],
         "rules": [
           "The exception covers only the knownConnectors and centralLayer.tools lists in docs/qa/s5-central-classification.json; it MUST NOT be cited to justify any other allowlist, file, or control.",
-          "An entry in docs/qa/s5-central-classification.json MUST arrive through a pull request whose diff shows the entry; the entry's presence in the merged file is its approval, and no separate decisions row, pin test, or expiry date is required or permitted to substitute for that review.",
+          "An entry in docs/qa/s5-central-classification.json MUST arrive through a pull request whose diff shows the entry; the entry's presence in the merged file is its approval, and no separate decisions row, pin test, or expiry date is required or permitted to substitute for that review. A pull request that only adds or removes an entry in that file does not need a fresh dated review report in docs/reviews (human ruling 2026-09-19); a pull request that changes the loader or the hooks that read the file still does.",
           "knownConnectors MUST NOT be described in any message, document, or posture output as a security control or as verified identity; it is a display-name string match against a name the connector supplies about itself.",
-          "No code under hooks/ or src/ MAY re-declare an entry from either list; docs/qa/s5-central-classification.json is the only place either list is edited.",
-          "The fixture loader MUST throw on malformed input, and no environment variable MAY choose which fixture file loads (GitHub Issue #99).",
-          "This exception MUST end, and this ADR MUST be superseded, when an out-of-repo policy source for tool and connector classification ships (S6, Milestone #24); it MUST NOT be extended to cover that source."
+          "Code under hooks/ and src/ MUST NOT hardcode an entry of either list for this allowlist; the hooks load the entries from docs/qa/s5-central-classification.json at runtime. The SUR-04 managed-MCP settings fixture in src/policy/fixtures/allowlist-settings.ts is a different allowlist, not a re-declaration.",
+          "The fixture loader MUST throw on malformed input. The fixture path MUST resolve only from CLAUDE_PROJECT_DIR (the project root, then docs/qa/s5-central-classification.json) or the module-adjacent DEFAULT_FIXTURE_PATH; no environment variable MAY select an arbitrary fixture file (GitHub Issue #99), and the resolved path and its source MUST be recorded in halt-state.",
+          "This exception MUST end, and this ADR MUST be superseded, when an out-of-repo source for tool and connector classification ships (owned by GitHub Issue #224); until that ships the exception is standing, and it MUST NOT be extended to cover that source.",
+          "The one-time, human-directed removal of the exact-pin and expiry tests (AC1-a, AC1-b, AC1-c, S5-R2-N2, the isFixtureExpired tests, the expiresOn and ratifiedBy tests) is a human-approved exception to SE ADR-0010 (MUST NOT delete tests); it MUST NOT be cited to delete any other test."
         ]
       }
     ]
