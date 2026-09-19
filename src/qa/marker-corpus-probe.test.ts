@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertKnownArgs,
@@ -313,5 +313,79 @@ test("QA-14 marker-corpus-probe (Issue #182, real subprocess): no untracked scan
     assert.equal(run.code, 0, `stderr: ${run.stderr}`);
     assert.match(run.stdout, /total=1\s*$/, `stdout: ${run.stdout}`);
     assert.doesNotMatch(run.stderr, /WARNING|untracked/i, `stderr must carry no warning; stderr: ${run.stderr}`);
+  });
+});
+
+// GitHub Issue #226: a duplicated `--field=` used to resolve first-wins (`Array.find`) and exit 0, so
+// `--field=marked --field=total` silently answered `marked=N`. It now fails loud inside
+// `parseMarkerCorpusField` (the resolver), before value validation and before any file collection.
+// An identical repeat is rejected too (`--field=total --field=total`): one flag, once. Assertions check
+// the quoted tokens, never invented prose.
+
+/** A plain directory that is NOT a git repository — any git call made from it fails with "not a git
+ * repository", which is how the reject-before-collection ordering is observed. */
+async function withNonGitDir(fn: (dir: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "qa14-marker-corpus-probe-nogit-"));
+  try {
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// T226-M1: two or more distinct --field= tokens throw, in either order, and the error names every token.
+test("QA-14 marker-corpus-probe (Issue #226): parseMarkerCorpusField throws on two or more --field= flags, in either order, and quotes every token", () => {
+  const cases: string[][] = [
+    ["--field=marked", "--field=total"],
+    ["--field=total", "--field=marked"],
+    ["--field=marked", "--field=unmarked", "--field=total"],
+    ["--field=bogus", "--field=total"],
+    ["HEAD", "--field=marked", "--field=total"],
+  ];
+  for (const args of cases) {
+    assert.throws(
+      () => parseMarkerCorpusField(args),
+      (err: unknown) =>
+        err instanceof Error &&
+        args.filter((a) => a.startsWith("--field=")).every((token) => err.message.includes(JSON.stringify(token))),
+      `argv ${JSON.stringify(args)} must throw an error that quotes every --field= token`,
+    );
+  }
+});
+
+// T226-M2: an identical repeat is rejected too (no "same value is harmless" carve-out).
+test("QA-14 marker-corpus-probe (Issue #226): parseMarkerCorpusField throws on an identical repeated --field= flag and names the token", () => {
+  assert.throws(
+    () => parseMarkerCorpusField(["--field=total", "--field=total"]),
+    (err: unknown) => err instanceof Error && err.message.includes(JSON.stringify("--field=total")),
+  );
+});
+
+// T226-M3: real subprocess, run from a directory that is NOT a git repository. If the duplicate is
+// rejected first the stderr names the tokens; if collection ran first the failure would be git's own
+// "not a git repository" and the tokens would never appear (the ordering half of the assertion).
+test("QA-14 marker-corpus-probe (Issue #226, real subprocess): a duplicated --field= exits non-zero, names both tokens on stderr, prints no count, and fails BEFORE any git call", async () => {
+  await withNonGitDir(async (dir) => {
+    const cases: string[][] = [
+      ["--field=marked", "--field=total"],
+      ["--field=total", "--field=marked"],
+      ["--field=total", "--field=total"],
+    ];
+    for (const args of cases) {
+      // GIT_CEILING_DIRECTORIES stops git walking up out of `dir`: if the OS temp dir sits inside a git
+      // worktree, `dir` would otherwise resolve to that worktree and the ordering half would be vacuous.
+      const result = await realRunner("node", [PROBE_PATH, ...args], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { GIT_CEILING_DIRECTORIES: dirname(dir) },
+      });
+      const label = `argv ${JSON.stringify(args)}`;
+      assert.notEqual(result.code, 0, `${label}: expected a non-zero exit; stdout: ${result.stdout}`);
+      for (const token of args) {
+        assert.ok(result.stderr.includes(JSON.stringify(token)), `${label}: stderr must quote ${token}; stderr: ${result.stderr}`);
+      }
+      assert.doesNotMatch(result.stderr, /not a git repository/, `${label}: the duplicate must be rejected before any git call; stderr: ${result.stderr}`);
+      assert.equal(result.stdout, "", `${label}: no count may reach stdout`);
+    }
   });
 });

@@ -86,10 +86,15 @@ const stubDeps: ReferenceResolverDeps = {
 export type MarkerCorpusField = "marked" | "unmarked" | "total";
 
 /** Pure — parses `--field=marked|unmarked|total` out of a CLI argv slice. Throws on an unknown
- * field value (fails loud, not silently ignored); returns `null` when no `--field` flag is
- * present (the default, full human-readable summary mode). */
+ * field value (fails loud, not silently ignored) and on a duplicated `--field=` flag, identical
+ * repeat included (Issue #226: it used to resolve first-wins); returns `null` when no `--field`
+ * flag is present (the default, full human-readable summary mode). */
 export function parseMarkerCorpusField(args: string[]): MarkerCorpusField | null {
-  const flag = args.find((a) => a.startsWith("--field="));
+  const flags = args.filter((a) => a.startsWith("--field="));
+  if (flags.length > 1) {
+    throw new Error(`--field may be given only once, got: ${flags.map((a) => JSON.stringify(a)).join(", ")}`);
+  }
+  const flag = flags[0];
   if (!flag) return null;
   const value = flag.slice("--field=".length);
   if (value === "marked" || value === "unmarked" || value === "total") return value;

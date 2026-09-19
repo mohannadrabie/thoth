@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s1-226-duplicate-field` (Issue #226): a duplicated `--field=` to either QA-14 probe now fails loud instead of resolving first-wins
+
+STANDARD tier (ratified by the Manager; scope `s1-226-duplicate-field`). No `test-writer` dispatch: an internal CLI's argv, stderr and exit-code contract, no UI flow or HTTP API. `src/lib/git.ts`, `src/qa/completeness-claim-checker.ts`, `docs/qa/secret-scan-allowlist.json` and the CI workflow are untouched.
+
+- **Before.** `parseMarkerCorpusField` and `parseContinuationResidualField` picked the first `--field=` token with `Array.find`, so a second token was ignored: the probe answered for the first field and exited 0.
+- **After.** Each parser filters the `--field=` tokens and, when more than one is present, throws an `Error` that quotes every token (`JSON.stringify`, comma-joined). The check runs before value validation, so a duplicate that also carries a bad value reports the duplicate. The process exits non-zero with nothing on stdout, as the stray-argument gate does (Issues #173 and #179).
+- **Identical repeats are rejected too** (Manager ruling, human-preapproved): a repeated `--field=total` is an error, not a harmless no-op.
+- **Placement.** Inside the two parsers, where the ambiguity is resolved, not in `assertKnownArgs`: `--field=` is a recognized flag, so that gate's contract and message are unchanged. Both probes' `main()` already call the parser before any file collection, so the rejection precedes every git call. No shared helper; valid invocations and the existing error messages are unchanged.
+- **Tests** (one block per test file, no existing test line edited): a unit test for two or more distinct tokens in either order, a unit test for an identical repeat, and a real-subprocess test run from a non-git directory (`GIT_CEILING_DIRECTORIES` set) that asserts non-zero exit, both tokens on stderr, empty stdout and no `not a git repository` in stderr. The marker test file gained a mirrored `withNonGitDir` helper and a `dirname` import.
+- **Mutation proofs, run by hand on each probe and restored byte-identical.** Deleting the duplicate check turns all three new tests red; relaxing it to reject only differing values turns the identical-repeat unit test and the subprocess test red; moving the parser call after file collection turns the subprocess test red (stderr becomes git's error and the tokens are absent).
+
 ### Fixed — `s1-227-cleanup-race` (Issue #227): `pre-commit-scan.test.ts` hardened against the temp-dir cleanup race (`ENOTEMPTY`)
 
 STANDARD tier (ratified by the Manager; scope `s1-227-cleanup-race`). Test-only change. No `test-writer` dispatch: no UI flow or API surface. The code change is `src/secret-scan/pre-commit-scan.test.ts` only (the branch also carries state, run-log, plan and review files); `pre-commit-scan.ts`, the allowlist, `ci.yml` and `src/lib/git.ts` are untouched.

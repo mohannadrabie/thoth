@@ -77,10 +77,15 @@ const stubDeps: ReferenceResolverDeps = {
 export type ContinuationResidualField = "continuation-marked" | "continuation-residual";
 
 /** Pure — parses `--field=continuation-marked|continuation-residual` out of a CLI argv slice.
- * Throws on an unknown field value (fails loud); returns `null` when no `--field` flag is present
- * (the default, denominator-only summary mode — see `main()`). */
+ * Throws on an unknown field value (fails loud) and on a duplicated `--field=` flag, identical
+ * repeat included (Issue #226: it used to resolve first-wins); returns `null` when no `--field`
+ * flag is present (the default, denominator-only summary mode — see `main()`). */
 export function parseContinuationResidualField(args: string[]): ContinuationResidualField | null {
-  const flag = args.find((a) => a.startsWith("--field="));
+  const flags = args.filter((a) => a.startsWith("--field="));
+  if (flags.length > 1) {
+    throw new Error(`--field may be given only once, got: ${flags.map((a) => JSON.stringify(a)).join(", ")}`);
+  }
+  const flag = flags[0];
   if (!flag) return null;
   const value = flag.slice("--field=".length);
   if (value === "continuation-marked" || value === "continuation-residual") return value;

@@ -362,3 +362,61 @@ test("QA-14 continuation-residual-probe (Issue #182, real subprocess): an untrac
     assert.ok(run.stderr.includes("untracked.md"), `stderr must name the path; stderr: ${run.stderr}`);
   });
 });
+
+// GitHub Issue #226: a duplicated `--field=` used to resolve first-wins (`Array.find`) and exit 0, so
+// `--field=continuation-marked --field=continuation-residual` silently answered the first. It now
+// fails loud inside `parseContinuationResidualField` (the resolver), before value validation and
+// before any file collection or `gh` call. An identical repeat is rejected too. Assertions check the
+// quoted tokens, never invented prose.
+//
+// T226-C1: two or more distinct --field= tokens throw, in either order, and the error names every token.
+test("QA-14 continuation-residual-probe (Issue #226): parseContinuationResidualField throws on two or more --field= flags, in either order, and quotes every token", () => {
+  const cases: string[][] = [
+    ["--field=continuation-marked", "--field=continuation-residual"],
+    ["--field=continuation-residual", "--field=continuation-marked"],
+    ["--field=bogus", "--field=continuation-marked"],
+    ["HEAD", "--field=continuation-marked", "--field=continuation-residual"],
+  ];
+  for (const args of cases) {
+    assert.throws(
+      () => parseContinuationResidualField(args),
+      (err: unknown) =>
+        err instanceof Error &&
+        args.filter((a) => a.startsWith("--field=")).every((token) => err.message.includes(JSON.stringify(token))),
+      `argv ${JSON.stringify(args)} must throw an error that quotes every --field= token`,
+    );
+  }
+});
+
+// T226-C2: an identical repeat is rejected too (no "same value is harmless" carve-out).
+test("QA-14 continuation-residual-probe (Issue #226): parseContinuationResidualField throws on an identical repeated --field= flag and names the token", () => {
+  assert.throws(
+    () => parseContinuationResidualField(["--field=continuation-marked", "--field=continuation-marked"]),
+    (err: unknown) => err instanceof Error && err.message.includes(JSON.stringify("--field=continuation-marked")),
+  );
+});
+
+// T226-C3: real subprocess, run from a directory that is NOT a git repository. If the duplicate is
+// rejected first the stderr names the tokens; if collection ran first the failure would be git's own
+// "not a git repository" and the tokens would never appear (the ordering half of the assertion).
+test("QA-14 continuation-residual-probe (Issue #226, real subprocess): a duplicated --field= exits non-zero, names both tokens on stderr, prints no count, and fails BEFORE any git call", async () => {
+  await withNonGitDir(async (dir) => {
+    const cases: string[][] = [
+      ["--field=continuation-marked", "--field=continuation-residual"],
+      ["--field=continuation-residual", "--field=continuation-marked"],
+      ["--field=continuation-marked", "--field=continuation-marked"],
+    ];
+    for (const args of cases) {
+      // GIT_CEILING_DIRECTORIES stops git walking up out of `dir`: if the OS temp dir sits inside a git
+      // worktree, `dir` would otherwise resolve to that worktree and the ordering half would be vacuous.
+      const result = await runProbe(dir, args, { GIT_CEILING_DIRECTORIES: dirname(dir) });
+      const label = `argv ${JSON.stringify(args)}`;
+      assert.notEqual(result.code, 0, `${label}: expected a non-zero exit; stdout: ${result.stdout}`);
+      for (const token of args) {
+        assert.ok(result.stderr.includes(JSON.stringify(token)), `${label}: stderr must quote ${token}; stderr: ${result.stderr}`);
+      }
+      assert.doesNotMatch(result.stderr, /not a git repository/, `${label}: the duplicate must be rejected before any git call; stderr: ${result.stderr}`);
+      assert.equal(result.stdout, "", `${label}: no count may reach stdout`);
+    }
+  });
+});
