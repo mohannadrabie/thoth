@@ -50,7 +50,7 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
+import { makeGitOps } from "../lib/git.ts";
 import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
@@ -210,30 +210,31 @@ export async function readFileTexts(
   return fileTexts;
 }
 
-/** Reuses QA-14's own full-tree enumeration path (the zero-SHA-sentinel fallback in
- * `resolveChangedFiles`, driven here directly rather than via a real diff), same as
- * marker-corpus-probe.ts — one enumeration mechanism, not a second copy of it.
+/**
+ * GitHub Issue #175 fix: the file LIST comes from `git.lsFilesWorkingTree()` — tracked plus
+ * untracked-but-not-ignored paths in the CURRENT working tree (submodule gitlinks and untracked
+ * nested repositories excluded, see `src/lib/git.ts`) — the same tree state the CONTENT is read
+ * from below, and the same source marker-corpus-probe.ts uses. It used to be a `git ls-tree HEAD`
+ * read (via `resolveChangedFiles` and the zero-SHA sentinel), so a new, untracked, uncommitted,
+ * scannable file was invisible to the count while its content sat in the working tree.
  *
  * Human-ruled round-5 fix-now (docs/decisions.md's round-5-hard-stop ruling row; red-team's round-5
- * report, finding 2): this file's content is ALWAYS read from the working tree (`readFile` below),
- * regardless of which ref the file LIST comes from — the exact ref/working-tree content-mismatch
- * bug the council explicitly rejected Candidate B over in `marker-corpus-probe.ts`
- * (`node src/qa/continuation-residual-probe.ts --field=continuation-marked a26e55a` demonstrably
- * reported the a26e55a file list read against HEAD's working-tree content, a tree state that never
- * existed: true a26e55a content=271, probe's answer=273). No real caller anywhere in this repo
- * (production code, `.github/workflows/ci.yml`, `package.json` scripts, or this file's own test
- * suite) ever passed a non-default ref — confirmed by grep — so there is no fix-the-mismatch-
- * properly obligation to honor; deleting the parameter and always reading the current working tree
- * (the only state this function has ever correctly supported) is the minimal closure.
+ * report, finding 2): content is ALWAYS read from the working tree, never from a ref, so this
+ * function takes no ref (`--field=continuation-marked a26e55a` once reported a file list from that
+ * ref against HEAD's working-tree content, a tree state that never existed).
  *
- * Paths returned by `lsTree`/`resolveChangedFiles` are repo-relative; resolved against `repoRoot`
- * before reading (mirrors marker-corpus-probe.ts's own Issue #176 fix-now) so a caller passing a
- * `repoRoot` other than `process.cwd()` (e.g. a test fixture) reads the right file. */
-async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
+ * Exported so a test can call it in-process against an isolated `mkdtemp` git repo. Paths returned
+ * by `lsFilesWorkingTree()` are repo-relative; they are resolved against `repoRoot` before reading
+ * (mirrors marker-corpus-probe.ts's own Issue #176 fix-now) so a caller passing a `repoRoot` other
+ * than `process.cwd()` (e.g. a test fixture) reads the right file.
+ *
+ * Because untracked files are now counted, `main()` also warns on stderr when any are in the scan
+ * (untracked-scan-warning.ts, Issue #182); the count and stdout are unchanged by that warning.
+ */
+export async function collectFullTreeFileTexts(repoRoot: string): Promise<Map<string, string>> {
   const git = makeGitOps(realRunner, repoRoot);
-  const resolved = await resolveChangedFiles(git, "0000000000000000000000000000000000000000", "HEAD");
-  const trackedFiles = resolved?.changedFiles ?? [];
-  return readFileTexts(trackedFiles.map((f) => resolve(repoRoot, f)));
+  const workingTreeFiles = await git.lsFilesWorkingTree();
+  return readFileTexts(workingTreeFiles.map((f) => resolve(repoRoot, f)));
 }
 
 async function main(): Promise<void> {

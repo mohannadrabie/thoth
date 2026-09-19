@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import type { Runner } from "../lib/exec.ts";
 import type { ReferenceResolverDeps } from "./reference-resolver.ts";
 import {
   assertKnownArgs,
+  collectFullTreeFileTexts,
   computeContinuationMarkedCount,
   computeContinuationResidual,
   parseContinuationResidualField,
@@ -295,5 +296,50 @@ test("QA-14 continuation-residual-probe (Issue #179, real subprocess): valid inv
     const residual = await runProbe(repoDir, ["--field=continuation-residual"]);
     assert.equal(residual.code, 0, `stderr: ${residual.stderr}`);
     assert.match(residual.stdout, /continuation-residual=\d+/, `stdout: ${residual.stdout}`);
+  });
+});
+
+// GitHub Issue #175: the file LIST used to come from `git ls-tree HEAD` (tracked blobs at HEAD)
+// while CONTENT was read from the working tree, so a new, untracked, uncommitted, scannable file was
+// invisible to the count. The list now comes from `git.lsFilesWorkingTree()` — the same tree state
+// the content is read from, and the same source the twin probe uses. Both tests call
+// `collectFullTreeFileTexts` in-process against an isolated `mkdtemp` repo (no live-tree subprocess).
+//
+// T175-1: an untracked file with a three-citation list raises the count by exactly its two
+// continuation members (#11 and #12; #10 is the direct one).
+test("QA-14 continuation-residual-probe (Issue #175, isolated): an untracked, uncommitted, scannable file IS counted — list and content agree on the same tree state", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const before = computeContinuationMarkedCount(await collectFullTreeFileTexts(repoDir));
+    assert.equal(before.continuationMarked, 1, `baseline is the committed tracked.md's one continuation member; got: ${JSON.stringify(before)}`);
+
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+    const statusRun = await realRunner("git", ["status", "--porcelain", "--", "untracked.md"], { cwd: repoDir, encoding: "utf8" });
+    assert.match(statusRun.stdout, /^\?\?/, `the new file must be untracked; git status: ${statusRun.stdout}`);
+
+    const after = computeContinuationMarkedCount(await collectFullTreeFileTexts(repoDir));
+    assert.equal(
+      after.continuationMarked,
+      before.continuationMarked + 2,
+      "an untracked file with 1 direct + 2 continuation citations must raise the count by exactly 2",
+    );
+    assert.equal(after.filesScanned, before.filesScanned + 1);
+  });
+});
+
+// T175-2: an untracked NESTED git repository is reported by git as a trailing-slash directory entry;
+// it must not crash the read (EISDIR) and none of its files may reach the scan.
+test("QA-14 continuation-residual-probe (Issue #175, isolated): an untracked nested git repository neither crashes the probe nor leaks its files into the scan", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const nestedDir = join(repoDir, "zz-nested");
+    await mkdir(nestedDir);
+    const init = await realRunner("git", ["init", "-q", "-b", "main"], { cwd: nestedDir, encoding: "utf8" });
+    assert.equal(init.code, 0, `nested git init failed: ${init.stderr}`);
+    await writeFile(join(nestedDir, "note.md"), "Closes #900041, #900042 inside a nested repo — must not be scanned.\n");
+    await writeFile(join(repoDir, "untracked.md"), "Closes #10, #11, #12.\n", "utf8");
+
+    const texts = await collectFullTreeFileTexts(repoDir);
+    assert.ok(![...texts.keys()].some((f) => f.includes("zz-nested")), `the nested repo must not be scanned; keys: ${[...texts.keys()].join(", ")}`);
+    const stats = computeContinuationMarkedCount(texts);
+    assert.equal(stats.continuationMarked, 3, "tracked.md (1) + untracked.md (2); the nested repo's own citations must not leak in");
   });
 });
