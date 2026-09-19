@@ -20,7 +20,7 @@
 //     reads anything else). It is NOT a real security control: a connector renamed, or a new
 //     connector deliberately named identically to one of the entries in the JSON, defeats this
 //     exemption completely (GitHub Issue #90). An unverified third party's claim about its own
-//     identity IS the control here, accepted knowingly by the human.
+//     identity is all that gates this exemption, accepted knowingly by the human.
 //
 // NO TIMER, NO PIN (`fixture-single-source-of-truth`, GitHub Issue #217; human directive 2026-09-18:
 // "remove the timer, remove the pinned list, the json is the single source of truth"). Entries apply
