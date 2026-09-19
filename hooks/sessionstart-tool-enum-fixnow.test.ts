@@ -11,9 +11,10 @@
 //     writing it to the REAL project-relative path inside the test's own isolated CLAUDE_PROJECT_DIR
 //     tree (writeCentralClassificationFixture) -- never an ambient environment variable (S5 Stage-3
 //     CRITICAL review round 2 fix-now, GitHub Issue #99: the THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH
-//     seam this file previously used here is REMOVED from production entirely). The exemption is NOT
-//     applied once the fixture's own `expiresOn` has passed ("EXPIRY IS ENFORCED AT RUNTIME" —
-//     central-classification.ts's own header comment).
+//     seam this file previously used here is REMOVED from production entirely). There is no timer:
+//     `fixture-single-source-of-truth` (GitHub Issue #217, human directive 2026-09-18) removed
+//     `expiresOn` and the runtime expiry enforcement, so the allowlists apply until the JSON changes
+//     (see the "S5-timer-removed" test below).
 //   - AC5: the SUR-03-owned reason keys are reconciled to `set:false` on a SessionStart run once
 //     their condition no longer holds (red-team's F5 sticky-halt finding, GitHub Issue #94) -- with
 //     ONE deliberate exception: the shared "unknown-session" fallback bucket is never reconciled to
@@ -51,34 +52,54 @@ function reasonsOf(haltState: unknown): Record<string, { set?: unknown; detail?:
  * CRITICAL review round 2 council-seat ruling (GitHub Issue #99: no environment variable of any
  * kind may control which fixture file the production code path loads -- the removed
  * `THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH` env seam this file used to set here is gone).
- * Mirrors the real committed fixture's shape exactly (central-classification.ts's own parser is
- * strict about required fields). */
-function writeSyntheticFixture(tree: FixtureTree, opts: { expiresOn: string }): void {
+ * Mirrors the real committed fixture's shape (central-classification.ts's own parser is strict
+ * about the required fields). `legacyExpiresOn`, when given, writes an `expiresOn` field the way
+ * the pre-#217 fixture carried one -- used only by the "S5-timer-removed" test to prove the field
+ * is now inert. */
+function writeSyntheticFixture(
+  tree: FixtureTree,
+  opts: { knownConnectors?: string[]; legacyExpiresOn?: string } = {},
+): void {
   writeCentralClassificationFixture(tree, {
     version: "test-fixture-1.0.0",
-    expiresOn: opts.expiresOn,
-    ratifiedBy: "docs/decisions.md, test fixture, not a real ratification",
+    ...(opts.legacyExpiresOn !== undefined ? { expiresOn: opts.legacyExpiresOn } : {}),
     centralLayer: { tools: [{ name: "fixture-github-standin", class: "remote-mutating" }] },
-    knownConnectors: ["claude.ai FixtureConnector"],
+    knownConnectors: opts.knownConnectors ?? ["claude.ai FixtureConnector"],
   });
 }
 
 // --- AC1: the exemption is genuinely fixture-driven, not hardcoded -------------------------------
 
-test("AC1: an MCP server named identically to a centralLayer fixture entry is classified (no halt) when the fixture is not expired", () => {
-  const tree = makeFixtureTree("ac1-not-expired-tool");
+test("AC1: an MCP server named identically to a centralLayer fixture entry is classified (no halt), while a server absent from the fixture halts -- the JSON alone decides", () => {
+  const tree = makeFixtureTree("ac1-fixture-driven-tool");
   try {
-    const sessionId = fakeSessionId("ac1-not-expired-tool");
-    writeSyntheticFixture(tree, { expiresOn: "2099-01-01" });
+    const sessionId = fakeSessionId("ac1-fixture-driven-tool");
+    writeSyntheticFixture(tree);
     writeProjectSettingsJson(tree, { enableAllProjectMcpServers: true });
-    writeProjectMcpJson(tree, { mcpServers: { "fixture-github-standin": { command: "node", args: [] } } });
+    writeProjectMcpJson(tree, {
+      mcpServers: {
+        "fixture-github-standin": { command: "node", args: [] },
+        "not-in-the-fixture-server": { command: "node", args: [] },
+      },
+    });
 
     const result = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId }), fixtureEnv(tree));
     assert.equal(result.code, 0, `expected clean exit 0; got stderr=${result.stderr}`);
 
-    const haltState = readHaltState(tree, sessionId);
-    const reasons = reasonsOf(haltState);
+    const reasons = reasonsOf(readHaltState(tree, sessionId));
+    assert.notEqual(
+      reasons["SUR-03-enumeration-failed"]?.set,
+      true,
+      `expected the synthetic fixture to load cleanly (no expiresOn/ratifiedBy needed); got ${JSON.stringify(reasons)}`,
+    );
+    // Non-vacuity: the check is live only if the UNLISTED server is reported as unclassified.
+    assert.equal(
+      reasons["SUR-03-unclassified-tool"]?.set,
+      true,
+      `expected the server absent from the fixture to halt; got ${JSON.stringify(reasons)}`,
+    );
     const unclassifiedDetail = String(reasons["SUR-03-unclassified-tool"]?.detail ?? "");
+    assert.ok(unclassifiedDetail.includes("not-in-the-fixture-server"), `expected the unlisted server in the halt detail; got ${unclassifiedDetail}`);
     assert.ok(
       !unclassifiedDetail.includes("fixture-github-standin"),
       `expected the fixture-classified tool name to be absent from the unclassified-tool detail; got ${JSON.stringify(reasons)}`,
@@ -88,56 +109,90 @@ test("AC1: an MCP server named identically to a centralLayer fixture entry is cl
   }
 });
 
-test("AC1: the SAME MCP server name reverts to unclassified (halts) once the fixture's expiresOn has passed -- 'never silently rolled forward' enforced at runtime", () => {
-  const tree = makeFixtureTree("ac1-expired-tool");
+test("AC1: a connector identity listed in the fixture's knownConnectors is exempted (no halt); the SAME name absent from the fixture halts -- the JSON alone decides", () => {
+  const treeListed = makeFixtureTree("ac1-connector-listed");
+  const treeUnlisted = makeFixtureTree("ac1-connector-unlisted");
   try {
-    const sessionId = fakeSessionId("ac1-expired-tool");
-    writeSyntheticFixture(tree, { expiresOn: "2020-01-01" }); // long past
+    writeSyntheticFixture(treeListed);
+    const sessionIdListed = fakeSessionId("ac1-connector-listed");
+    writeHomeClaudeJson(treeListed, { claudeAiMcpEverConnected: ["claude.ai FixtureConnector"] });
+    const listedResult = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId: sessionIdListed }), fixtureEnv(treeListed));
+    assert.equal(listedResult.code, 0);
+    const listedReasons = reasonsOf(readHaltState(treeListed, sessionIdListed));
+    // An exempted connector was never active, and it wasn't active before either -- per AC5's own
+    // "don't fabricate a set:false entry for a condition that was never active" rule, the key is
+    // absent entirely, not present-and-false. Either way, it must NOT be set:true.
+    assert.notEqual(listedReasons["SUR-03-unclassified-connector"]?.set, true, `expected the listed connector to be exempted (not an active halt); got ${JSON.stringify(listedReasons)}`);
+    assert.notEqual(listedReasons["SUR-03-enumeration-failed"]?.set, true, `expected the synthetic fixture to load cleanly; got ${JSON.stringify(listedReasons)}`);
+
+    writeSyntheticFixture(treeUnlisted, { knownConnectors: [] });
+    const sessionIdUnlisted = fakeSessionId("ac1-connector-unlisted");
+    writeHomeClaudeJson(treeUnlisted, { claudeAiMcpEverConnected: ["claude.ai FixtureConnector"] });
+    const unlistedResult = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId: sessionIdUnlisted }), fixtureEnv(treeUnlisted));
+    assert.equal(unlistedResult.code, 0);
+    const unlistedReasons = reasonsOf(readHaltState(treeUnlisted, sessionIdUnlisted));
+    assert.equal(
+      unlistedReasons["SUR-03-unclassified-connector"]?.set,
+      true,
+      `expected the SAME connector name to halt when the fixture does not list it; got ${JSON.stringify(unlistedReasons)}`,
+    );
+  } finally {
+    treeListed.cleanup();
+    treeUnlisted.cleanup();
+  }
+});
+
+// --- S5-timer-removed (GitHub Issue #217, human directive 2026-09-18): no date logic remains -------
+
+test("S5-timer-removed: a fixture carrying a long-past legacy expiresOn still applies BOTH allowlists, and no SUR-03-central-fixture-expired reason is ever written -- the timer is gone", () => {
+  const tree = makeFixtureTree("s5-timer-removed");
+  try {
+    const sessionId = fakeSessionId("s5-timer-removed");
+    writeSyntheticFixture(tree, { legacyExpiresOn: "2020-01-01" }); // long past: would have expired the old fixture
     writeProjectSettingsJson(tree, { enableAllProjectMcpServers: true });
     writeProjectMcpJson(tree, { mcpServers: { "fixture-github-standin": { command: "node", args: [] } } });
+    writeHomeClaudeJson(tree, { claudeAiMcpEverConnected: ["claude.ai FixtureConnector"] });
 
     const result = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId }), fixtureEnv(tree));
-    assert.equal(result.code, 0, `expected clean exit 0 (SessionStart never itself blocks); got stderr=${result.stderr}`);
+    assert.equal(result.code, 0, `expected clean exit 0; got stderr=${result.stderr}`);
 
     const haltState = readHaltState(tree, sessionId);
-    const reasons = reasonsOf(haltState);
-    assert.equal(reasons["SUR-03-unclassified-tool"]?.set, true, `expected the halt to fire once the fixture is expired; got ${JSON.stringify(reasons)}`);
-    const unclassifiedDetail = String(reasons["SUR-03-unclassified-tool"]?.detail ?? "");
-    assert.ok(unclassifiedDetail.includes("fixture-github-standin"), `expected the expired-exemption tool name in the halt detail; got ${unclassifiedDetail}`);
+    assert.equal(
+      haltState,
+      undefined,
+      `expected NO halt-state file at all: the listed tool and the listed connector stay exempt regardless of a past expiresOn, and no expiry reason may be written; got ${JSON.stringify(haltState)}`,
+    );
   } finally {
     tree.cleanup();
   }
 });
 
-test("AC1: a connector identity matching a knownConnectors fixture entry is exempted (no halt) when the fixture is not expired, but halts once the fixture has expired", () => {
-  const treeActive = makeFixtureTree("ac1-connector-active");
-  const treeExpired = makeFixtureTree("ac1-connector-expired");
-  try {
-    writeSyntheticFixture(treeActive, { expiresOn: "2099-01-01" });
-    const sessionIdActive = fakeSessionId("ac1-connector-active");
-    writeHomeClaudeJson(treeActive, { claudeAiMcpEverConnected: ["claude.ai FixtureConnector"] });
-    const activeResult = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId: sessionIdActive }), fixtureEnv(treeActive));
-    assert.equal(activeResult.code, 0);
-    const activeReasons = reasonsOf(readHaltState(treeActive, sessionIdActive));
-    // An exempted connector was never active, and it wasn't active before either -- per AC5's own
-    // "don't fabricate a set:false entry for a condition that was never active" rule, the key is
-    // absent entirely, not present-and-false. Either way, it must NOT be set:true.
-    assert.notEqual(activeReasons["SUR-03-unclassified-connector"]?.set, true, `expected the allowlisted connector to be exempted (not an active halt); got ${JSON.stringify(activeReasons)}`);
+// --- the loader's malformed-input rejection stays wired to a real halt (kept integrity) -----------
 
-    writeSyntheticFixture(treeExpired, { expiresOn: "2020-01-01" });
-    const sessionIdExpired = fakeSessionId("ac1-connector-expired");
-    writeHomeClaudeJson(treeExpired, { claudeAiMcpEverConnected: ["claude.ai FixtureConnector"] });
-    const expiredResult = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId: sessionIdExpired }), fixtureEnv(treeExpired));
-    assert.equal(expiredResult.code, 0);
-    const expiredReasons = reasonsOf(readHaltState(treeExpired, sessionIdExpired));
-    assert.equal(
-      expiredReasons["SUR-03-unclassified-connector"]?.set,
-      true,
-      `expected the SAME connector name to halt once the fixture is expired; got ${JSON.stringify(expiredReasons)}`,
+test("S5-malformed-fixture: a malformed committed fixture halts loudly (SUR-03-enumeration-failed set:true, relay blocks) -- it never resolves to 'no exemption' silently", () => {
+  const tree = makeFixtureTree("s5-malformed-fixture");
+  try {
+    const sessionId = fakeSessionId("s5-malformed-fixture");
+    writeCentralClassificationFixture(tree, {
+      version: "test-fixture-1.0.0",
+      centralLayer: { tools: [{ name: "evil", class: "totally-safe-trust-me" }] },
+      knownConnectors: [],
+    });
+
+    const result = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId }), fixtureEnv(tree));
+    assert.equal(result.code, 0, `expected clean exit 0 (SessionStart never itself blocks); got stderr=${result.stderr}`);
+    const reasons = reasonsOf(readHaltState(tree, sessionId));
+    assert.equal(reasons["SUR-03-enumeration-failed"]?.set, true, `expected the malformed fixture to record enumeration-failed; got ${JSON.stringify(reasons)}`);
+    assert.match(
+      String(reasons["SUR-03-enumeration-failed"]?.detail ?? ""),
+      /centralLayer\.tools\[0\]/,
+      "expected the detail to name the malformed field (not merely the file name, which always contains 'class')",
     );
+
+    const relay = runHook(RELAY_SCRIPT, userPromptSubmitStdin({ sessionId }), fixtureEnv(tree));
+    assert.equal(relay.code, 2, "expected the relay to block a session whose fixture is malformed");
   } finally {
-    treeActive.cleanup();
-    treeExpired.cleanup();
+    tree.cleanup();
   }
 });
 
@@ -150,13 +205,13 @@ test("S5-R2-N1: THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH (the removed env-va
     // Deliberately NOT calling writeSyntheticFixture -- this tree has no central-classification
     // fixture of its own, so the hook's fallback-to-the-real-committed-fixture path is exercised
     // (see hooks/sessionstart-tool-enum.mjs's own header comment on projectRelativeFixturePath).
-    // A vanilla, unconfigured session with the real fixture's 6 servers / 7 connectors (none of
-    // which are declared here) must be fully classified regardless of the env var below.
+    // A vanilla, unconfigured session (none of the real fixture's servers or connectors are
+    // declared here) must be fully classified regardless of the env var below.
     const result = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId }), {
       ...fixtureEnv(tree),
       // The attacker's own intended payload from red-team's round-2 report: point this at a
       // nonexistent path (or, in a real attack, a hostile fixture). Before this fix, this alone
-      // was sufficient to replace the ENTIRE ratified fixture, including expiresOn, invisibly.
+      // was sufficient to replace the ENTIRE committed fixture invisibly.
       THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH: "/definitely/does/not/exist/attacker.json",
     });
     assert.equal(result.code, 0, `expected clean exit 0; got stderr=${result.stderr}`);
@@ -218,40 +273,6 @@ test("S5-R2-Issue96-escalation: the shared 'unknown-session' fallback bucket is 
       relayAfterB.code,
       2,
       "expected the relay to STILL block for the shared fallback session after run B -- a fail-open regression here would silently discharge a genuinely-still-active halt belonging to a different invocation (GitHub Issue #96's escalated, worse direction)",
-    );
-  } finally {
-    tree.cleanup();
-  }
-});
-
-// --- S5-R2-N3 (GitHub Issue #101): fixture expiry is its own nameable, correctly-hinted cause -----
-
-test("S5-R2-N3: once the exemption fixture expires, a distinct SUR-03-central-fixture-expired reason fires and the relay's message names re-ratification/removal as the unlock -- not the generic 'reclassify the tool' hint, which is a no-op once the fixture itself has expired", () => {
-  const tree = makeFixtureTree("s5r2n3-expiry-cause");
-  try {
-    const sessionId = fakeSessionId("s5r2n3-expiry-cause");
-    writeSyntheticFixture(tree, { expiresOn: "2020-01-01" }); // long past
-    writeProjectSettingsJson(tree, { enableAllProjectMcpServers: true });
-    writeProjectMcpJson(tree, { mcpServers: { "fixture-github-standin": { command: "node", args: [] } } });
-
-    const sessionStartResult = runHook(SESSIONSTART_SCRIPT, sessionStartStdin({ sessionId }), fixtureEnv(tree));
-    assert.equal(sessionStartResult.code, 0);
-    const reasons = reasonsOf(readHaltState(tree, sessionId));
-    assert.equal(
-      reasons["SUR-03-central-fixture-expired"]?.set,
-      true,
-      `expected the distinct fixture-expired reason to fire once the fixture is expired; got ${JSON.stringify(reasons)}`,
-    );
-
-    const relayResult = runHook(RELAY_SCRIPT, userPromptSubmitStdin({ sessionId }), fixtureEnv(tree));
-    assert.equal(relayResult.code, 2);
-    const json = relayResult.json as { hookSpecificOutput?: { systemMessage?: unknown } } | undefined;
-    const msg = String(json?.hookSpecificOutput?.systemMessage ?? "");
-    assert.match(msg, /expir/i, `expected the block message to name expiry as a cause; got: ${msg}`);
-    assert.match(
-      msg,
-      /re-ratify/i,
-      `expected the block message to name re-ratification (or removal) as the real unlock for the expiry cause, not just the generic reclassify-the-tool hint; got: ${msg}`,
     );
   } finally {
     tree.cleanup();
@@ -370,7 +391,7 @@ test('S5-fixnow-fixture-source: a halt caused by an unclassified tool records fi
   const tree = makeFixtureTree("fixture-source-project-relative");
   try {
     const sessionId = fakeSessionId("fixture-source-project-relative");
-    writeSyntheticFixture(tree, { expiresOn: "2099-01-01" });
+    writeSyntheticFixture(tree);
     writeProjectSettingsJson(tree, { enableAllProjectMcpServers: true });
     writeProjectMcpJson(tree, { mcpServers: { "brand-new-unreviewed-mcp": { command: "node", args: [] } } });
 

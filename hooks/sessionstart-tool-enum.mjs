@@ -49,29 +49,24 @@
 // itself never blocks (see gap G5 above): failing open here would mean a broken enumeration
 // silently never halts anything, forever.
 //
-// TWO DISCLOSED INTERIM EXEMPTIONS, BOTH SOURCED FROM ONE COMMITTED, DATED, SEPARATELY-REVIEWABLE
-// FIXTURE (docs/qa/s5-central-classification.json) — S5 Stage-3 CRITICAL review round 1 finding
-// (`red-team` F1/F10, `app-security-reviewer` finding 1, `cross-domain-reviewer` finding 1; GitHub
-// Issues #90/#92/#98), human-ruled fix per docs/decisions.md's 2026-09-07 row ("S5 Stage-3 CRITICAL
-// review round 1 (`red-team` no-go, `app-security-reviewer`/`cross-domain-reviewer` REWORK)...",
-// item (1)). NEITHER allowlist is hardcoded in this file — both are loaded at runtime from that one
-// fixture via src/policy/tools/central-classification.ts, which is also the only place either one
-// may be edited, and both are pinned by a dedicated regression test
-// (src/policy/tools/central-classification.test.ts) and expire automatically at runtime past the
-// fixture's own `expiresOn` date (see that module's own header comment — "EXPIRY IS ENFORCED AT
-// RUNTIME"). See that module's header for the full disclosure of what each exemption is, and is
-// not, a control against.
+// TWO DISCLOSED INTERIM EXEMPTIONS, BOTH SOURCED FROM ONE COMMITTED, SEPARATELY-REVIEWABLE FIXTURE
+// (docs/qa/s5-central-classification.json, the SINGLE SOURCE OF TRUTH for both) — S5 Stage-3
+// CRITICAL review round 1 finding (`red-team` F1/F10, `app-security-reviewer` finding 1,
+// `cross-domain-reviewer` finding 1; GitHub Issues #90/#92/#98), originally human-ruled per
+// docs/decisions.md's 2026-09-07 row and, as of `fixture-single-source-of-truth` (GitHub Issue #217,
+// docs/decisions.md's 2026-09-19 row), a standing exception with no timer and no pin. NEITHER
+// allowlist is hardcoded in this file — both are loaded at runtime from that one fixture via
+// src/policy/tools/central-classification.ts, which is also the only place either one may be
+// edited. There is no expiry date and no test pinning the fixture's contents: the PR diff of the
+// JSON is the review, and adding a name to it silently suppresses that name's SUR-03 halt. See that
+// module's header for the full disclosure of what each exemption is, and is not, a control against.
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateToolInventory } from "../src/policy/tools/classification.ts";
 import { mergeToolClassificationLayers } from "../src/policy/rule/precedence.ts";
 import { loadBuiltinToolClassificationLayer } from "../src/policy/tools/builtin-tool-inventory.ts";
 import { extractConnectorIdentities, extractMcpServerNames } from "../src/policy/tools/mcp-enumeration.ts";
-import {
-  loadCentralClassificationFixture,
-  isFixtureExpired,
-  DEFAULT_FIXTURE_PATH,
-} from "../src/policy/tools/central-classification.ts";
+import { loadCentralClassificationFixture, DEFAULT_FIXTURE_PATH } from "../src/policy/tools/central-classification.ts";
 
 const UNCLASSIFIED_REASON_KEY = "SUR-03-unclassified-tool";
 // Connector-identity schema decision (see src/policy/tools/mcp-enumeration.ts's own header comment
@@ -82,20 +77,12 @@ const UNCLASSIFIED_REASON_KEY = "SUR-03-unclassified-tool";
 // name, subject to the KNOWN_CONNECTORS exemption loaded below (see central-classification.ts).
 const UNCLASSIFIED_CONNECTOR_REASON_KEY = "SUR-03-unclassified-connector";
 const ENUMERATION_FAILED_REASON_KEY = "SUR-03-enumeration-failed";
-// Distinct, nameable halt cause for "the exemption fixture itself has expired" (S5 Stage-3 CRITICAL
-// review round 2 fix-now, `red-team` N3 / GitHub Issue #101, architecture-reviewer's council-seat
-// phrasing "make expiry a nameable relay cause"): past the fixture's own expiresOn, BOTH
-// SUR-03-unclassified-tool and SUR-03-unclassified-connector may ALSO fire (every previously-exempt
-// name reverts to unclassified/unknown — see computeSessionTools below), but neither of those two
-// keys' own unlock hints are correct for THIS cause (re-adding an already-listed name is a no-op
-// once the fixture is expired) — see hooks/userpromptsubmit-halt-relay.mjs's own UNLOCK_HINTS entry
-// for this key, which names the real unlock (re-ratify or remove the exemption).
-const FIXTURE_EXPIRED_REASON_KEY = "SUR-03-central-fixture-expired";
-// These four keys (above) are the SUR-03-owned reason keys this script itself is responsible for
+// (The former `SUR-03-central-fixture-expired` reason key is gone with the timer — GitHub Issue #217.)
+// These three keys (above) are the SUR-03-owned reason keys this script itself is responsible for
 // reconciling every run — see writeHaltReason/reconcileReason below (AC5: a resolved condition is
 // explicitly cleared, set:false, not merely "never touched again", which is the sticky-halt defect
 // red-team's F5 demonstrated: a resumed session whose tool became classified stayed permanently
-// blocked because nothing ever cleared its reason). main() below reconciles all four, every run.
+// blocked because nothing ever cleared its reason). main() below reconciles every one of them, every run.
 //
 // The literal fallback session id used whenever stdin's own `session_id` cannot be resolved to a
 // real, host-supplied string (GitHub Issue #96 — "should never happen per the documented contract",
@@ -340,7 +327,7 @@ function computeSessionTools(fixtureLocation) {
 
   const builtinLayer = loadBuiltinToolClassificationLayer();
 
-  // Load the ONE committed, dated, separately-reviewable fixture backing both disclosed interim
+  // Load the ONE committed, separately-reviewable fixture backing both disclosed interim
   // exemptions (see this file's own header comment and central-classification.ts's own header for
   // the full disclosure). A malformed fixture throws here — propagates to main()'s top-level
   // try/catch, same fail-closed treatment as any other malformed input file (criterion 17).
@@ -365,14 +352,14 @@ function computeSessionTools(fixtureLocation) {
   // pre-existing, unmodified `hooks/sessionstart-tool-enum.test.ts` vanilla-session fixtures, which
   // predate this mechanism and never plant one) still reads the real committed fixture, exactly as
   // it did before this mechanism existed — never "no fixture found -> exempt everything" or "-> a
-  // different, attacker-choosable file". A true end-to-end test that needs a SYNTHETIC/expired
+  // different, attacker-choosable file". A true end-to-end test that needs a SYNTHETIC
   // fixture writes it to this exact project-relative path inside its own already-isolated
   // CLAUDE_PROJECT_DIR tree (hooks/test-support/fixture-tree.ts's
   // writeCentralClassificationFixture) -- true dependency injection through the already-pure
   // parseCentralClassificationFixture/loadCentralClassificationFixture split, never a bespoke,
-  // fixture-specific ambient signal. A unit test that only needs the pure parse/expiry logic calls
-  // parseCentralClassificationFixture/isFixtureExpired directly against an in-memory fixture object,
-  // bypassing file I/O and this hook entirely (see central-classification.test.ts).
+  // fixture-specific ambient signal. A unit test that only needs the pure parse logic calls
+  // parseCentralClassificationFixture directly against an in-memory string, bypassing file I/O and
+  // this hook entirely (see central-classification.test.ts).
   //
   // WHICH of the two paths above was actually used (`fixtureLocation.fixtureSource`/`.fixturePath`)
   // is resolved once by main() via `resolveFixtureLocation()` -- not re-derived here -- and passed
@@ -380,15 +367,10 @@ function computeSessionTools(fixtureLocation) {
   // condition: "record the resolved fixture path in halt-state, so a non-default load is never
   // silent" — see `resolveFixtureLocation`'s own header comment for the full citation).
   const fixture = loadCentralClassificationFixture(fixtureLocation.fixturePath);
-  const fixtureExpired = isFixtureExpired(fixture);
-  // Past expiresOn, BOTH exemptions stop being applied automatically — see central-classification.ts
-  // ("EXPIRY IS ENFORCED AT RUNTIME"). An empty centralLayer means every one of its named MCP
-  // servers reverts to unclassified; an empty knownConnectors set means every connector reverts to
-  // unknown. Neither silently keeps running on its last-known-good state past its own dated ratification.
-  const centralLayer = fixtureExpired ? { version: fixture.version, tools: [] } : fixture.centralLayer;
-  const knownConnectors = fixtureExpired ? new Set() : new Set(fixture.knownConnectors);
+  // Both exemptions apply exactly as the JSON lists them — no date logic, no pin (GitHub Issue #217).
+  const knownConnectors = new Set(fixture.knownConnectors);
 
-  const merged = mergeToolClassificationLayers(builtinLayer, centralLayer);
+  const merged = mergeToolClassificationLayers(builtinLayer, fixture.centralLayer);
 
   const builtinNames = builtinLayer.tools.map((t) => t.name);
   const sessionTools = [...builtinNames, ...enabledProjectMcpNames, ...homeMcpServerOnlyNames];
@@ -401,8 +383,6 @@ function computeSessionTools(fixtureLocation) {
   return {
     inventoryResult: evaluateToolInventory(merged, sessionTools),
     unknownConnectorNames,
-    fixtureExpired,
-    fixtureExpiresOn: fixture.expiresOn,
   };
 }
 
@@ -450,7 +430,7 @@ async function main() {
     // active).
     const initialHaltState = readExistingHaltState(sessionId);
 
-    const { inventoryResult, unknownConnectorNames, fixtureExpired, fixtureExpiresOn } = computeSessionTools(fixtureLocation);
+    const { inventoryResult, unknownConnectorNames } = computeSessionTools(fixtureLocation);
 
     // AC5: reconcile every SUR-03-owned reason key to the CURRENT truth this run, every run — never
     // "only ever set, never clear" (red-team F5's sticky-halt finding). A resolved condition writes
@@ -473,18 +453,6 @@ async function main() {
       UNCLASSIFIED_CONNECTOR_REASON_KEY,
       unknownConnectorNames.length > 0,
       quoteNames(unknownConnectorNames),
-      fixtureLocation,
-    );
-    // Distinct, nameable cause for "the exemption fixture itself has expired" (see
-    // FIXTURE_EXPIRED_REASON_KEY's own header comment) -- reconciled independently of the two
-    // reasons above so the relay can tell "unclassified because never listed" apart from
-    // "unclassified because the whole fixture just expired" and name the correct unlock for each.
-    reconcileReason(
-      initialHaltState,
-      sessionId,
-      FIXTURE_EXPIRED_REASON_KEY,
-      fixtureExpired,
-      `docs/qa/s5-central-classification.json's exemption fixture expired on ${fixtureExpiresOn} -- both interim allowlists (centralLayer.tools and knownConnectors) have reverted to unclassified/unknown, regardless of their listed contents`,
       fixtureLocation,
     );
     // This run completed enumeration successfully — reconcile ENUMERATION_FAILED_REASON_KEY closed
