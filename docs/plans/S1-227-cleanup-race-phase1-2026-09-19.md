@@ -1,6 +1,6 @@
 # S1 #227: pre-commit-scan.test.ts cleanup race (ENOTEMPTY) — Phase 1 plan (2026-09-19)
 
-**Status: PLAN-READY, awaiting Manager ratification and human approval.** Nothing built. Proposed scope `s1-227-cleanup-race`. Proposed tier: STANDARD (Manager ratifies). Issue #227 (bug, severity:med, oss, Milestone "S1 — Protect the baseline"), zero comments.
+**Status: RATIFIED with Manager amendments (D1 vetoed, inline helper instead of a new module; see the addendum at the end); the build is committed (`6b1ab75`).** Scope `s1-227-cleanup-race`. Tier: STANDARD (ratified by the Manager). Issue #227 (bug, severity:med, oss, Milestone "S1 — Protect the baseline"), zero comments.
 
 **Branch base (verified by `git fetch` 2026-09-19).** `origin/master` is `f10ae2d` (Merge of PR #230, i.e. Story A #175/#179/#182 is merged; local `fix/s1-story-a-probe-hardening` is fully contained in it). Do not build on the current branch. Proposed: `git switch -c fix/s1-227-cleanup-race origin/master` (working tree is clean).
 
