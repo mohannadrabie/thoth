@@ -224,18 +224,16 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
 //      allowlist (`deriveMutableCredentialGrants`, below) -- an instrument read (JSON.parse of the
 //      real file), never a hand-typed array. A new grant on any file, anywhere, is in this set on
 //      its very next run with no code change here (fixes F1).
-//   2. One named, in-code exclusion: a file under `docs/reviews/`, on the theory that PRINCIPLES
-//      rule 11 forbids rewriting a persisted, dated report's existing bytes. GitHub Issue #203
-//      (red-team round-5, [MED], demonstrated, deliberately deferred, still open) found this
-//      overstates: rule 11's own first option is an *appended* addendum, so a report's bytes are
-//      not bounded at write time the way this exclusion assumes -- a brand-new report (or a fresh
-//      addendum) can still carry an unreviewed live secret on its first commit, same as any other
-//      file. This exclusion is a disclosed, pre-existing residual, not a closed gap; see Issue #203
-//      before treating `docs/reviews/*` as safe. `docs/decisions.md`'s append-only rows and every
-//      `*.test.ts` fixture (edited every round of this very story) are NOT given this exclusion --
-//      both stay in the checked set, generalized rather than special-cased away (fixes F2's
-//      mis-scoped exclusions).
-//   3. Every remaining {path, patternId} is checked against a pinned, already-reviewed baseline
+//   2. No path is excluded. A dated report under `docs/reviews/` was once excluded on the theory
+//      that a persisted report's bytes stay fixed, but a brand-new report, or an appended addendum,
+//      can carry an unreviewed live value on its first commit like any other file (issue 203,
+//      closed by the value-scoped allowlist change). A report grant is therefore pinned to a
+//      baseline at grant time exactly like every other file. Report immutability itself is not
+//      enforced mechanically (issue 233); nothing here relies on it. `docs/decisions.md`'s
+//      append-only rows and every `*.test.ts` fixture (edited every round of this very story) stay
+//      in the checked set too, generalized rather than special-cased away (fixes F2's mis-scoped
+//      exclusions).
+//   3. Every {path, patternId} is checked against a pinned, already-reviewed baseline
 //      (`REVIEWED_BASELINE`, below): the sha256 hashes of the exact literal(s) present in that file
 //      when this baseline was pinned (this commit). A live match whose hash is NOT in the baseline
 //      is, by construction, an occurrence nobody has reviewed yet -- it fails, whether it arrives
@@ -255,12 +253,10 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
 // file (which runs this very file's own text through QA-15's `completeness-claim-checker`)
 // mechanically verifies no such claim has crept back in.
 
-const IMMUTABLE_REPORT_PREFIX = "docs/reviews/";
-
-/** Pure (F1's actual fix): every credential-shaped grant in `allowlist`, minus the one named,
- * content-bounded exclusion (a dated `docs/reviews/*.md` report; PRINCIPLES rule 11). No
- * hand-typed opt-in list -- add a grant on any new file anywhere and it is in this set on the very
- * next run, with no change to this function. */
+/** Pure (F1's actual fix): every credential-shaped grant in `allowlist`, with no path excluded
+ * (issue 203: a dated report is pinned like any other file). No hand-typed opt-in list -- add a grant
+ * on any new file anywhere and it is in this set on the very next run, with no change to this
+ * function. */
 function deriveMutableCredentialGrants(
   allowlist: { path: string; patternId: string }[],
 ): { path: string; patternId: string }[] {
@@ -268,7 +264,6 @@ function deriveMutableCredentialGrants(
   const out: { path: string; patternId: string }[] = [];
   for (const e of allowlist) {
     if (!CREDENTIAL_SHAPED_PATTERN_IDS.includes(e.patternId)) continue;
-    if (e.path.startsWith(IMMUTABLE_REPORT_PREFIX)) continue;
     const key = `${e.path}::${e.patternId}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -363,6 +358,55 @@ const REVIEWED_BASELINE: Readonly<Record<string, { readonly hashes: readonly str
       "this file's own FAKE_SECRET constant, planted into isolated fixture repos to prove the " +
       "pre-commit CLI and installed git hook both refuse it (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
   },
+  // Issue 203: dated reports are pinned like every other file. The hashes below were computed by the
+  // derivation above (each report's live matches for its pattern, sha256), not typed by hand; the
+  // reasons are written by hand and each says what the reviewed literal is.
+  "docs/reviews/s5-deny-by-default-hook-wiring-design-challenger-round2-2026-09-06.md::github-fine-grained-pat": {
+    hashes: ["31413d391f94609e50a50ab19d59c6963a4e20d10c9f00ad123719675c6cb786"],
+    reason:
+      "NAMED EXCEPTION, not a synthetic literal: a truncated prefix (identifier segment and separator, " +
+      "secret segment absent) of what the report records as a real credential, quoted as demonstrated " +
+      "evidence. The allowlist entry's own reason says the rotation call on the underlying credential is a " +
+      "human decision still open (issue 89); THOTH-ADR-0002 names this one exception and the human " +
+      "decides it at the pull request.",
+  },
+  "docs/reviews/cifix-cross-domain-round2-2026-09-09.md::github-pat": {
+    hashes: ["19036933862b4b4080198c2c821cf36c2ae17f058269eacf7dd29ba1a4cdae47"],
+    reason:
+      "a classic-shaped exemplar quoted in a dated report while it discusses the fine-grained pattern's " +
+      "coverage gap (docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "docs/reviews/cifix-cross-domain-round2-2026-09-09.md::github-fine-grained-pat": {
+    hashes: ["79fc75fe924ade1dd03d6e8ff052602c1dfedbee54744ddc92d9934f3c6c328a"],
+    reason:
+      "a fine-grained-shaped exemplar quoted in the same report while it discusses that coverage gap " +
+      "(docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "docs/reviews/path-b-precommit-secret-scan-red-team-2026-09-14.md::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "the story's synthetic AWS-key-shaped fixture literal (the same value as pre-commit-scan.test.ts's " +
+      "FAKE_SECRET, so the same hash), quoted as verbatim evidence in a dated report " +
+      "(docs/qa/secret-scan-allowlist.json's own grant reason). Not a real credential.",
+  },
+  "docs/reviews/path-b-precommit-secret-scan-app-security-2026-09-14.md::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "the story's synthetic AWS-key-shaped fixture literal (same value and hash as the red-team report's " +
+      "entry above), quoted as verbatim evidence in a dated report. Not a real credential.",
+  },
+  "docs/reviews/path-b-precommit-secret-scan-cross-domain-round2-2026-09-14.md::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "the story's synthetic AWS-key-shaped fixture literal (same value and hash as the entries above), " +
+      "quoted as verbatim evidence in a dated report. Not a real credential.",
+  },
+  "docs/reviews/path-b-precommit-secret-scan-cross-domain-round3-2026-09-14.md::aws-access-key-id": {
+    hashes: ["228e2fa94b1e1b9c1d89cc194806f7582d814b3cad812a6a28994dd50eb9d1d5"],
+    reason:
+      "the story's synthetic AWS-key-shaped fixture literal (same value and hash as the entries above), " +
+      "quoted as verbatim evidence in a dated report. Not a real credential.",
+  },
 });
 
 test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-4 [MED]x2, " +
@@ -391,7 +435,7 @@ test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-
 
 // GitHub Issues #201 + #202 (red-team round-5 F1/F2, [MED]x2, both demonstrated): the checks above
 // pin WHICH occurrences are reviewed, but nothing pinned the derived set's own MEMBERSHIP or the
-// baseline's own JUSTIFICATION. Mutation M3 (widening IMMUTABLE_REPORT_PREFIX from "docs/reviews/"
+// baseline's own JUSTIFICATION. Mutation M3 (widening the since-removed IMMUTABLE_REPORT_PREFIX from "docs/reviews/"
 // to "docs/") silently dropped docs/STATE.md and docs/decisions.md from the checked set (8 -> 6
 // derived grants, measured) with every other test staying green (#202); separately,
 // REVIEWED_BASELINE's bare hex-hash entries carried no per-grant reason, unlike loadAllowlist's
