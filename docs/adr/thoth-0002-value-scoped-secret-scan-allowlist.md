@@ -11,7 +11,7 @@ constraints:
   security:
     - "Every entry in docs/qa/secret-scan-allowlist.json MUST carry a valueSha256 list; an entry exempts a match only when its path, its patternId and the sha256 of the matched bytes all equal the entry's. An entry without a valid valueSha256 list MUST be rejected (its matches block); there is no legacy path-plus-pattern shape."
     - "The value hash MUST be computed at match time in the scanner over the matched bytes; raw matched text MUST NOT be written to the allowlist, the scan report or any log beyond the existing redaction."
-    - "A real credential MUST NOT be allowlisted; it is rotated and removed. An entry is a reviewed statement that one named value is not a secret (a synthetic fixture, a reserved-domain address, a documented example)."
+    - "A usable credential (a value that authenticates) MUST NOT be allowlisted; it is rotated and removed. An entry is a reviewed statement that one named value is not a secret (a synthetic fixture, a reserved-domain address, a documented example). One truncated identifier-segment exception is named in this ADR (Named exception, below) and is the human's decision at the pull request."
     - "Adding a value to an entry MUST arrive in a pull request whose diff shows it, with a non-empty reason; no other exemption shape (glob, line range, expiry, in-file marker, second file) MAY be added for this gate."
   code:
     - "The docs/reviews/ path MUST NOT be excluded from the REVIEWED_BASELINE guard in src/secret-scan/history-scan.test.ts; every credential-shaped grant is pinned to a reviewed baseline at grant time."
@@ -41,12 +41,16 @@ constraints:
 - One mechanism for every pattern id in the allowlist (all six present today), not a credential-only subset. No legacy shape: an entry without a valid `valueSha256` list is rejected by the loader and its matches block.
 - The 50 existing entries migrate in one commit through a tested generator whose output a reviewer approves. A script proves the migrated set is a subset of what the file allowlists today (ratchet only).
 - The `REVIEWED_BASELINE` guard tests stay. Issue #203 strengthens them: the `docs/reviews/` exclusion is removed and those grants are pinned like every other file.
+- A blocked match's output names its unlock: the rule, a per-pair command that prints the hashes of a blob's matches beside their redacted form (`src/secret-scan/allowlist-tool.ts hash`), and the fact that the hashed value is the regex MATCH text (for `generic-password-assignment` and `aws-secret-access-key` that includes the key name, operator and quotes, not only the secret). The hash of a BLOCKED match is never printed by the gate.
+- A rejected entry is named in the blocking output (index, path, pattern id, reason class; never a value or a hash), and an unreadable, unparseable or non-array file is named as a file-level rejection.
+- The history-scan report file (a generated, gitignored artifact that CI uploads) carries `valueSha256` only for allowlisted matches, never for blocking ones: an unsalted hash of a possibly-real secret can be guessed.
+- The generator's verify and report output is counts only (blessed values per pattern id, under the dated-reports directory, credential-shaped), so a reviewer approving opaque hashes still has value-level evidence without a raw value.
 
 # Rules for agents
 
 - **MUST** give every allowlist entry a `valueSha256` list of lowercase 64-hex sha256 strings; **MUST** treat an entry missing it, or carrying an empty or malformed list, as rejected, so that its matches block.
 - **MUST** compute the value hash in the scanner at match time over the matched bytes, and **MUST NOT** persist or print raw matched text (the redaction in `redact()` stays the only echo).
-- **MUST NOT** allowlist a real credential. Rotate it and remove it from the tree (devops ADR-0008: no `--no-verify` to force a flagged secret through).
+- **MUST NOT** allowlist a usable credential (a value that authenticates). Rotate it and remove it from the tree (devops ADR-0008: no `--no-verify` to force a flagged secret through). The one truncated identifier-segment exception is named below; adding another needs an amendment to this ADR, not a new hash.
 - **MUST** add a value to an entry only through a pull request whose diff shows the hash and a non-empty `reason`. **MUST NOT** introduce any other exemption shape for this gate (glob, line range, expiry, in-file marker, a second allowlist file).
 - **MUST NOT** widen a migrated entry: the migrated set is a subset of what the file allowlisted before, shown by the generator's verify mode, not by prose.
 - **MUST** pin every credential-shaped grant in `REVIEWED_BASELINE`, including grants under `docs/reviews/`; **MUST NOT** re-add a path-prefix exclusion.
@@ -74,11 +78,22 @@ The allowlist entry shape is a security-control data model, so it is architectur
 - **Rollback:** `git revert` of that commit restores loader and file together. With the new loader in place and a damaged file, re-run the generator on the legacy file at the base commit (`git show <base>:docs/qa/secret-scan-allowlist.json`); its output is deterministic.
 - **Blast radius of a bad migration:** fail closed for every commit (the pre-commit hook reads the allowlist and the code from disk) and every CI run of the OSS-01 step. Nothing fails open.
 
+# Named exception (human decision at the pull request)
+
+- One migrated value is not a synthetic literal. The entry for the fine-grained-token pattern on the dated design-challenger report of the S5 hook-wiring story records, in its own reason, a truncated prefix (a 22-character identifier segment and its separator, secret segment absent) of what that report describes as a real credential, quoted as demonstrated evidence. Issue 89 (human-only, still open) tracks the rotation call.
+- The migration would bless that value by hash and make the exemption permanent. It is not "a value that authenticates" on its own (its entry says the truncated prefix cannot be reconstructed into a working credential), which is why the rule above says usable credential; but it contradicts the plainer "not a real credential" reading, so it is named here rather than hidden in 108 hashes.
+- Decision for the human: **accept** this one named exception, or **rotate and remove** per issue 89, after which the entry, its hash and its baseline pin are deleted in a pull request. The value is also pinned in `REVIEWED_BASELINE` with a reason that says the same. The generator did not drop the entry silently.
+
 # Residual risk (disclosed)
 
 | Residual | Effect |
 |---|---|
-| No oracle: an author who adds a literal and its hash and its `REVIEWED_BASELINE` pin in one pull request passes every automated check | The pull request diff and the `reason` are the review, as in THOTH-ADR-0001. Value scoping closes the unattended path (a new literal in an already-granted file), not the deliberate one. Report immutability is not enforced mechanically (Issue #233). |
+| No oracle: an author who adds a literal and its hash and its `REVIEWED_BASELINE` pin in one pull request passes every automated check | The pull request diff and the `reason` are the review, as in THOTH-ADR-0001. Value scoping closes the unattended path (a new literal in an already-granted file), not the deliberate one. The gate blocks a legacy-shaped (whole-file) report grant; a report grant that carries the literal's own correct hash passes the gate. The baseline guard catches an OMITTED pin, not a deliberate self-hashed grant (test `oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseline-guard`). Report immutability is not enforced mechanically (Issue #233). |
+| The hash binds the regex match, not the whole token | The internal-hostname and private-IPv4 patterns match a prefix of a longer real name, so a granted value can vouch for a prefix of a longer one. A reviewer sees the file diff either way. |
+| A reviewer of a hash addition sees opaque hex | The reason and the diff are the review; the generator's counts-only classification is the value-level evidence, and the Manager asks red-team to classify the blessed values independently after the build. |
+| The one named exception above (issue 89) | Human decision at the pull request: accept it as named, or rotate and remove. |
+| A moved base: an allowlist or fixture change lands on the default branch before this merges | The new legacy file or the new literal is not in the migrated file, so CI goes red loudly. Re-run the generator on the new legacy file (`generate --base <ref>`) and re-verify. Fails closed, never open. |
+| A NUL byte in the first 8000 bytes makes the scanner skip a text file, an allowlist entry or not | Pre-existing and orthogonal (issue 237); not changed here. A test now asserts no tracked text file is skipped, so this story's own artifacts cannot hide that way. |
 | Entries are coupled to a pattern's exact match boundary | A regex edit that moves the boundary blocks the entry's matches until the hashes are re-derived (rule above); fail-loud, the safe direction. |
 | An entry that matches nothing is invisible | Tracked in Issue #235; out of scope here. |
 | The scanner dedupes blobs by sha, so a byte-identical copy of a file at a second path is not evaluated under that path | Pre-existing; values in it were already evaluated at the first path. Not changed by this ADR. |
@@ -105,7 +120,7 @@ The allowlist entry shape is a security-control data model, so it is architectur
 
 # Compliance verification
 
-- Automated: the named tests in `src/secret-scan/history-scan.test.ts` and `src/secret-scan/pre-commit-scan.test.ts` (novel secret in a granted file blocks at `summarizeMatches` and at the pre-commit CLI; malformed scope rejected; partial migration honors no legacy entry; regex edit blocks loudly; the three human-named pairs are value-scoped; `docs/reviews/` grants pinned). The generator's own tests (subset, idempotence, no value printed).
+- Automated: the named tests in `src/secret-scan/history-scan.test.ts` and `src/secret-scan/pre-commit-scan.test.ts` (novel secret in a granted file blocks at `summarizeMatches` and at the pre-commit CLI; malformed scope rejected; partial migration honors no legacy entry; regex edit blocks loudly; the three human-named pairs are value-scoped; `docs/reviews/` grants pinned). The generator's own tests (subset, idempotence, an already value-scoped entry is never widened, a dropped entry or hash that still matches fails verify, no value or hash printed). The unlock command printed by a blocked run is executed verbatim in the platform shell and its output is accepted by the gate, for every pattern id; the report file omits the hash of blocking matches; a rejected entry is named in the blocking output; no tracked text file is skipped as binary.
 - Manual: reviewers run the generator's verify mode against the legacy file at the base commit and read its counts; reviewers read every `valueSha256` addition and its `reason` in a pull request diff.
 - Evidence location: `docs/qa/secret-scan-allowlist.json`; `docs/plans/s1-136-value-scoped-allowlist-phase1-2026-09-19.md`; Issues #136, #203.
 

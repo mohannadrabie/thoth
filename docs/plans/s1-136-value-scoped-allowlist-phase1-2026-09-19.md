@@ -166,3 +166,85 @@ Issue #233 report immutability (filed). Issue #234 stale sensitive-area globs (f
 3. **Test independence.** Whether to dispatch `test-writer` for the gate-level tests (section 10). **Default:** not dispatched.
 4. **Generator retention.** The generator stays in the tree after the migration (its verify mode is what a reviewer re-runs); retiring it is a later, human-approved cleanup. **Default:** keep.
 5. **Proposed ADR timing.** The code lands while THOTH-ADR-0002 is Proposed; the human accepts or declines it at the PR (THOTH-ADR-0001 was accepted before its PR merged). **Default:** ship the PR with the ADR Proposed.
+
+## Addendum: design-challenger round 1 dispositions (2026-09-19, appended at Phase 2; sections 1 to 13 above are unchanged)
+
+Source: `docs/reviews/s1-136-value-scoped-allowlist-design-challenger-2026-09-19.md`, verdict `go`, no valid HIGH. Its frozen set (hash boundary and parity, path keying and dedupe, loader fail-closed table, the issue 203 reading, consumer list, sequencing, rollback claim) is not reversed by anything below. Base commit recorded at Phase 2 start: 7b62344 (the generator's scope is history reachable from it).
+
+### Manager answers to section 13
+
+| Question | Answer | Effect on the build |
+|---|---|---|
+| 1. R203-3 reading | Accepted. The gate blocks a legacy-shaped report grant (T12). A self-hashed grant is a stated residual caught only by the baseline guard for an OMITTED pin and by the PR diff. | T13's name and assertion were overclaiming; renamed `oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseline-guard`. The ADR says so. |
+| 2. Granularity | One entry per (path, patternId) with a hash list. | Built as planned. |
+| 3. `test-writer` | Not dispatched. | The implementer authored the tests, red first. |
+| 4. Generator | Keep. | Kept in `src/secret-scan/`. |
+| 5. ADR timing | Ship with THOTH-ADR-0002 Proposed; never marked accepted by an agent. Rule 15 does not apply. | Status stays proposed. |
+
+### Dispositions of the findings
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| A3 skeleton adequacy | MED | Skeleton widened (below). |
+| A2 generator re-run semantics and one-directional verify | LOW | Behavior defined and tested: an already value-scoped entry is carried through unchanged and never gains a hash (a re-run is a no-op); verify fails on a dropped entry or dropped hash that still matches. Tests `sb2-generator-never-adds-a-hash-to-an-already-scoped-entry`, `sb2-verify-rejects-a-dropped-entry-or-hash-that-still-matches`. |
+| A5 hash of a blocked match in the CI-uploaded report | LOW | **Correction of section 5's self-contradiction.** Section 5 says no hash is printed for a blocked match and also that the report file gains the hash per match. The rule is: the hash appears in the report file (and in any log) ONLY for allowlisted matches, never for blocking matches. Test `sb2-report-file-omits-value-hash-for-blocking-matches`. |
+| A6 spike file holds raw NUL bytes | LOW | Separators replaced by the printable escape; the spike still runs and prints the same triple counts. Test `sb2-no-tracked-text-file-is-skipped-as-binary`, derived from `git ls-files` with the scanner's own rule. |
+| A7 unlock command and the hashed value | LOW | The unlock line states the hashed value is the regex MATCH text (key name, operator and quotes included for `generic-password-assignment` and `aws-secret-access-key`), and prints a per-pair command that runs in the Windows shell. Test `sb2-unlock-command-output-is-accepted-by-the-gate`, run for every pattern id in the catalog. |
+| A8 a dropped entry is silent | LOW | The loader records each rejection (index, path, pattern id, reason class; never a value or hash); the blocking output names them. Test `sb2-rejected-entry-is-named-in-blocking-output`. |
+| A4 the migration blesses the one value whose own entry says it is a real credential (issue 89, human-only, still open) | LOW | Fixed by wording, no new test: the ADR rule now reads "usable credential (a value that authenticates)", names this one truncated identifier-segment value as an explicit exception with a pointer to issue 89, states it is the human's decision at the PR (accept it as named, or rotate and remove per issue 89), and adds it to the residual table. The entry is not dropped silently. |
+| A9 moved base | LOW | Residual only: if any allowlist or fixture change lands on the default branch before this merges, re-run the generator on the new legacy file (`generate --base <ref>`) and verify; CI goes red loudly otherwise (fails closed). |
+| A1 pre-existing NUL-byte skip in the scanner | MED | Out of scope: issue 237, not gating. The scanner's binary-file rule is not touched. |
+| Scariest unproven assumption (a reviewer approving opaque hashes is not reviewing values) | n/a | The generator's report and verify output print counts only, classified per pattern id (blessed values per pattern, under the dated-reports directory, credential-shaped); the Manager asks red-team to classify the blessed values independently after the build. |
+
+### Widened walking skeleton (built before anything else, working tree, uncommitted)
+
+Original (section 7): hash at match time, partition by value, loader accepts one fixture entry, T2 and P1 red then green. Added by A3:
+
+1. A minimal generator (`generate` only) run against the REAL legacy file at the base commit, output to a scratch directory.
+2. The real migrated file round trip (`sb2-skeleton-real-file-round-trip-scans-clean`), run as a SCRIPT check, not a permanent test: in a scratch clone at the base commit, the CI entry point scans the real history with the generated file and exits 0 with zero blocking, and the file's hash count equals the independent spike's triple count. A permanent test measured about 40 seconds inside the suite and repeats what CI's own full-history OSS-01 step already does on the same repo and the same file; the entry-point behavior it was meant to cover is pinned by the cheap subprocess tests in item 3. Dropped for cost; a one-line re-add if the Manager wants it permanent.
+3. The history-scan CLI as CI runs it, spawned as a subprocess (`sb2-history-scan-cli-exits-nonzero-on-novel-secret-in-granted-file`, with a granted-alone control).
+
+### Updated named-test list (generated from the test files by `git grep`, not typed)
+
+```
+oss01-entry-exempts-only-its-granted-values
+oss01-allowlisted-file-still-blocks-a-novel-secret                         (unit/gate)
+oss01-allowlisted-file-still-blocks-a-novel-secret (pre-commit CLI: three cells)
+oss01-reviewed-literal-stays-allowlisted-and-reported
+oss01-real-allowlist-refuses-a-novel-value-in-every-granted-pair
+oss01-attack-e-legacy-shaped-report-grant-blocks-at-the-gate               (gate and pre-commit CLI)
+oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseline-guard   (renamed from T13)
+OSS-01 allowlist: a docs/reviews/* credential grant is pinned to a baseline ... not excluded   (T11, red-team's name)
+sb2-three-human-named-pairs-are-value-scoped
+sb2-malformed-or-missing-scope-is-rejected-and-blocks
+sb2-partial-migration-does-not-leave-legacy-shape-entries-honored          (loader and pre-commit CLI; plus a control each)
+sb2-regex-edit-invalidates-entries-loudly
+sb2-scanner-hashes-at-match-time-and-stores-no-raw-text
+sb2-real-allowlist-loads-with-no-rejected-entry
+sb2-rejected-entry-is-named-in-blocking-output                             (A8)
+sb2-history-scan-cli-exits-nonzero-on-novel-secret-in-granted-file        (A3, plus a granted-alone control)
+sb2-report-file-omits-value-hash-for-blocking-matches                      (A5)
+sb2-unlock-command-output-is-accepted-by-the-gate                          (A7)
+sb2-no-tracked-text-file-is-skipped-as-binary                              (A6)
+sb2-generator-scopes-each-legacy-entry-to-the-hashes-of-its-own-matches
+sb2-generator-is-idempotent-and-deterministic
+sb2-generator-drops-and-reports-a-legacy-entry-that-matches-nothing
+sb2-generator-never-adds-a-hash-to-an-already-scoped-entry                 (A2)
+sb2-verify-rejects-a-widened-set
+sb2-verify-rejects-a-dropped-entry-or-hash-that-still-matches              (A2)
+sb2-generator-refuses-a-malformed-scoped-input
+sb2-generator-reports-classification-counts-per-pattern
+sb2-generator-cli-prints-counts-only
+sb2-hash-lines-hash-the-regex-match-text
+```
+
+Plus the X1 flip (the existing fixture test now expects a report grant to be included; done in the first build commit so it is red first). The generator is `src/secret-scan/allowlist-tool.ts` and its tests `src/secret-scan/allowlist-tool.test.ts`.
+
+### Phase 2 deviations from sections 1 to 13 (recorded plainly)
+
+- Commit order: red tests, then a separate commit for the spike NUL fix, then the atomic migration commit, then the issue 203 commit, then docs. The spike fix is its own commit because it is independent of the atomic constraint.
+- X1 flipped at the first commit, not at the issue 203 commit, so it is red first (section 8 said existing tests are untouched at C1).
+- One more existing-test fixture edit than section 6 listed: the "matches present -> FAIL" test builds a `HistoryMatch` literal, and the type now requires the hash. Found by the typechecker; meaning unchanged.
+- The C1 partial-migration pre-commit test first used three byte-identical fixture files, so the scanner's blob dedupe never evaluated the second and third path (residual R1 in action); the fixture now gives each file distinct bytes. It is red on the old code and green on the new.
+- The real-repo round trip through the CLI is a script check, not a permanent test (see the widened skeleton, item 2). Its raw output is in the Phase 2 receipt.
+- The unlock command needed a helper subcommand (`hash`) in the tool, because a printable command that is correct in every Windows shell cannot be a `node -e` one-liner.
