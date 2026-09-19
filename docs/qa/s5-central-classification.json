@@ -1,11 +1,10 @@
 {
   "version": "0.2.0-mo-dev-stopgap",
-  "expiresOn": "2026-10-07",
-  "ratifiedBy": "docs/decisions.md, 2026-09-07 row, \"S5 Stage-3 CRITICAL review round 1 (red-team no-go, app-security-reviewer/cross-domain-reviewer REWORK)...\"",
   "notes": [
-    "This fixture is the ONLY place either allowlist below may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure, including runtime expiry enforcement.",
+    "This fixture is the single source of truth for both allowlists below: the ONLY place either may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure.",
+    "There is no expiry date and no test that pins this file's contents: entries apply until removed, and the PR diff of this file is the review. Adding a name to either list silently suppresses that name's SUR-03 halt at the next SessionStart. Standing exception recorded in docs/adr/ (project-tier ADR) and docs/decisions.md's 2026-09-19 row.",
     "centralLayer.tools[].class is presence-only / inert today (GitHub Issue #93) -- no consumer reads it before S6's real central policy ships. Classifying a tool here only removes it from SUR-03's unclassified/halt set; it does not itself drive any enforcement decision.",
-    "knownConnectors is a pure display-name string match against ~/.claude.json's claudeAiMcpEverConnected array -- spoofable in principle, NOT a real security control. Ships only because the human explicitly reviewed and accepted this exact risk (see 'ratifiedBy' above), dated and time-boxed via 'expiresOn' to force renewal. Never silently rolled forward: past expiresOn, both allowlists in this fixture stop being applied automatically at runtime."
+    "knownConnectors is a pure display-name string match against ~/.claude.json's claudeAiMcpEverConnected array -- spoofable in principle, NOT a real security control (GitHub Issue #90). A connector renamed, or a new connector named identically to an entry, defeats it completely. It stands only on the human's explicit acceptance of that risk, until an out-of-repo policy source ships (S6)."
   ],
   "centralLayer": {
     "tools": [

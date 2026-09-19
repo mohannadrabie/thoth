@@ -9,9 +9,9 @@
 // This file has a SECOND job: it is also SUR-03's real "shipped defaults" tool-CLASSIFICATION
 // layer — `mergeToolClassificationLayers`'s first argument (src/policy/rule/precedence.ts) — that
 // `hooks/sessionstart-tool-enum.mjs` merges with a "central" layer loaded at runtime from
-// docs/qa/s5-central-classification.json (a dated, human-ratified, separately-reviewable fixture —
-// see src/policy/tools/central-classification.ts's own header comment for the full disclosure,
-// including its runtime expiry). CORRECTED (S5 Stage-3 CRITICAL review round 1, GitHub Issue #91):
+// docs/qa/s5-central-classification.json (a committed, separately-reviewable fixture, the single
+// source of truth for that layer — see src/policy/tools/central-classification.ts's own header
+// comment for the full disclosure; it has no expiry). CORRECTED (S5 Stage-3 CRITICAL review round 1, GitHub Issue #91):
 // this comment previously called the central layer "currently empty, S6-pending" — as of this
 // story's own fix-now pass it is populated, and no ratified milestone currently owns building a
 // real central-override CONFIG LOADER (checked directly against every open milestone's `gh`

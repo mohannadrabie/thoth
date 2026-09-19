@@ -8,7 +8,7 @@
 // sibling file, never an edit to either.
 //
 // Covers:
-//   - Each of the 4 SUR-03-owned reason keys' message now leads with a short, human-readable label
+//   - Each SUR-03-owned reason key's message (see FRIENDLY_LABEL_CASES below) now leads with a short, human-readable label
 //     (FRIENDLY_LABELS) instead of the raw, hyphenated reason-key string.
 //   - A reason key with no entry in FRIENDLY_LABELS falls back to the raw key itself (unchanged
 //     fallback behavior, mirroring unlockHintFor's own existing generic-fallback pattern).
@@ -45,7 +45,6 @@ const FRIENDLY_LABEL_CASES: Array<{ reasonKey: string; expectedLabel: string }> 
   { reasonKey: "SUR-03-unclassified-tool", expectedLabel: "Unrecognized tool" },
   { reasonKey: "SUR-03-unclassified-connector", expectedLabel: "Unrecognized connector" },
   { reasonKey: "SUR-03-enumeration-failed", expectedLabel: "Tool/connector check failed" },
-  { reasonKey: "SUR-03-central-fixture-expired", expectedLabel: "Allowlist exemption expired" },
 ];
 
 for (const { reasonKey, expectedLabel } of FRIENDLY_LABEL_CASES) {
@@ -181,7 +180,7 @@ function fullBlockedMessage(sessionId: string, humanMessage: string): string {
 const UNCLASSIFIED_TOOL_UNLOCK =
   "unlock: reclassify the tool in docs/qa/s5-central-classification.json (a reviewed, committed fixture -- not a hook-file edit) or disconnect/remove the MCP server, then resume or start a new session -- SessionStart reconciles this reason automatically on its next run";
 const UNCLASSIFIED_CONNECTOR_UNLOCK =
-  "unlock: add the connector's EXACT display name to docs/qa/s5-central-classification.json's knownConnectors list (requires a fresh human-ratified docs/decisions.md row, per this project's own disclosed-residual-risk convention) or disconnect it in claude.ai, then resume or start a new session";
+  "unlock: add the connector's EXACT display name to docs/qa/s5-central-classification.json's knownConnectors list (a reviewed, committed change -- not a hook-file edit) or disconnect it in claude.ai, then resume or start a new session";
 
 test("composite end-to-end: an unclassified project MCP server AND an unclassified claude.ai connector -- real sessionstart-tool-enum.mjs write, real relay read -- renders the EXACT expected composite message (both reason lines, correctly labeled, quoted, and hinted)", () => {
   const tree = makeFixtureTree("composite-tool-and-connector");
@@ -295,7 +294,9 @@ test("key parity (GitHub Issue #205): FRIENDLY_LABELS and UNLOCK_HINTS cover the
   const friendlyLabelKeys = extractFrozenMapKeys(source, "FRIENDLY_LABELS");
   const unlockHintKeys = extractFrozenMapKeys(source, "UNLOCK_HINTS");
 
-  assert.ok(friendlyLabelKeys.length >= 4, `sanity: expected at least the 4 known SUR-03-owned reason keys in FRIENDLY_LABELS; got ${JSON.stringify(friendlyLabelKeys)}`);
+  // Sanity floor only (guards against the extractor regex silently matching nothing): the 3 keys
+  // that remain after GitHub Issue #217 removed the expiry-timer reason key.
+  assert.ok(friendlyLabelKeys.length >= 3, `sanity: expected at least the 3 known SUR-03-owned reason keys in FRIENDLY_LABELS; got ${JSON.stringify(friendlyLabelKeys)}`);
   assert.deepEqual(
     friendlyLabelKeys,
     unlockHintKeys,

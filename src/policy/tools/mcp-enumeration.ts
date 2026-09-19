@@ -79,8 +79,9 @@ export function extractMcpServerNames(input: unknown, source: McpDeclarationSour
  * unconditionally — there is no "classified" state a connector identity could ever reach at THIS
  * layer. Whether the calling hook then halts on that presence is a separate question this function
  * has no say in: `hooks/sessionstart-tool-enum.mjs`'s own `KNOWN_CONNECTORS` fixture-backed exemption
- * (human-ratified, dated, disclosed as a spoofable residual — see `docs/decisions.md`'s 2026-09-07
- * row and `src/policy/tools/central-classification.ts`'s own header) can suppress the resulting halt
+ * (disclosed as a spoofable residual, standing until an out-of-repo policy source ships — see
+ * `docs/decisions.md`'s 2026-09-07 and 2026-09-19 rows and
+ * `src/policy/tools/central-classification.ts`'s own header) can suppress the resulting halt
  * for a listed name. "Unconditionally reported" describes this function's own output, not the
  * hook-level halt decision downstream of it — corrected 2026-09-07 (red-team, S5 Stage-3 round 1 &
  * round 2 editorial items) after this comment was found stale against the exemption this same story

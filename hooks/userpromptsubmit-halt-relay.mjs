@@ -59,12 +59,10 @@
 // run — SessionStart genuinely re-runs on a resumed session), a halted session is no longer
 // permanently bricked with no stated escape.
 //
-// EXPIRY IS ITS OWN NAMEABLE CAUSE, NOT A GENERIC UNCLASSIFIED-TOOL/-CONNECTOR HINT (added S5
-// Stage-3 CRITICAL review round 2 fix-now, `red-team` N3 / GitHub Issue #101): past the fixture's
-// own expiresOn, sessionstart-tool-enum.mjs reconciles a DISTINCT `SUR-03-central-fixture-expired`
-// reason (never folded into the existing two SUR-03-unclassified-* keys' own detail text) so this
-// file can name the real unlock (re-ratify or remove the exemption) instead of the "reclassify the
-// tool/connector" hint those two keys carry, which is a no-op once the fixture itself has expired.
+// (The former `SUR-03-central-fixture-expired` reason, its unlock hint and its friendly label were
+// removed with the fixture's expiry timer — GitHub Issue #217. A leftover halt-state file carrying
+// that key would fall through to the generic hint and the raw key below; none can be written any
+// more.)
 //
 // THIRD-PARTY TEXT IS SANITIZED BEFORE IT REACHES A CHAT-VISIBLE MESSAGE (S5 Stage-3 CRITICAL
 // review round 1 fix-now, GitHub Issue #97): `detail` values written by sessionstart-tool-enum.mjs
@@ -102,16 +100,9 @@ const UNLOCK_HINTS = Object.freeze({
   "SUR-03-unclassified-tool":
     "unlock: reclassify the tool in docs/qa/s5-central-classification.json (a reviewed, committed fixture -- not a hook-file edit) or disconnect/remove the MCP server, then resume or start a new session -- SessionStart reconciles this reason automatically on its next run",
   "SUR-03-unclassified-connector":
-    "unlock: add the connector's EXACT display name to docs/qa/s5-central-classification.json's knownConnectors list (requires a fresh human-ratified docs/decisions.md row, per this project's own disclosed-residual-risk convention) or disconnect it in claude.ai, then resume or start a new session",
+    "unlock: add the connector's EXACT display name to docs/qa/s5-central-classification.json's knownConnectors list (a reviewed, committed change -- not a hook-file edit) or disconnect it in claude.ai, then resume or start a new session",
   "SUR-03-enumeration-failed":
     "unlock: fix the malformed config file named in the detail above (commonly ~/.claude.json, .mcp.json, or docs/qa/s5-central-classification.json), then resume or start a new session -- SessionStart reconciles this reason automatically once enumeration succeeds",
-  // S5 Stage-3 CRITICAL review round 2 fix-now (`red-team` N3 / GitHub Issue #101): distinct from
-  // SUR-03-unclassified-tool/-connector's own hints above, which are WRONG for this cause -- past
-  // the fixture's own expiresOn, every previously-exempt name reverts to unclassified/unknown
-  // regardless of whether it is still listed, so "re-add it to the fixture" is a no-op. This hint
-  // names the real unlock: re-ratify (a NEW expiresOn) or remove the exemption outright.
-  "SUR-03-central-fixture-expired":
-    "unlock: the exemption fixture ITSELF has expired (this is NOT the same as an unlisted name -- re-adding an already-listed tool/connector name will NOT unlock this, since expiry reverts BOTH allowlists regardless of their contents) -- re-ratify with a NEW expiresOn via a fresh, dated docs/decisions.md row and update docs/qa/s5-central-classification.json accordingly, or remove the exemption outright, then resume or start a new session -- SessionStart reconciles this reason automatically once the fixture is renewed",
 });
 
 /** FIX-NOW (CRITICAL-tier review round, `red-team`): a reason key shaped like `constructor`,
@@ -129,7 +120,7 @@ function unlockHintFor(reasonKey) {
     : `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`;
 }
 
-/** `friendly-halt-messages` story: short, human-readable labels for the 4 SUR-03-owned reason keys
+/** `friendly-halt-messages` story: short, human-readable labels for the SUR-03-owned reason keys
  * (see hooks/sessionstart-tool-enum.mjs's own *_REASON_KEY constants), used as the prefix in place
  * of the raw, hyphenated reason-key string (Manager-approved 2026-09-17). A reason key with no entry
  * here falls back to the raw key itself via `friendlyLabelFor` below, mirroring `unlockHintFor`'s own
@@ -138,7 +129,6 @@ const FRIENDLY_LABELS = Object.freeze({
   "SUR-03-unclassified-tool": "Unrecognized tool",
   "SUR-03-unclassified-connector": "Unrecognized connector",
   "SUR-03-enumeration-failed": "Tool/connector check failed",
-  "SUR-03-central-fixture-expired": "Allowlist exemption expired",
 });
 
 /** Same prototype-chain fix as `unlockHintFor` above (FIX-NOW, `red-team`, CRITICAL-tier review
