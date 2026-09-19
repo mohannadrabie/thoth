@@ -10,6 +10,15 @@ const SCAN_SCRIPT = fileURLToPath(new URL("./pre-commit-scan.ts", import.meta.ur
 const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const FAKE_SECRET = "AKIAFAKEFAKEFAKEFAKE"; // AWS-key-shaped, clearly not a real credential
 
+// Temp-dir cleanup for every fixture in this file (GitHub Issue #227). A git process can still be
+// writing under the fixture's .git/ after the test's own `git commit` returned (git spawns a detached
+// `git maintenance run --auto` after a successful commit), so a single recursive delete can lose the race
+// with ENOTEMPTY. Retry a busy tree; there is deliberately no catch, so a failure that outlasts the
+// retries still throws and still fails the test.
+function removeTree(dir: string): Promise<void> {
+  return rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
 async function git(cwd: string, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return realRunner("git", args, { cwd, encoding: "utf8" });
 }
@@ -31,7 +40,7 @@ async function withIsolatedGitRepo(fn: (repoDir: string) => Promise<void>): Prom
     await gitOk(repoDir, "commit", "-q", "-m", "init");
     await fn(repoDir);
   } finally {
-    await rm(repoDir, { recursive: true, force: true });
+    await removeTree(repoDir);
   }
 }
 
@@ -191,7 +200,7 @@ test("R3: `git commit` with a clean staged change succeeds normally", async () =
 test("R4: a fresh LOCAL clone of the real project repo, with core.hooksPath set exactly as `npm run prepare` sets it, blocks a real commit containing a secret -- no manual `git config` beyond that", async () => {
   const cloneDir = await mkdtemp(join(tmpdir(), "thoth-fresh-clone-"));
   try {
-    await rm(cloneDir, { recursive: true, force: true }); // git clone wants the target to not pre-exist
+    await removeTree(cloneDir); // git clone wants the target to not pre-exist
     const cloneRes = await realRunner("git", ["clone", "--local", "-q", PROJECT_ROOT, cloneDir], {
       encoding: "utf8",
       timeoutMs: 120_000,
@@ -215,15 +224,17 @@ test("R4: a fresh LOCAL clone of the real project repo, with core.hooksPath set 
     const afterLog = await gitOk(cloneDir, "log", "-1", "--format=%H");
     assert.equal(afterLog, beforeLog, "nothing must land in the fresh clone either");
   } finally {
-    await rm(cloneDir, { recursive: true, force: true });
+    await removeTree(cloneDir);
   }
 });
 
 test("R4: a fresh clone with NO core.hooksPath configured (git's own hooksPath default, pointing at the clone's own untracked .git/hooks/) does not block -- proves the protection comes from the setup step, not a fluke", async () => {
   const cloneDir = await mkdtemp(join(tmpdir(), "thoth-fresh-clone-noprepare-"));
   try {
-    await rm(cloneDir, { recursive: true, force: true });
-    const cloneRes = await realRunner("git", ["clone", "--local", "-q", PROJECT_ROOT, cloneDir], {
+    await removeTree(cloneDir);
+    // This test makes a SUCCESSFUL commit in the clone. Turn off git's post-commit automatic maintenance
+    // there (both keys persist in the clone's own config) so no detached git process outlives the test.
+    const cloneRes = await realRunner("git", ["clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "--local", "-q", PROJECT_ROOT, cloneDir], {
       encoding: "utf8",
       timeoutMs: 120_000,
     });
@@ -236,7 +247,7 @@ test("R4: a fresh clone with NO core.hooksPath configured (git's own hooksPath d
     const commitRes = await git(cloneDir, "commit", "-q", "-m", "no hook installed, this should succeed");
     assert.equal(commitRes.code, 0, "without the setup step, the clone's own untracked .git/hooks/ is empty -- nothing should block this commit");
   } finally {
-    await rm(cloneDir, { recursive: true, force: true });
+    await removeTree(cloneDir);
   }
 });
 
@@ -269,7 +280,7 @@ test("R190 (GitHub Issue #190, red-team [MED], regression): an internal error (n
       "must not dump a raw Node stack trace to the developer",
     );
   } finally {
-    await rm(repoDir, { recursive: true, force: true });
+    await removeTree(repoDir);
   }
 });
 

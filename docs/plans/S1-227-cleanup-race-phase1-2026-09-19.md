@@ -113,3 +113,10 @@ None. Ratifications requested: tier STANDARD; sensitive-area reading; reviewer `
 - Touch `ci.yml`, the allowlist, `src/lib/git.ts`, `pre-commit-scan.ts`, or any other file's cleanup.
 - Add a "consecutive green" claim, a retry budget claim, or a repo-wide guard.
 - Edit or weaken any existing assertion.
+
+## Addendum, 2026-09-19: Manager rulings at Phase 2 start (this addendum wins where it differs from the sections above)
+
+- **D1 vetoed.** No new module, no new test file, no source-text guard (G-1, G-2), no concurrent-writer test in the suite (HR-4), no helper unit tests (HR-1 to HR-3). The module paths named in the sections above are therefore never created.
+- **Built instead.** A small inline `removeTree(dir)` helper at the top of the one target test file, with the same option literal as planned and no catch. All six cleanup sites go through it, line 194 included (D3 stands).
+- **D2 ratified.** The two `-c` arguments go on the `noprepare` clone only. No permanent test; the evidence is measurement S1, re-run in Phase 2 with the shipped arguments.
+- **Criteria replaced.** AC 1 to 6 (HR-1 to G-2) are replaced by a grep instrument run before and after the edit (six offenders, then one match inside the helper), a concurrent-writer harness run against the shipped option literal, and by-hand mutation checks shown red and restored. AC 7 to 10 stand; AC 9's file list shrinks to the target test file and the changelog. The sibling bare-delete follow-up is Issue #231, not a backlog line.
