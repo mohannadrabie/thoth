@@ -875,7 +875,7 @@
     }
   },
   "adrCatalog": {
-    "version": "e63297b6b97e054a946217aeaa137093363e8f41",
+    "version": "60f00853db7f21280e3bfdaedb3f699ed24bc7da",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
@@ -1588,6 +1588,8 @@
           "The value hash MUST be computed at match time in the scanner over the matched bytes; raw matched text MUST NOT be written to the allowlist, the scan report or any log beyond the existing redaction.",
           "A usable credential (a value that authenticates) MUST NOT be allowlisted; it is rotated and removed. An entry is a reviewed statement that one named value is not a secret (a synthetic fixture, a reserved-domain address, a documented example). One truncated identifier-segment exception is named in this ADR (Named exception, below) and is the human's decision at the pull request.",
           "Adding a value to an entry MUST arrive in a pull request whose diff shows it, with a non-empty reason; no other exemption shape (glob, line range, expiry, in-file marker, second file) MAY be added for this gate.",
+          "A migrated entry MUST NOT be widened: the migrated set is a subset of what the file allowlisted before. The generator's verify mode enforces it structurally (every migrated entry sits on a legacy pair with its reason verbatim, every listed hash is carried by a real match, an already value-scoped entry is unchanged) and counts the newly allowlisted occurrences over the scanner's own matches, which MUST be zero.",
+          "The allowlist loader MUST fail closed: an unreadable, unparseable or non-array allowlist file yields no entries, so every match blocks.",
           "The docs/reviews/ path MUST NOT be excluded from the REVIEWED_BASELINE guard in src/secret-scan/history-scan.test.ts; every credential-shaped grant is pinned to a reviewed baseline at grant time.",
           "A change to a pattern's match boundary in src/secret-scan/patterns.ts MUST be accompanied, in the same pull request, by re-derived valueSha256 lists for every entry of that pattern, each hash checked against the same reviewed literal under the old boundary."
         ]
