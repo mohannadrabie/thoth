@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, unlink, mkdir, cp } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1094,11 +1095,240 @@ test("sb2-unlock-command-output-is-accepted-by-the-gate", async () => {
   }
 });
 
-test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
-  // The scanner's own rule (history-scan.ts looksBinary): a NUL byte in the first 8000 bytes means the
-  // file is skipped, unscanned. A tracked text file with one is invisible to OSS-01. Derived from git.
-  const KNOWN_BINARIES: string[] = []; // name a real binary asset here by path; none is tracked today
-  const res = await realRunner("git", ["ls-files", "-s", "-z"], { cwd: PROJECT_ROOT, encoding: "latin1" });
+// ---------------------------------------------------------------------------------------------
+// Issue 239 (app-security HIGH, and red-team F1, the same defect found independently), which also
+// covers the symptom of Issue 238: the gate prints a per-pair HASH-COMMAND for a maintainer to paste,
+// and the path in it comes from the tree of a pull request, i.e. from a contributor. A path holding a
+// shell metacharacter must never sit inside a printed command. Rule under test: a runnable command is
+// printed only for a path of [A-Za-z0-9._/-]; any other path gets a line that is not a command and
+// carries the path only percent-encoded. Nothing here writes a scanner-shaped literal: the hostile
+// names carry a payload that only creates a marker file, and the secret-shaped content comes from
+// `novel(...)`, built at runtime.
+// ---------------------------------------------------------------------------------------------
+
+const SAFE_PATH_CHARS = /^[A-Za-z0-9._/-]+$/;
+const RUNNABLE_LINE =
+  /^HASH-COMMAND for [A-Za-z0-9._/-]+ \[[a-z0-9-]+\]: node src\/secret-scan\/allowlist-tool\.ts hash [0-9a-f]{12} "[A-Za-z0-9._/-]+" [a-z0-9-]+$/;
+const NO_COMMAND_PREFIX = "NO-COMMAND-PRINTED for path ";
+// Every character a shell (sh, PowerShell or cmd) can give a meaning to. A line that is not a command
+// must carry none of them, so pasting it anywhere cannot run anything.
+const SHELL_METACHARS = /[$`;&|<>"'\\(){}*?~!#^\n\r]/;
+const PAYLOAD = "node mk.mjs"; // the payload only writes MARKER into the shell's working directory
+const MARKER = "MARK";
+
+/** Independent statement of the display rule (not the production function): every character outside
+ * the safe set becomes %HH per UTF-8 byte, upper-case hex. */
+function pctEncode(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    if (SAFE_PATH_CHARS.test(ch)) out += ch;
+    else for (const b of Buffer.from(ch, "utf8")) out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
+/** Hostile file names as a contributor could commit them. `labels` say which shell each is aimed at. */
+const HOSTILE_BATCH_A: Array<[string, string]> = [
+  ["command substitution", `a$(${PAYLOAD})b.txt`],
+  ["backticks", `a\`${PAYLOAD}\`b.txt`],
+  ["semicolons", `a;${PAYLOAD};b.txt`],
+  ["single ampersands", `a&${PAYLOAD}&b.txt`],
+  ["pipes", `a|${PAYLOAD}|b.txt`],
+  ["double ampersands", `a&&${PAYLOAD}&&b.txt`],
+  ["parentheses and spaces", `a (${PAYLOAD}) b.txt`],
+  ["non-ASCII with a substitution", `é$(${PAYLOAD}).txt`],
+  ["a plain space, no payload", "my file.md"],
+];
+const HOSTILE_BATCH_B: Array<[string, string]> = [
+  ["two double quotes, cmd parity even", `a" & ${PAYLOAD} & "b.txt`],
+  ["four double quotes, cmd parity even", `a"" & ${PAYLOAD} & ""b.txt`],
+  ["one double quote, cmd parity odd", `a" & ${PAYLOAD} & b.txt`],
+  ["quotes around a semicolon", `a"; ${PAYLOAD}; "b.txt`],
+  ["single quotes around a substitution", `a'$(${PAYLOAD})'b.txt`],
+  ["backslash quote", `a\\"$(${PAYLOAD})\\"b.txt`],
+  ["non-ASCII only, no payload", "résumé.md"],
+  ["cmd variable syntax, no payload", "%PATH%.txt"],
+  ["shell variable syntax, no payload", "a$HOME.txt"],
+];
+const SAFE_PATHS = ["plain.txt", "docs/reviews/x-2026-09-19.md", "src/a_b-c.d/e.ts", "-leading-dash.txt", "UPPER.MD"];
+
+test("sb2-unlock-command-never-embeds-a-shell-metacharacter-path", () => {
+  // The other two parts of the printed command are safe by construction; this proves it from the catalog.
+  for (const p of SECRET_PATTERNS) assert.match(p.id, /^[a-z0-9-]+$/, `pattern id ${p.id} must be printable in a command`);
+
+  const linesFor = (path: string): string[] => summarizeMatches([matchFor(path, "aws-access-key-id", sha256("x"))]).details;
+
+  // (a) Every printable ASCII character: the safe set keeps its runnable command, every other one gets
+  // none. Derived from the character range, so a character added to the safe set by mistake fails here.
+  for (let code = 0x20; code <= 0x7e; code++) {
+    const ch = String.fromCharCode(code);
+    const path = `a${ch}b.txt`;
+    const lines = linesFor(path);
+    const runnable = lines.filter((l) => l.startsWith("HASH-COMMAND for "));
+    if (SAFE_PATH_CHARS.test(path)) {
+      assert.equal(runnable.length, 1, `a path with ${JSON.stringify(ch)} is safe and keeps its command`);
+      assert.match(runnable[0] ?? "", RUNNABLE_LINE);
+    } else {
+      assert.deepEqual(runnable, [], `a path holding ${JSON.stringify(ch)} must never appear in a printed command`);
+    }
+  }
+
+  // (b) The hostile table, plus non-ASCII: no line of the runnable shape, one non-command line that
+  // carries the path only percent-encoded and no metacharacter of any shell.
+  for (const [label, name] of [...HOSTILE_BATCH_A, ...HOSTILE_BATCH_B]) {
+    const lines = linesFor(name);
+    assert.deepEqual(lines.filter((l) => l.startsWith("HASH-COMMAND for ")), [], `${label}: no runnable command for this path`);
+    const own = lines.filter((l) => l.startsWith(NO_COMMAND_PREFIX));
+    assert.equal(own.length, 1, `${label}: exactly one non-command line for the pair`);
+    const line = own[0] ?? "";
+    assert.ok(line.startsWith(`${NO_COMMAND_PREFIX}${pctEncode(name)} [aws-access-key-id]`), `${label}: the path appears percent-encoded, first: ${line}`);
+    assert.match(line, /shell quoting/, `${label}: says plainly why no command is printed`);
+    assert.ok(!SHELL_METACHARS.test(line), `${label}: the non-command line carries no shell metacharacter: ${line}`);
+    assert.ok(!line.includes(PAYLOAD), `${label}: the payload text never appears verbatim`);
+    const how = lines.filter((l) => l.startsWith("NO-COMMAND-PRINTED: "));
+    assert.equal(how.length, 1, `${label}: one line tells the developer how to get the hash`);
+    assert.match(how[0] ?? "", /allowlist-tool\.ts hash/);
+    assert.ok(!SHELL_METACHARS.test(how[0] ?? ""), `${label}: the how-to line carries no shell metacharacter`);
+  }
+
+  // (c) Safe paths still get exactly the runnable command, and no non-command line.
+  for (const path of SAFE_PATHS) {
+    const lines = linesFor(path);
+    const runnable = lines.filter((l) => l.startsWith("HASH-COMMAND for "));
+    assert.equal(runnable.length, 1, `${path}: keeps its command`);
+    assert.match(runnable[0] ?? "", RUNNABLE_LINE);
+    assert.deepEqual(lines.filter((l) => l.startsWith("NO-COMMAND-PRINTED")), [], `${path}: no non-command line`);
+  }
+
+  // (d) The percent encoding is injective (a literal percent is itself encoded), so the shown path is
+  // never ambiguous, and it only ever uses characters that are inert in every shell.
+  assert.notEqual(pctEncode("a b"), pctEncode("a%20b"));
+  assert.match(pctEncode(`a$(x)"\`;&|é%`), /^[A-Za-z0-9._/%-]+$/);
+
+  // (e) A mixed run keeps the safe pair's command and gives the hostile pair none.
+  const mixed = summarizeMatches([
+    matchFor("plain.txt", "aws-access-key-id", sha256("x")),
+    matchFor(`a$(${PAYLOAD})b.txt`, "aws-access-key-id", sha256("x")),
+  ]).details;
+  assert.equal(mixed.filter((l) => l.startsWith("HASH-COMMAND for ")).length, 1);
+  assert.equal(mixed.filter((l) => l.startsWith(NO_COMMAND_PREFIX)).length, 1);
+});
+
+/** A throwaway repo built with git plumbing only, so a path a filesystem would refuse (a double quote,
+ * a pipe, an angle bracket) can still be a tree entry: no working-tree file is created for it. The
+ * allowlist file is written to the working directory (untracked), which is where the gate reads it. */
+async function withPlumbingRepo<T>(files: Record<string, string>, fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-plumb-"));
+  const blobs = await mkdtemp(join(tmpdir(), "oss01-sb2-blobs-"));
+  try {
+    const git = async (...args: string[]): Promise<string> => {
+      const res = await realRunner("git", args, { cwd: dir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+      return res.stdout.trim();
+    };
+    await git("init", "-q", "-b", "main");
+    let n = 0;
+    for (const [path, content] of Object.entries(files)) {
+      const src = join(blobs, `blob-${n++}`);
+      await writeFile(src, content);
+      const sha = await git("hash-object", "-w", "--no-filters", src);
+      await git("-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", `100644,${sha},${path}`);
+    }
+    const tree = await git("write-tree");
+    const commit = await git(
+      "-c", "user.name=Test", "-c", `user.email=${["ci", "example.org"].join("@")}`, "-c", "commit.gpgsign=false",
+      "commit-tree", tree, "-m", "fixture",
+    );
+    await git("update-ref", "refs/heads/main", commit);
+    await mkdir(join(dir, "docs", "qa"), { recursive: true });
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson([]));
+    return await fn(dir);
+  } finally {
+    await removeDir(dir);
+    await removeDir(blobs);
+  }
+}
+
+/** Runs one line through the platform shell (sh, or cmd on Windows) in `cwd`, as a maintainer pasting it. */
+function pasteIntoShell(line: string, cwd: string): void {
+  spawnSync(line, { cwd, shell: true, encoding: "utf8", timeout: 30_000 });
+}
+
+test("oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path", async () => {
+  const tool = ["src", "secret-scan", "allowlist-tool.ts"].join("/");
+  const shellDir = async (): Promise<string> => {
+    const d = await mkdtemp(join(tmpdir(), "oss01-sb2-shell-"));
+    await writeFile(join(d, "mk.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(MARKER)}, "x");\n`);
+    return d;
+  };
+  const batches: Array<[string, Array<[string, string]>]> = [["A", HOSTILE_BATCH_A], ["B", HOSTILE_BATCH_B]];
+  let controlRuns = 0;
+  const controlExecuted: string[] = [];
+
+  for (const [batchName, rows] of batches) {
+    const files: Record<string, string> = {};
+    rows.forEach(([, name], i) => { files[name] = `${novel("aws-access-key-id", 100 + i).text}\n`; });
+    await withPlumbingRepo(files, async (dir) => {
+      const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+      assert.equal(cli.code, 1, `batch ${batchName}: the gate blocks every hostile-named file:\n${cli.stdout}\n${cli.stderr}`);
+      const printed = cli.stdout.split(/\r?\n/).map((l) => l.replace(/^ {2}- /, ""));
+
+      // (i) no printed command carries a hostile path: not one line has the runnable shape here.
+      assert.deepEqual(printed.filter((l) => l.startsWith("HASH-COMMAND for ")), [], `batch ${batchName}: a hostile path reached a printed command`);
+      const noCommand = printed.filter((l) => l.startsWith(NO_COMMAND_PREFIX));
+      assert.equal(noCommand.length, rows.length, `batch ${batchName}: one non-command line per hostile pair (cap of ten not reached)`);
+      for (const l of noCommand) assert.ok(!SHELL_METACHARS.test(l), `batch ${batchName}: a non-command line carries a shell metacharacter: ${l}`);
+
+      // (iii) defense in depth: paste every unlock line, raw and as printed, into the platform shell.
+      const unlockLines = cli.stdout.split(/\r?\n/).filter((l) => l.includes("HASH-COMMAND") || l.includes("NO-COMMAND-PRINTED"));
+      assert.ok(unlockLines.length > rows.length, `batch ${batchName}: the unlock lines were found`);
+      const scratch = await shellDir();
+      try {
+        for (const l of unlockLines) {
+          pasteIntoShell(l, scratch);
+          pasteIntoShell(l.replace(/^ {2}- /, ""), scratch);
+        }
+        assert.ok(!existsSync(join(scratch, MARKER)), `batch ${batchName}: pasting the printed unlock lines into the shell ran a payload`);
+      } finally {
+        await removeDir(scratch);
+      }
+
+      // Positive control, so the check above cannot pass because the harness is blind: the command the
+      // OLD code printed for the same tree entries (path as git spells it, inside double quotes) must
+      // execute a payload on this platform's shell for at least one of them.
+      const spelled = await realRunner("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: dir, encoding: "utf8" });
+      for (const gitSpelling of spelled.stdout.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0)) {
+        const oldShape = `node ${tool} hash c0ffee000000 "${gitSpelling}" aws-access-key-id`;
+        const control = await shellDir();
+        try {
+          pasteIntoShell(oldShape, control);
+          controlRuns++;
+          if (existsSync(join(control, MARKER))) controlExecuted.push(gitSpelling);
+        } finally {
+          await removeDir(control);
+        }
+      }
+    });
+  }
+  assert.ok(controlRuns >= HOSTILE_BATCH_A.length + HOSTILE_BATCH_B.length, "the control ran for every hostile tree entry");
+  assert.ok(
+    controlExecuted.length > 0,
+    "positive control: the old command shape must execute a payload in this platform shell for some hostile name, or this test proves nothing",
+  );
+
+  // Control for the other direction: a safe path in the same real CLI still prints the runnable command.
+  await withPlumbingRepo({ "docs/plain-fixture.txt": `${novel("aws-access-key-id", 150).text}\n` }, async (dir) => {
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    const runnable = cli.stdout.split(/\r?\n/).map((l) => l.replace(/^ {2}- /, "")).filter((l) => l.startsWith("HASH-COMMAND for "));
+    assert.equal(runnable.length, 1);
+    assert.match(runnable[0] ?? "", RUNNABLE_LINE);
+  });
+});
+
+/** Tracked files (from the index) that the scanner's own rule (history-scan.ts looksBinary: a NUL byte in
+ * the first 8000 bytes) would skip, unscanned, so they are invisible to OSS-01. */
+async function trackedFilesSkippedAsBinary(repoDir: string, knownBinaries: readonly string[]): Promise<string[]> {
+  const res = await realRunner("git", ["ls-files", "-s", "-z"], { cwd: repoDir, encoding: "latin1" });
   assert.equal(res.code, 0, res.stderr);
   const skipped: string[] = [];
   for (const rec of res.stdout.split("\0")) {
@@ -1106,11 +1336,31 @@ test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
     if (tab === -1) continue;
     if (rec.slice(0, tab).startsWith("160000")) continue; // a submodule gitlink is a directory on disk
     const path = rec.slice(tab + 1);
-    if (KNOWN_BINARIES.includes(path)) continue;
-    const buf = await readFile(join(PROJECT_ROOT, ...path.split("/")));
+    if (knownBinaries.includes(path)) continue;
+    const buf = await readFile(join(repoDir, ...path.split("/")));
     if (buf.subarray(0, Math.min(buf.length, 8000)).includes(0)) skipped.push(path);
   }
+  return skipped;
+}
+
+test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
+  // A tracked text file with a NUL in its first 8000 bytes is invisible to OSS-01. Derived from git.
+  const KNOWN_BINARIES: string[] = []; // name a real binary asset here by path; none is tracked today
+  const skipped = await trackedFilesSkippedAsBinary(PROJECT_ROOT, KNOWN_BINARIES);
   assert.deepEqual(skipped, [], "a tracked text file that OSS-01 would skip as binary must be fixed (or named in KNOWN_BINARIES)");
+});
+
+// Code-reviewer LOW (post-build round): the assurance above read the working tree, so an unstaged
+// deletion of any tracked file died with ENOENT, a message about nothing this test is for. It must read
+// what the scanner reads: the blob the index holds. A repo built with plumbing has no working-tree file
+// at all, which is the same state as a deleted one.
+test("sb2-no-tracked-text-file-is-skipped-as-binary-tolerates-an-unstaged-deletion", async () => {
+  const files = { "text.txt": "plain text\n", "blob.dat": "head\0tail\n" };
+  await withPlumbingRepo(files, async (dir) => {
+    assert.ok(!existsSync(join(dir, "text.txt")), "control: no working-tree file exists for a tracked path");
+    assert.deepEqual(await trackedFilesSkippedAsBinary(dir, []), ["blob.dat"], "the index blob with a NUL is found, the text blob is not");
+    assert.deepEqual(await trackedFilesSkippedAsBinary(dir, ["blob.dat"]), [], "a named binary is excluded");
+  });
 });
 
 // Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
