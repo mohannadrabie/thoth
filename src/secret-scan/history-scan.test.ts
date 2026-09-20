@@ -1195,7 +1195,10 @@ test("sb2-unlock-command-never-embeds-a-shell-metacharacter-path", () => {
     assert.ok(!line.includes(PAYLOAD), `${label}: the payload text never appears verbatim`);
     const how = lines.filter((l) => l.startsWith("NO-COMMAND-PRINTED: "));
     assert.equal(how.length, 1, `${label}: one line tells the developer how to get the hash`);
-    assert.match(how[0] ?? "", /allowlist-tool\.ts hash/);
+    // Updated in the Issue 241 batch: the how-to line used to name the hash tool and a path to quote; it now
+    // names the sha256 of the matched text and involves no path (see the oss01-unlock-no-command-line test).
+    assert.match(how[0] ?? "", /sha256 tool/);
+    assert.doesNotMatch(how[0] ?? "", /allowlist-tool\.ts hash/);
     assert.ok(!SHELL_METACHARS.test(how[0] ?? ""), `${label}: the how-to line carries no shell metacharacter`);
   }
 

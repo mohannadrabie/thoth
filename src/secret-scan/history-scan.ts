@@ -178,8 +178,11 @@ const HASH_TOOL = "src/secret-scan/allowlist-tool.ts";
 const SHELL_SAFE = /^[A-Za-z0-9._/-]+$/;
 
 /** Every character outside the safe set becomes %HH, one per UTF-8 byte (upper-case hex). The result
- * uses only [A-Za-z0-9._/%-], which no shell treats as syntax, and it is injective because a literal
- * percent is itself encoded. */
+ * uses only [A-Za-z0-9._/%-] and is injective because a literal percent is itself encoded. Only the
+ * percent needs a caveat: cmd reads a percent-delimited name as a variable reference. Every percent here
+ * starts a two-hex-digit group, so a reference could only name a variable made of hex digits, such as the
+ * current-directory one (CD); that substitutes text and runs nothing. The line it appears on is not a
+ * command anyway. */
 function percentEncode(s: string): string {
   let out = "";
   for (const ch of s) {
@@ -232,10 +235,12 @@ function unlockDetails(blocking: HistoryMatch[]): string[] {
   }
   if (needsQuoting) {
     lines.push(
-      "NO-COMMAND-PRINTED: to get the hash for such a path, quote the path yourself for your shell and run: " +
-        `node ${HASH_TOOL} hash COMMIT PATH PATTERN-ID. Use the commit and pattern id shown above and the path ` +
-        "spelled exactly as in the match line, since git spells some characters with backslash escapes and the tool " +
-        "looks the path up in that spelling. Run the tool with no arguments for its usage.",
+      // No instruction to quote, copy or paste a path (Issue 241): red-team measured every quoting strategy
+      // executing a payload for some hostile name in some shell. The hash needs no path at all.
+      "NO-COMMAND-PRINTED: to get the value hash for such a path, compute the sha256 of the matched text, which " +
+        "is the regex match itself, with any sha256 tool over the literal in your own file. Or rename the path to " +
+        "one of [A-Za-z0-9._/-] first, or have a maintainer review it. A shell-safe channel for this hash is " +
+        "tracked in Issue 241.",
     );
   }
   return lines;
