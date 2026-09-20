@@ -132,7 +132,11 @@ export interface RejectedAllowlistEntry {
 }
 
 /** What `loadAllowlist` returns: the honored entries, with the rejected ones riding along so that
- * `summarizeMatches` can name them without any caller having to thread a second value through. */
+ * `summarizeMatches` can name them without any caller having to thread a second value through.
+ * Caveat (red-team F5): `rejected` lives on the array object, so any copy of the array (a spread, a
+ * filter, a map) silently drops it. That loses DIAGNOSTICS only, never gating: a rejected entry is never
+ * in the array, so its matches block regardless. Both live callers pass the loaded object straight to
+ * `summarizeMatches`; keep doing so if the rejection lines matter. They are printed on a blocking run only. */
 export type LoadedAllowlist = AllowlistEntry[] & { rejected: RejectedAllowlistEntry[] };
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;

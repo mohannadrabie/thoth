@@ -36,6 +36,9 @@ test("history-scan: matches present -> FAIL, details carry only redacted values"
   assert.ok(!result.details.join("").includes("AKIAABCDEFGHIJKLMNOP"), "raw secret must never appear in output");
 });
 
+// Since Issue 136 (THOTH-ADR-0002) an entry exempts a match only when its path, its pattern id AND the
+// value hash all agree. The two fixtures below share one hash, so this test isolates the path dimension;
+// its title predates the hash and is kept as written (the value dimension is tested by the oss01- tests).
 test("OSS-01 allowlist: partitionAllowlisted splits matches by exact path+patternId", () => {
   const matches = [
     { commit: "a", path: "src/secret-scan/patterns.test.ts", patternId: "aws-access-key-id", description: "x", redacted: "r", valueSha256: sha256("fixture-a") },
@@ -121,9 +124,14 @@ test("OSS-01 (dogfood): the real repo, scanned with the real allowlist, is a cle
   assert.equal(result.ok, true, `expected a clean pass, got: ${result.summary}\n${result.details.join("\n")}`);
 });
 
+// Historical context: this block records Issue #193 as it was fixed, when an entry exempted a file
+// by `{path, patternId}` alone. Since Issue #136 (THOTH-ADR-0002) an entry exempts only the values it
+// names, so the whole-file reach described below no longer exists; the two invariants that follow still
+// hold and stay as defense in depth.
+//
 // GitHub Issue #193 (red-team round-2, path-b-precommit-secret-scan, [MED], security-class,
-// demonstrated): `partitionAllowlisted` matches an entry by `{path, patternId}` ONLY, never by
-// the actual matched value (`history-scan.ts`'s own header already discloses this as pre-existing,
+// demonstrated): `partitionAllowlisted` then matched an entry by `{path, patternId}` ONLY, never by
+// the actual matched value (`history-scan.ts`'s own header disclosed this as pre-existing,
 // intentional OSS-01 design). Applying that to a CREDENTIAL-shaped pattern on
 // `docs/qa/secret-scan-allowlist.json` itself is what turned dangerous: round-1's own fix-now
 // quoted a fake AWS-key-shaped fixture literal in a `reason` field to document it, which granted
@@ -131,16 +139,16 @@ test("OSS-01 (dogfood): the real repo, scanned with the real allowlist, is a cle
 // not just in the entry that needed it. Red-team staged a DISTINCT, real-shaped key literal in a
 // completely different `reason` field and it committed clean through both this pre-commit hook and
 // CI's full-history scan (same allowlist, same blind spot, both layers), because ONE grant for a
-// (path, patternId) pair exempts the WHOLE file's blob for that pattern, not just the JSON key that
-// motivated it. `docs/qa/secret-scan-allowlist.json` is the one file whose entire purpose is prose
+// (path, patternId) pair then exempted the WHOLE file's blob for that pattern, not just the JSON key
+// that motivated it. `docs/qa/secret-scan-allowlist.json` is the one file whose entire purpose is prose
 // ABOUT secret-shaped strings, so it is also the single most dangerous place to ever reproduce one
 // instead of describing it.
 //
 // Two invariants, both required, checked at the FILE level rather than per-entry — a per-entry
 // check (does entry X's own reason match entry X's own patternId) is not sufficient: it would miss
 // a real secret hidden in some OTHER entry's `reason` field (a different patternId, or even a
-// totally unrelated one) while ANY grant for the dangerous pattern still exists anywhere in the
-// file, since the exemption is whole-file, not per-key.
+// totally unrelated one) while ANY grant for the dangerous pattern still existed anywhere in the
+// file, since the exemption was whole-file, not per-key.
 //   1. `docs/qa/secret-scan-allowlist.json` itself never GRANTS a credential-shaped pattern on
 //      itself (no `{path: "docs/qa/secret-scan-allowlist.json", patternId: <credential-shaped>}`
 //      entry at all) — this is the structural fix (GitHub Issue #193's own recommended shape).
@@ -208,7 +216,7 @@ test("OSS-01 allowlist (GitHub Issue #193, red-team round-2 [MED], regression): 
 // demonstrated): Issue #193's own fix -- reword the allowlist file's `reason` fields, delete its
 // self-grant -- correctly closed the blind spot for `docs/qa/secret-scan-allowlist.json` itself,
 // but the SAME blind spot then opened on `docs/STATE.md` and `docs/decisions.md`, when fixing a
-// LATER recurrence there needed its own whole-file `aws-access-key-id` grant on each.
+// LATER recurrence there needed its own (then whole-file) `aws-access-key-id` grant on each.
 //
 // GitHub Issue #199 follow-up (red-team round-4, findings F1 + F2 + F3 -- Issue #199 reopened +
 // Issue #200): the first fix (commit `c96a4d5`) replaced one hardcoded path with a hardcoded
@@ -298,8 +306,8 @@ function unreviewedOccurrenceCount(raw: string, patternId: string, baselineHashe
 // mechanism exists to catch.
 // GitHub Issue #201 (red-team round-5 F1, [MED], demonstrated): each entry now also carries a
 // non-empty `reason` -- the same field, same strictness (`typeof === "string" && .trim().length >
-// 0`), that `loadAllowlist` (history-scan.ts:150-159) already mechanically enforces on the real
-// allowlist six lines away. Without it, a new grant + a live literal + a self-computed sha256
+// 0`), that `loadAllowlist` (history-scan.ts, `entryRejection`) already mechanically enforces on the real
+// allowlist. Without it, a new grant + a live literal + a self-computed sha256
 // baseline bump could land in one commit with zero justification -- this map is a suppression
 // list (DevOps ADR-0008) and was the only suppression surface in this repo without one.
 const REVIEWED_BASELINE: Readonly<Record<string, { readonly hashes: readonly string[]; readonly reason: string }>> = Object.freeze({

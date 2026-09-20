@@ -360,7 +360,7 @@ test("sb2-hash-command-prints-one-line-per-match-in-a-blob", async () => {
   await withToolRepo({ "fixture.txt": `a ${one}\nb ${two}\nc ${one}\n` }, async (dir) => {
     const res = await realRunner("node", [TOOL_SCRIPT, "hash", "HEAD", "fixture.txt", AWS], { cwd: dir, encoding: "utf8" });
     assert.equal(res.code, 0, `hash failed:\n${res.stdout}\n${res.stderr}`);
-    const hashes = res.stdout.split(/\r?\n/).map((l) => /^([0-9a-f]{64})  /.exec(l)?.[1]).filter((x): x is string => x !== undefined);
+    const hashes = res.stdout.split(/\r?\n/).map((l) => /^([0-9a-f]{64}) {2}/.exec(l)?.[1]).filter((x): x is string => x !== undefined);
     assert.deepEqual([...hashes].sort(), [h(one), h(two)].sort(), "one line per distinct match in the blob, each with its hash; the repeat is printed once");
     assert.ok(!res.stdout.includes(one) && !res.stdout.includes(two), "only the redacted form is printed beside each hash");
   });
