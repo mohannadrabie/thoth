@@ -138,7 +138,7 @@ Generation scope: history reachable from the story's base commit only (recorded 
 
 **Runtime.** The pre-commit scan is measured before (10.49 s median of 3) and re-measured after in the same session; acceptance: median of 3 within 10 percent of a same-session baseline, plus the direct hash cost in milliseconds.
 
-**Rollback (SE ADR-0006).** Before merge: `git restore docs/qa/secret-scan-allowlist.json` plus stash the code, or `git revert` C2. After merge: `git revert` of C2 restores loader and file together. New loader and a damaged file: re-run the generator on `git show <base>:docs/qa/secret-scan-allowlist.json`; output is deterministic. Drill in a scratch clone: corrupt the migrated file, observe fail-closed with the measured blocking count, repair on disk, observe the commit passes without `--no-verify`. Blast radius of a bad migration: every commit and every CI run of the OSS-01 step, fail closed; the old loader also reads the migrated file (the extra field is ignored), so a code-only revert leaves a valid file.
+**Rollback (SE ADR-0006).** Before merge: `git restore docs/qa/secret-scan-allowlist.json` plus stash the code, or `git revert` C2. After merge: `git revert` of C2 restores loader and file together. New loader and a damaged file: re-run the generator on `git show <base>:docs/qa/secret-scan-allowlist.json`; output is deterministic. Drill in a scratch clone: corrupt the migrated file, observe fail-closed with the measured blocking count, repair on disk, observe the commit passes without `--no-verify`. Blast radius of a bad migration: every commit and every CI run of the OSS-01 step, fail closed; the old loader also reads the migrated file (the extra field is ignored), so a code-only revert leaves a valid file. **[Superseded 2026-09-19, post-build review: reverting C2 alone leaves the suite red; revert the whole story as one unit. See Addendum 2, "Corrected rollback".]**
 
 ## 9. Files (Phase 2; derived from section 4, plus new files)
 
@@ -248,3 +248,71 @@ Plus the X1 flip (the existing fixture test now expects a report grant to be inc
 - The C1 partial-migration pre-commit test first used three byte-identical fixture files, so the scanner's blob dedupe never evaluated the second and third path (residual R1 in action); the fixture now gives each file distinct bytes. It is red on the old code and green on the new.
 - The real-repo round trip through the CLI is a script check, not a permanent test (see the widened skeleton, item 2). Its raw output is in the Phase 2 receipt.
 - The unlock command needed a helper subcommand (`hash`) in the tool, because a printable command that is correct in every Windows shell cannot be a `node -e` one-liner.
+
+
+## Addendum 2: post-build FIX-NOW round dispositions (2026-09-19; sections 1 to 13 and the first addendum are unchanged except one pointer in section 8)
+
+Sources: `docs/reviews/s1-136-value-scoped-allowlist-{app-security,red-team,code,cross-domain}-2026-09-19.md`. Verdicts: app-security REWORK (HIGH, Issue 239), red-team no-go (the same HIGH found independently), code-reviewer SHIP (MED Issue 240 plus LOWs), cross-domain APPROVE-WITH-CONDITIONS. Every item below sits inside the approved scope; the Manager's dispositions are binding.
+
+| Finding | Disposition |
+|---|---|
+| Issue 239 HIGH (also red-team F1; covers the symptom of Issue 238) | Fixed. A runnable unlock command is printed only for a path of `[A-Za-z0-9._/-]`; any other path gets a `NO-COMMAND-PRINTED` line that is not a command and carries the path percent-encoded. Tests `sb2-unlock-command-never-embeds-a-shell-metacharacter-path` and `oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path`, written red first. Issue 238 stays open for the human to close. |
+| Issue 240 MED | Pinned by `sb2-generator-and-verify-scope-history-and-legacy-file-to-the-base-ref` (green on the shipped code, red under three mutants). |
+| Code LOW: ENOENT on an unstaged deletion | The binary-skip assurance reads blobs from the object database. New red-first test `sb2-no-tracked-text-file-is-skipped-as-binary-tolerates-an-unstaged-deletion`. |
+| Red-team F3 | ADR residual reworded: the assurance covers the index; one blob of this story's own history is still skipped, its content measured clean, history is not rewritten. |
+| Code LOW pins | `sb2-unlock-command-lists-ten-pairs-then-counts-the-rest`, `sb2-hash-command-prints-one-line-per-match-in-a-blob`. |
+| Red-team F2 | Investigated by exhaustive enumeration: the newly-allowlisted count is reachable but never the only failure; kept as a second, direct measurement. Tests `sb2-verify-counts-and-names-a-widening` and `sb2-verify-widening-is-always-also-caught-structurally`. The wording "the subset is proven by the verify script" in section 5 and the first addendum is superseded by: the subset holds structurally (every migrated entry sits on a legacy pair with its reason verbatim, every listed hash is carried by a real match, an already value-scoped entry is unchanged), verify also counts newly allowlisted occurrences over the scanner's own matches (zero), and an independent instrument (red-team) reached the same zero. |
+| Red-team F4, F5 | Residual-table lines in the ADR; a comment at the `LoadedAllowlist` type. No behavior change. |
+| Cross-domain MED (catalog visibility) | The two missing rules added to the ADR frontmatter `constraints`; the served entry now pairs one-to-one with the body's MUST bullets (checked by script). |
+| Cross-domain LOW (rollback) | See the corrected rollback below. |
+| App-security LOW residual rows | Added to the ADR: unanchored `aws-access-key-id`, the re-blessing moved-base recovery, the crackable hash of a wrong grant, the trust base. |
+| Editorial | Present-tense comments in `history-scan.test.ts` that described the old whole-file semantics corrected (comments only); CHANGELOG sentences corrected. |
+
+### Corrected rollback (supersedes the section 8 sentence "git revert of C2 restores loader and file together")
+
+Revert the whole story as one unit: after merge, the merge commit with `git revert -m 1` (or the squash commit); on an unmerged branch, the range `fefce23` through `62b95b2` plus the fix-round commits after it. Reverting only the migration commit (`f77cd56`) restores loader and file together and leaves the gate safe, but the suite is red: the red-first tests committed before it and the generator's test still expect the new behavior (cross-domain drill: 19 of 61 secret-scan tests fail). Facts that stay true: an old loader reads the new file, and a damaged file is repaired by re-running `generate` on the legacy file at the base commit.
+
+### Named-test list, regenerated by command (supersedes the hand-annotated list in the first addendum, which omitted two control tests)
+
+```
+git grep -h -o -E '^test\("(sb2|oss01)-[a-z0-9-]+' -- 'src/secret-scan/*.test.ts'   (names counted once; a repeated title is one name used by several cells)
+oss01-allowlisted-file-still-blocks-a-novel-secret
+oss01-attack-e-legacy-shaped-report-grant-blocks-at-the-gate
+oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseline-guard
+oss01-entry-exempts-only-its-granted-values
+oss01-real-allowlist-refuses-a-novel-value-in-every-granted-pair
+oss01-reviewed-literal-stays-allowlisted-and-reported
+oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path
+sb2-generator-and-verify-scope-history-and-legacy-file-to-the-base-ref
+sb2-generator-cli-prints-counts-only
+sb2-generator-drops-and-reports-a-legacy-entry-that-matches-nothing
+sb2-generator-is-idempotent-and-deterministic
+sb2-generator-never-adds-a-hash-to-an-already-scoped-entry
+sb2-generator-refuses-a-malformed-scoped-input
+sb2-generator-reports-classification-counts-per-pattern
+sb2-generator-scopes-each-legacy-entry-to-the-hashes-of-its-own-matches
+sb2-hash-command-prints-one-line-per-match-in-a-blob
+sb2-hash-lines-hash-the-regex-match-text
+sb2-history-scan-cli-control-granted-literal-alone-exits-zero
+sb2-history-scan-cli-exits-nonzero-on-novel-secret-in-granted-file
+sb2-malformed-or-missing-scope-is-rejected-and-blocks
+sb2-no-tracked-text-file-is-skipped-as-binary
+sb2-no-tracked-text-file-is-skipped-as-binary-tolerates-an-unstaged-deletion
+sb2-partial-migration-control-all-valid-entries-are-honored
+sb2-partial-migration-does-not-leave-legacy-shape-entries-honored
+sb2-real-allowlist-loads-with-no-rejected-entry
+sb2-regex-edit-invalidates-entries-loudly
+sb2-rejected-entry-is-named-in-blocking-output
+sb2-report-file-omits-value-hash-for-blocking-matches
+sb2-scanner-hashes-at-match-time-and-stores-no-raw-text
+sb2-three-human-named-pairs-are-value-scoped
+sb2-unlock-command-lists-ten-pairs-then-counts-the-rest
+sb2-unlock-command-never-embeds-a-shell-metacharacter-path
+sb2-unlock-command-output-is-accepted-by-the-gate
+sb2-verify-counts-and-names-a-widening
+sb2-verify-rejects-a-dropped-entry-or-hash-that-still-matches
+sb2-verify-rejects-a-widened-set
+sb2-verify-widening-is-always-also-caught-structurally
+```
+
+The dated-report pin test keeps red-team's own title (`OSS-01 allowlist: a docs/reviews/* credential grant is pinned to a baseline ...`) and is not in the list above because it does not carry an `sb2-` or `oss01-` prefix.
