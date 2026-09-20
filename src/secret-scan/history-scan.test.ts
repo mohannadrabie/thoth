@@ -1456,6 +1456,56 @@ test("sb2-unlock-command-lists-ten-pairs-then-counts-the-rest", () => {
   assert.deepEqual(more(summarizeMatches(doubled).details), []);
 });
 
+// Code-reviewer LOW (round 2): three behaviors of the unlock code that survived as mutants. The encoder
+// must zero-pad each hex byte and iterate by code point, and the dedupe key must include the pattern id.
+test("sb2-percent-encoding-is-injective-for-control-and-astral-characters", () => {
+  const shown = (name: string): string => {
+    const line = summarizeMatches([matchFor(name, "aws-access-key-id", sha256("x"))]).details.find((l) => l.startsWith(NO_COMMAND_PREFIX)) ?? "";
+    return line.slice(NO_COMMAND_PREFIX.length).split(" ")[0] ?? "";
+  };
+  // A control byte below 0x10 must be zero-padded: 0x01 then "A" would otherwise collide with 0x1A.
+  assert.equal(shown("A"), "%01A");
+  assert.equal(shown(""), "%1A");
+  assert.notEqual(shown("A"), shown(""), "two different names never display the same");
+  // A four-byte character is one code point, encoded as its four UTF-8 bytes; a per-UTF-16-unit loop would
+  // encode two lone surrogates as two replacement characters instead.
+  assert.equal(shown("\u{1F600}"), "%F0%9F%98%80");
+  const names = ["A", "", "", "\u{1F600}", "a\u{1F600}b", "\u{10FFFF}", "\u{1F600}\u{1F601}", "é"];
+  for (const name of names) assert.equal(shown(name), pctEncode(name), `matches the independent statement of the rule for ${JSON.stringify(name)}`);
+  assert.equal(new Set(names.map(shown)).size, names.length, "every distinct name displays distinctly");
+});
+
+test("sb2-unlock-command-lists-each-pattern-of-one-path", () => {
+  const details = summarizeMatches([
+    matchFor("one/path.txt", "aws-access-key-id", sha256("a")),
+    matchFor("one/path.txt", "github-pat", sha256("b")),
+    matchFor("one/path.txt", "aws-access-key-id", sha256("c")), // the same pair again: still one command
+  ]).details;
+  const commands = details.filter((l) => l.startsWith("HASH-COMMAND for "));
+  assert.equal(commands.length, 2, "one command per (path, pattern id) pair, so two for this path");
+  assert.ok(commands.some((l) => l.includes("[aws-access-key-id]") && l.endsWith(" aws-access-key-id")));
+  assert.ok(commands.some((l) => l.includes("[github-pat]") && l.endsWith(" github-pat")));
+});
+
+// The helper behind sb2-no-tracked-text-file-is-skipped-as-binary restated the scanner's 8000-byte window.
+// looksBinary is not exported, so the window is asserted against the scanner's own behavior: a NUL at the
+// last byte inside the window makes the scanner skip the blob, a NUL at the first byte outside does not.
+test("sb2-binary-helper-window-matches-the-scanner", async () => {
+  const withNulAt = (n: number, index: number): string => {
+    const head = `${novel("aws-access-key-id", n).text}\n`;
+    return head + "x".repeat(index - head.length) + "\0" + "tail\n";
+  };
+  const files = { "inside.dat": withNulAt(300, 7999), "outside.dat": withNulAt(301, 8000) };
+  await withPlumbingRepo(files, async (dir) => {
+    const scanned = new Set((await scanHistory(makeGitOps(realRunner, dir))).map((m) => m.path));
+    assert.ok(scanned.has("outside.dat") && !scanned.has("inside.dat"), "control: the scanner skips the NUL at byte 7999 and scans the NUL at byte 8000");
+    const skippedByHelper = new Set(await trackedFilesSkippedAsBinary(dir, []));
+    for (const path of Object.keys(files)) {
+      assert.equal(skippedByHelper.has(path), !scanned.has(path), `${path}: the helper agrees with the scanner about being skipped`);
+    }
+  });
+});
+
 // Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
 // the theory that a dated report is immutable. It is not (an addendum or a new report can carry an
 // unreviewed live value on its first commit), so report grants are pinned like every other file.
