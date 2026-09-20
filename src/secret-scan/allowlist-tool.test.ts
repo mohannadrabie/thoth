@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -363,5 +365,226 @@ test("sb2-hash-command-prints-one-line-per-match-in-a-blob", async () => {
     const hashes = res.stdout.split(/\r?\n/).map((l) => /^([0-9a-f]{64}) {2}/.exec(l)?.[1]).filter((x): x is string => x !== undefined);
     assert.deepEqual([...hashes].sort(), [h(one), h(two)].sort(), "one line per distinct match in the blob, each with its hash; the repeat is printed once");
     assert.ok(!res.stdout.includes(one) && !res.stdout.includes(two), "only the redacted form is printed beside each hash");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 4 (same class as Issue 243): `verify` prints problem lines that carry the allowlist entries' own
+// path and pattern id, and reviewers and maintainers run it against a pull request's allowlist. Text a
+// contributor authored must not reach the terminal unquoted. Payloads are built at runtime; a payload only
+// creates a marker file in a scratch directory.
+// ---------------------------------------------------------------------------------------------
+
+const V_PAYLOAD = "node mk.mjs";
+const V_MARKER = "MARK";
+const V_PREFIX = "[allowlist-tool verify] ";
+
+/** Independent statement of the display rule: at most 120 code points, every character outside
+ * [A-Za-z0-9._/-] as %HH per UTF-8 byte (upper-case hex); a non-string or empty value is a lone percent sign. */
+function shown(s: unknown): string {
+  if (typeof s !== "string" || s.length === 0) return "%";
+  let out = "";
+  for (const ch of [...s].slice(0, 120)) {
+    if (/^[A-Za-z0-9._/-]$/.test(ch)) out += ch;
+    else for (const b of Buffer.from(ch, "utf8")) out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
+/** A repo built with git plumbing only, in phases, so a path a filesystem refuses can still be a tree entry.
+ * Each phase builds its files from the spelled paths the previous commit has (git quotes some of them). */
+async function withPlumbingPhases<T>(
+  phases: Array<(spelled: string[]) => Record<string, string>>,
+  fn: (dir: string, scratch: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-vp-repo-"));
+  const scratch = await mkdtemp(join(tmpdir(), "oss01-vp-out-"));
+  try {
+    const git = async (...args: string[]): Promise<string> => {
+      const res = await realRunner("git", args, { cwd: dir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+      return res.stdout.trim();
+    };
+    await git("init", "-q", "-b", "main");
+    let n = 0;
+    let parent: string | null = null;
+    let spelled: string[] = [];
+    for (const build of phases) {
+      for (const [path, content] of Object.entries(build(spelled))) {
+        const src = join(scratch, `blob-${n++}`);
+        await writeFile(src, content);
+        const sha = await git("hash-object", "-w", "--no-filters", src);
+        await git("-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", `100644,${sha},${path}`);
+      }
+      const tree = await git("write-tree");
+      const args = ["-c", "user.name=Test", "-c", `user.email=${["ci", "example.org"].join("@")}`, "-c", "commit.gpgsign=false", "commit-tree", tree, "-m", "fixture"];
+      if (parent !== null) args.push("-p", parent);
+      parent = await git(...args);
+      await git("update-ref", "refs/heads/main", parent);
+      spelled = (await git("ls-tree", "-r", "--name-only", "HEAD")).split("\n").filter((l) => l.length > 0);
+    }
+    return await fn(dir, scratch);
+  } finally {
+    await removeDir(dir);
+    await removeDir(scratch);
+  }
+}
+
+async function shellDirWithPayload(): Promise<string> {
+  const d = await mkdtemp(join(tmpdir(), "oss01-vp-shell-"));
+  await writeFile(join(d, "mk.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(V_MARKER)}, "x");\n`);
+  return d;
+}
+
+function pasteLine(line: string, cwd: string): void {
+  spawnSync(line, { cwd, shell: true, encoding: "utf8", timeout: 30_000 });
+}
+
+test("oss01-allowlist-tool-verify-problem-lines-never-carry-a-shell-metacharacter-from-the-allowlist-file", async () => {
+  const P = V_PAYLOAD;
+  // Hostile text used as an entry path AND inside its pattern id. The pattern id leads with the class tag so
+  // two classes stay distinguishable even where the cap truncates the long value.
+  const hostile: string[] = [
+    `a$(${P})b`, `a\`${P}\`b`, `a&${P}&b`, `a;${P};b`, `a|${P}|b`, `a"" & ${P} & ""b`, `a" & ${P} & b`,
+    `a $(New-Item ${V_MARKER} -ItemType File) b`, `a\n${P}\nb`, "my file", "résumé", "%PATH%", "%CD%%%", `${"x".repeat(150)}$(${P})`,
+  ];
+  const tags = ["invalid", "dup", "nolegacy", "reason", "differs", "unbacked"];
+  const pid = (tag: string, path: string): string => `${tag}::${path}`;
+  const h1 = h("h1");
+  const h2 = h("h2");
+
+  // Tree entries whose pair really matches, for the "still matches" class: names a filesystem refuses are fine here.
+  const treeNames = [`t$(${P})`, `t\`${P}\``, `t&${P}&`, `t"" & ${P} & ""`, `t|${P}|`, "t space", "tésumé", "t%PATH%"];
+  const lit = (i: number): string => `k = AKIA${String.fromCharCode(65 + i).repeat(16)}\n`;
+
+  const legacy: unknown[] = [];
+  const migrated: unknown[] = [];
+  for (const p of hostile) {
+    legacy.push({ path: p, patternId: pid("dup", p), reason: "r" });
+    legacy.push({ path: p, patternId: pid("reason", p), reason: "A" });
+    legacy.push({ path: p, patternId: pid("differs", p), valueSha256: [h1], reason: "r" });
+    legacy.push({ path: p, patternId: pid("unbacked", p), reason: "r" });
+    legacy.push({ path: p, patternId: pid("linvalid", p) }); // no reason: an invalid LEGACY entry
+    migrated.push({ path: p, patternId: pid("invalid", p), valueSha256: ["zz"], reason: "r" });
+    migrated.push({ path: p, patternId: pid("dup", p), valueSha256: [h2], reason: "r" });
+    migrated.push({ path: p, patternId: pid("dup", p), valueSha256: [h2], reason: "r" });
+    migrated.push({ path: p, patternId: pid("nolegacy", p), valueSha256: [h2], reason: "r" });
+    migrated.push({ path: p, patternId: pid("reason", p), valueSha256: [h2], reason: "B" });
+    migrated.push({ path: p, patternId: pid("differs", p), valueSha256: [h2], reason: "r" });
+    migrated.push({ path: p, patternId: pid("unbacked", p), valueSha256: [h2], reason: "r" });
+  }
+  const phase1 = (): Record<string, string> => Object.fromEntries(treeNames.map((n, i) => [n, lit(i)]));
+  const phase2 = (spelled: string[]): Record<string, string> => {
+    const still = spelled.map((s) => ({ path: s, patternId: AWS, reason: "r" })); // legacy-shaped, absent from migrated
+    return { "docs/qa/secret-scan-allowlist.json": JSON.stringify([...legacy, ...still], null, 2) + "\n" };
+  };
+
+  await withPlumbingPhases([phase1, phase2], async (dir, scratch) => {
+    const spelledNames = (await realRunner("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: dir, encoding: "utf8" })).stdout
+      .split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.length > 0 && l !== "docs/qa/secret-scan-allowlist.json");
+    assert.equal(spelledNames.length, treeNames.length, "control: every hostile tree name is a tree entry");
+    const migratedFile = join(scratch, "migrated.json");
+    await writeFile(migratedFile, JSON.stringify(migrated, null, 2) + "\n");
+    const run = await realRunner("node", [TOOL_SCRIPT, "verify", "--base", "HEAD", "--migrated", migratedFile], { cwd: dir, encoding: "utf8" });
+    assert.equal(run.code, 1, `verify fails on this migrated file:\n${run.stdout}\n${run.stderr}`);
+    const lines = run.stdout.split(/\r?\n/).filter((l) => l.length > 0);
+
+    // One physical line per problem, and every line starts with the tool's own bracketed prefix.
+    for (const l of lines) assert.ok(l.startsWith(V_PREFIX), `a line without the fixed prefix (a raw newline split a line?): ${JSON.stringify(l)}`);
+    const problems = lines.filter((l) => l.startsWith(V_PREFIX + "problem: "));
+
+    const FIELDS = "\\(([A-Za-z0-9._/%-]+), ([A-Za-z0-9._/%-]+)\\)";
+    const classes: Array<[string, RegExp]> = [
+      ["invalid-entry", new RegExp(`^\\[allowlist-tool verify\\] problem: (legacy|migrated) entry \\d+ ${FIELDS} is not a valid value-scoped entry: [A-Za-z0-9-]+$`)],
+      ["two-entries", new RegExp(`^\\[allowlist-tool verify\\] problem: migrated has two entries for ${FIELDS}$`)],
+      ["no-legacy-pair", new RegExp(`^\\[allowlist-tool verify\\] problem: migrated entry \\d+ ${FIELDS} sits on a pair with no legacy entry$`)],
+      ["changed-reason", new RegExp(`^\\[allowlist-tool verify\\] problem: migrated entry \\d+ ${FIELDS} changed its reason$`)],
+      ["unbacked-hashes", new RegExp(`^\\[allowlist-tool verify\\] problem: migrated entry \\d+ ${FIELDS} lists \\d+ hash\\(es\\) that no scanned match carries$`)],
+      ["differs-from-scoped", new RegExp(`^\\[allowlist-tool verify\\] problem: migrated entry \\d+ ${FIELDS} differs from an already value-scoped legacy entry$`)],
+      ["still-matches", new RegExp(`^\\[allowlist-tool verify\\] problem: legacy entry \\d+ ${FIELDS} is missing from migrated although it still matches$`)],
+      ["widening-count", /^\[allowlist-tool verify\] problem: \d+ occurrence\(s\) are allowlisted by migrated but were not by legacy \(a widening\)$/],
+      ["newly-blocking-count", /^\[allowlist-tool verify\] problem: \d+ occurrence\(s\) were allowlisted by legacy but would block under migrated$/],
+    ];
+    const seenClasses = new Map<string, number>();
+    const seenFields = new Set<string>();
+    const unclassified: string[] = [];
+    for (const l of problems) {
+      const hit = classes.find(([, re]) => re.test(l));
+      if (hit === undefined) { unclassified.push(l); continue; }
+      seenClasses.set(hit[0], (seenClasses.get(hit[0]) ?? 0) + 1);
+      const mm = hit[1].exec(l);
+      const [a, b] = hit[0] === "invalid-entry" ? [2, 3] : [1, 2];
+      if (mm !== null && mm[a] !== undefined && mm[b] !== undefined) seenFields.add(`${mm[a]}|${mm[b]}`);
+    }
+    assert.deepEqual(unclassified, [], "every problem line is a fixed shape whose only variable text is in [A-Za-z0-9._/%-]");
+    for (const c of ["invalid-entry", "two-entries", "no-legacy-pair", "changed-reason", "unbacked-hashes", "differs-from-scoped", "still-matches"]) {
+      assert.ok((seenClasses.get(c) ?? 0) > 0, `control: the ${c} problem class is exercised`);
+    }
+    assert.ok(problems.some((l) => l.includes("legacy entry") && l.includes("is not a valid value-scoped entry")), "an invalid LEGACY entry prints too");
+
+    // The printed fields are exactly the encoded, clipped inputs.
+    for (const p of hostile) {
+      for (const tag of [...tags, "linvalid"]) {
+        assert.ok(seenFields.has(`${shown(p)}|${shown(pid(tag, p))}`), `the ${tag} problem for ${JSON.stringify(p.slice(0, 12))} shows the encoded fields`);
+      }
+    }
+    for (const s of spelledNames) assert.ok(seenFields.has(`${shown(s)}|${AWS}`), "the still-matches problem for a tree entry shows its encoded spelling");
+
+    // Defense in depth: paste every printed line, raw and prefix-stripped, into the platform shell.
+    const scratchShell = await shellDirWithPayload();
+    try {
+      for (const l of lines) {
+        pasteLine(l, scratchShell);
+        pasteLine(l.slice(V_PREFIX.length), scratchShell);
+      }
+      assert.ok(!existsSync(join(scratchShell, V_MARKER)), "pasting the printed verify lines into the shell ran a payload");
+    } finally {
+      await removeDir(scratchShell);
+    }
+
+    // Positive control: the RAW echo (the old shape) executes a payload in this platform shell for some row.
+    let controlExecuted = 0;
+    for (const p of hostile) {
+      const control = await shellDirWithPayload();
+      try {
+        pasteLine(`${V_PREFIX}problem: migrated entry 3 (${p}, ${pid("nolegacy", p)}) sits on a pair with no legacy entry`, control);
+        if (existsSync(join(control, V_MARKER))) controlExecuted++;
+      } finally {
+        await removeDir(control);
+      }
+    }
+    assert.ok(controlExecuted > 0, "positive control: the old raw echo must execute a payload in this shell, or this test proves nothing");
+  });
+
+  // File-level problems: a fixed message, never a snippet of the file. A non-array file, and unparseable input
+  // (whose JSON parser error message would otherwise quote a piece of the file).
+  const junk = `not json $(${P}) \`${P}\` & ; | "`;
+  await withPlumbingPhases([() => ({ "docs/qa/secret-scan-allowlist.json": "[]\n" })], async (dir, scratch) => {
+    const notArray = join(scratch, "not-array.json");
+    await writeFile(notArray, JSON.stringify({ [`k$(${P})`]: `v\`${P}\`` }));
+    const r1 = await realRunner("node", [TOOL_SCRIPT, "verify", "--base", "HEAD", "--migrated", notArray], { cwd: dir, encoding: "utf8" });
+    assert.ok(r1.stdout.split(/\r?\n/).includes(`${V_PREFIX}problem: migrated is not an array`), `a fixed line for a non-array file:\n${r1.stdout}`);
+    assert.ok(!r1.stdout.includes(P) && !r1.stderr.includes(P), "no text of the file on any stream");
+
+    const bad = join(scratch, "bad.json");
+    await writeFile(bad, junk);
+    const r2 = await realRunner("node", [TOOL_SCRIPT, "verify", "--base", "HEAD", "--migrated", bad], { cwd: dir, encoding: "utf8" });
+    assert.equal(r2.code, 2);
+    assert.equal(r2.stderr.trim(), "[allowlist-tool] the migrated file is not valid JSON", "a fixed message, not a snippet of the file");
+    assert.ok(!r2.stdout.includes(P) && !r2.stderr.includes(P));
+  });
+  await withPlumbingPhases([() => ({ "docs/qa/secret-scan-allowlist.json": junk })], async (dir, scratch) => {
+    const okFile = join(scratch, "ok.json");
+    await writeFile(okFile, "[]\n");
+    const r = await realRunner("node", [TOOL_SCRIPT, "verify", "--base", "HEAD", "--migrated", okFile], { cwd: dir, encoding: "utf8" });
+    assert.equal(r.code, 2);
+    assert.equal(r.stderr.trim(), "[allowlist-tool] the legacy allowlist at the base ref is not valid JSON", "a fixed message for unparseable legacy text");
+    assert.ok(!r.stdout.includes(P) && !r.stderr.includes(P));
+  });
+  await withPlumbingPhases([() => ({ "docs/qa/secret-scan-allowlist.json": JSON.stringify({ [`k$(${P})`]: 1 }) })], async (dir, scratch) => {
+    const okFile = join(scratch, "ok.json");
+    await writeFile(okFile, "[]\n");
+    const r = await realRunner("node", [TOOL_SCRIPT, "verify", "--base", "HEAD", "--migrated", okFile], { cwd: dir, encoding: "utf8" });
+    assert.ok(r.stdout.split(/\r?\n/).includes(`${V_PREFIX}problem: legacy is not an array`), `a fixed line for a non-array legacy file:\n${r.stdout}`);
   });
 });
