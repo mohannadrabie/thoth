@@ -1333,6 +1333,46 @@ test("oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path",
   });
 });
 
+// Red-team round 2 R1 (Issue 241, MED) and app-security round 2 LOW 1: for a path that gets no runnable
+// command, the gate must not tell the maintainer to quote a contributor-chosen path by hand or to paste
+// one anywhere. Red-team measured every quoting strategy (as printed, double quotes, single quotes)
+// executing a payload for some hostile name in some shell, so the instruction is removed, not improved.
+// What the how-to line offers instead involves no path: the value hash is the sha256 of the matched text.
+test("oss01-unlock-no-command-line-never-instructs-hand-quoting-or-pasting-a-path", async () => {
+  const INSTRUCTS_PATH_HANDLING =
+    /quote (the|this|that|it|your)|hand-quot|quote the path|wrap\b.*\bquotes|\bpaste|copy (the|this) path|spelled (exactly )?as|type the path|match line/i;
+  const names: Array<[string, string]> = [
+    ["command substitution", `a$(${PAYLOAD})b.txt`],
+    ["backticks", `a\`${PAYLOAD}\`b.txt`],
+    ["even double-quote parity", `a"" & ${PAYLOAD} & ""b.txt`],
+    ["a plain space", "my file.md"],
+    ["non-ASCII", "résumé.md"],
+  ];
+  const files: Record<string, string> = {};
+  names.forEach(([, name], i) => { files[name] = `${novel("aws-access-key-id", 200 + i).text}\n`; });
+  await withPlumbingRepo(files, async (dir) => {
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(cli.code, 1, `the gate blocks every one of these files:\n${cli.stdout}\n${cli.stderr}`);
+    const printed = cli.stdout.split(/\r?\n/).map((l) => l.replace(/^ {2}- /, ""));
+
+    assert.equal(printed.filter((l) => l.startsWith(NO_COMMAND_PREFIX)).length, names.length, "control: every name took the no-command branch");
+    const offenders = printed.filter((l) => INSTRUCTS_PATH_HANDLING.test(l) && (l.startsWith("NO-COMMAND-PRINTED") || l.startsWith("UNLOCK") || l.startsWith("HASH-COMMAND")));
+    assert.deepEqual(offenders, [], "no unlock line tells the reader to quote, wrap, copy or paste a path, or to look one up in the match line");
+
+    // The how-to line still says how to get the hash, and it involves no path at all.
+    const how = printed.filter((l) => l.startsWith("NO-COMMAND-PRINTED: "));
+    assert.equal(how.length, 1, "one how-to line for the run");
+    const line = how[0] ?? "";
+    assert.match(line, /sha256/, "names the hash to compute");
+    assert.match(line, /matched text/, "says what is hashed: the regex match, as the ADR defines it");
+    assert.match(line, /sha256 tool/, "computable with any sha256 tool, over the literal in the developer's own file");
+    assert.match(line, /rename/, "the alternative for a path that needs quoting: rename it to a shell-safe path");
+    assert.match(line, /Issue 241/, "and where a shell-safe channel is tracked");
+    assert.doesNotMatch(line, /allowlist-tool\.ts hash/, "no command to assemble, so no path goes into one");
+    assert.ok(!SHELL_METACHARS.test(line), "and the line itself carries no shell metacharacter");
+  });
+});
+
 /** Tracked files (from the index) that the scanner's own rule (history-scan.ts looksBinary: a NUL byte in
  * the first 8000 bytes) would skip, unscanned, so they are invisible to OSS-01. Reads each blob from the
  * object database in one `git cat-file --batch` call, never the working tree, so a file that is deleted

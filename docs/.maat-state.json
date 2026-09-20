@@ -1,7 +1,7 @@
 {
   "scope": "s1-136-value-scoped-allowlist",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 2,
+  "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 2,
   "humanRulingRequired": false,
   "councilHeld": false,
