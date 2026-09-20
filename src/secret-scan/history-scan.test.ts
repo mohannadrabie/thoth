@@ -1376,6 +1376,209 @@ test("oss01-unlock-no-command-line-never-instructs-hand-quoting-or-pasting-a-pat
   });
 });
 
+// ---------------------------------------------------------------------------------------------
+// Round 3. Red-team F1 (Issue 243, MED): the rejected-entry line echoed a contributor-authored allowlist
+// path and pattern id raw, so a name holding shell syntax reached the log unquoted. Red-team F2 (Issue 244,
+// MED): the guard for the Issue 241 ruling was a phrase blacklist, so a rewording of the removed advice
+// passed. Payloads are built at runtime; the hostile strings only ever create a marker file.
+// ---------------------------------------------------------------------------------------------
+
+/** A scratch directory holding mk.mjs, the marker-writing script the payload runs. */
+async function shellScratch(): Promise<string> {
+  const d = await mkdtemp(join(tmpdir(), "oss01-sb2-shell-"));
+  await writeFile(join(d, "mk.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(MARKER)}, "x");\n`);
+  return d;
+}
+
+/** The rejected-entry line as the round-2 code printed it: control characters become "?", nothing else changes. */
+function oldRejectedLine(index: number, path: unknown, patternId: unknown, reasonClass: string): string {
+  const clipOld = (s: unknown): string =>
+    typeof s !== "string" ? "?" : [...s.slice(0, 120)].map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? "?" : c)).join("");
+  return `REJECTED-ENTRY index=${index} path=${clipOld(path)} pattern=${clipOld(patternId)}: ${reasonClass}`;
+}
+
+const REJECTED_ENTRY_LINE = /^REJECTED-ENTRY index=(\d+) path=([A-Za-z0-9._/%-]+|\?) pattern=([A-Za-z0-9._/%-]+|\?): ([A-Za-z0-9-]+)$/;
+const REJECTED_FILE_LINE = /^REJECTED-ALLOWLIST-FILE: (unreadable-or-missing|not-valid-json|not-an-array)$/;
+
+test("oss01-rejected-entry-line-never-carries-a-shell-metacharacter-from-the-allowlist-file", async () => {
+  // Hostile entries: a path AND a pattern id built from the same shell syntax. The hash list is malformed
+  // on purpose, so the loader rejects every entry and the gate prints one rejected-entry line each.
+  const rows: Array<[string, unknown, unknown]> = [
+    ["command substitution", `a$(${PAYLOAD})b.txt`, `p$(${PAYLOAD})`],
+    ["backticks", `a\`${PAYLOAD}\`b.txt`, `p\`${PAYLOAD}\``],
+    ["ampersand", `a&${PAYLOAD}&b.txt`, `p&${PAYLOAD}&`],
+    ["semicolon", `a;${PAYLOAD};b.txt`, `p;${PAYLOAD};`],
+    ["pipe", `a|${PAYLOAD}|b.txt`, `p|${PAYLOAD}|`],
+    ["double-quote parity, even", `a"" & ${PAYLOAD} & ""b.txt`, `p" & ${PAYLOAD} & "`],
+    ["double-quote parity, odd", `a" & ${PAYLOAD} & b.txt`, `p"`],
+    ["PowerShell subexpression", `a $(New-Item ${MARKER} -ItemType File) b.txt`, `p $(New-Item ${MARKER} -ItemType File)`],
+    ["raw newline", `a\n${PAYLOAD}\nb.txt`, `p\n${PAYLOAD}`],
+    ["a plain space", "my file.md", "my pattern"],
+    ["non-ASCII", "résumé.md", "pattèrn"],
+    ["percent forms", "%PATH%.txt", "%CD%%%"],
+    ["longer than the cap", `${"x".repeat(150)}$(${PAYLOAD})`, `${"y".repeat(150)}`],
+    ["not a string", 42, ["not", "a", "string"]],
+  ];
+  const entries = rows.map(([, path, patternId]) => ({ path, patternId, valueSha256: ["zz"], reason: "r" }));
+  await withPlumbingRepo({ "plain.txt": `${novel("aws-access-key-id", 400).text}\n` }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(entries));
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(cli.code, 1, `a blocking match is present, so the gate fails and prints the rejections:\n${cli.stdout}\n${cli.stderr}`);
+    const stdoutLines = cli.stdout.split(/\r?\n/).filter((l) => l.length > 0);
+
+    // One physical line per rejected entry, and nothing in column zero except the bracketed status lines.
+    const rejected = stdoutLines.filter((l) => l.replace(/^ {2}- /, "").startsWith("REJECTED-ENTRY"));
+    assert.equal(rejected.length, rows.length, "exactly one physical line per rejected entry (a raw newline must not split one)");
+    for (const l of stdoutLines) assert.ok(/^ {2}- /.test(l) || l.startsWith("[OSS-01 history-scan]"), `a line in column zero: ${JSON.stringify(l)}`);
+
+    // The path and pattern fields carry only [A-Za-z0-9._/%-], and equal the independent encoding of the clipped input.
+    rows.forEach(([label, path, patternId], i) => {
+      const line = (rejected[i] ?? "").replace(/^ {2}- /, "");
+      const m = REJECTED_ENTRY_LINE.exec(line);
+      assert.ok(m !== null, `${label}: the rejected-entry line has only safe fields: ${JSON.stringify(line)}`);
+      assert.equal(m[1], String(i), `${label}: index kept`);
+      const reasonClass = typeof path !== "string" ? "missing-path" : typeof patternId !== "string" ? "missing-patternId" : "valueSha256-element-malformed";
+      assert.equal(m[4], reasonClass, `${label}: the reason class text is kept`);
+      const clip120 = (s: unknown): string => (typeof s === "string" ? pctEncode([...s].slice(0, 120).join("")) : "?");
+      assert.equal(m[2], clip120(path), `${label}: path field is the percent-encoded, clipped input`);
+      assert.equal(m[3], clip120(patternId), `${label}: pattern field is the percent-encoded, clipped input`);
+      assert.ok(!SHELL_METACHARS.test(line), `${label}: no shell metacharacter on the line`);
+    });
+
+    // Defense in depth: paste every printed rejected line, raw and prefix-stripped, into the platform shell.
+    const scratch = await shellScratch();
+    try {
+      for (const l of rejected) {
+        pasteIntoShell(l, scratch);
+        pasteIntoShell(l.replace(/^ {2}- /, ""), scratch);
+      }
+      assert.ok(!existsSync(join(scratch, MARKER)), "pasting the printed rejected-entry lines into the shell ran a payload");
+    } finally {
+      await removeDir(scratch);
+    }
+  });
+
+  // Positive control: the RAW-echo shape (what the round-2 code printed) does execute a payload in this platform shell.
+  let controlExecuted = 0;
+  for (const [i, [, path, patternId]] of rows.entries()) {
+    const scratch = await shellScratch();
+    try {
+      pasteIntoShell(oldRejectedLine(i, path, patternId, "valueSha256-element-malformed"), scratch);
+      if (existsSync(join(scratch, MARKER))) controlExecuted++;
+    } finally {
+      await removeDir(scratch);
+    }
+  }
+  assert.ok(controlExecuted > 0, "positive control: the old raw-echo shape must execute a payload in this shell for some row, or this test proves nothing");
+
+  // The file-level line carries no text from the file at all, only a fixed reason class.
+  await withPlumbingRepo({ "plain.txt": `${novel("aws-access-key-id", 401).text}\n` }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), `not json $(${PAYLOAD}) \`${PAYLOAD}\` & ;`);
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    const line = cli.stdout.split(/\r?\n/).map((l) => l.replace(/^ {2}- /, "")).find((l) => l.startsWith("REJECTED-ALLOWLIST-FILE"));
+    assert.ok(line !== undefined && REJECTED_FILE_LINE.test(line), `the file-level line is a fixed reason class: ${String(line)}`);
+  });
+});
+
+// --- Issue 244: pin the how-to sentence exactly, and classify EVERY printed detail line ---------------
+
+const EXPECTED_UNLOCK_LINES = [
+  "UNLOCK: a real secret is rotated and removed from the tree, never allowlisted. A reviewed fixture " +
+    "literal is exempted by adding the sha256 of its matched text to the valueSha256 list of that path and " +
+    "pattern's entry in docs/qa/secret-scan-allowlist.json (a new entry needs path, patternId, valueSha256 " +
+    "and a reason), in a pull request whose diff shows it (THOTH-ADR-0002).",
+  "UNLOCK: the hashed value is the regex MATCH text, which is not always the bare secret: for " +
+    "generic-password-assignment and aws-secret-access-key it includes the key name, operator and quotes.",
+];
+/** The one how-to sentence. Any rewording is a deliberate change to this constant AND to the source. */
+const EXPECTED_HOWTO =
+  "NO-COMMAND-PRINTED: to get the value hash for such a path, compute the sha256 of the matched text with a local sha256 tool " +
+  "over the literal in your own file. The matched text is the whole regex match with no trailing newline, so for " +
+  "generic-password-assignment and aws-secret-access-key it includes the key name, operator and quotes. In the allowlist entry, " +
+  "the path field is the percent-decoded form of the path shown above. Or rename the path to one of [A-Za-z0-9._/-] first, " +
+  "or have a maintainer review it. A shell-safe channel for this hash is tracked in Issue 241.";
+const NO_COMMAND_PATH_LINE =
+  /^NO-COMMAND-PRINTED for path [A-Za-z0-9._/%-]+ \[[A-Za-z0-9._/%-]+\] at [A-Za-z0-9._/%-]+: the path has characters that need shell quoting, so no command is printed\. It is shown percent-encoded, each %HH is one byte, so this line cannot run\.$/;
+const OMITTED_PAIRS_LINE =
+  /^HASH-COMMAND: \d+ more path and pattern pair\(s\) are not listed\. Each takes the same command shape, or the no-command rule when its path needs shell quoting\.$/;
+
+/** The class of one printed detail line, or null when it is none of the known classes. A match line and an
+ * ALLOWLISTED line echo the git-spelled path (pre-existing, Issue 241 scope) but are built from a fixed
+ * commit, a catalog id and a catalog description; every other class is a fixed constant or a strict shape
+ * whose only variable text is in [A-Za-z0-9._/%-]. */
+function classifyDetailLine(line: string): string | null {
+  if (EXPECTED_UNLOCK_LINES.includes(line)) return "unlock-constant";
+  if (line === EXPECTED_HOWTO) return "how-to";
+  if (OMITTED_PAIRS_LINE.test(line)) return "omitted-pairs";
+  if (RUNNABLE_LINE.test(line)) return "command";
+  if (NO_COMMAND_PATH_LINE.test(line)) return "no-command-path";
+  if (REJECTED_ENTRY_LINE.test(line) || REJECTED_FILE_LINE.test(line)) return "rejected";
+  const body = line.startsWith("ALLOWLISTED ") ? line.slice("ALLOWLISTED ".length) : line;
+  if (/^[0-9a-f]{1,12} /.test(body)) {
+    for (const p of SECRET_PATTERNS) {
+      const at = body.lastIndexOf(` [${p.id}] ${p.description}: `);
+      if (at > 0 && body.length > at + ` [${p.id}] ${p.description}: `.length && !body.includes("\n")) return line.startsWith("ALLOWLISTED ") ? "allowlisted" : "match";
+    }
+    // the unit fixtures use a one-letter description and redaction
+    if (/^c0ffee000000 .+ \[[a-z0-9-]+\] d: r$/.test(body)) return line.startsWith("ALLOWLISTED ") ? "allowlisted" : "match";
+  }
+  return null;
+}
+
+test("oss01-unlock-no-command-line-is-pinned-verbatim-and-every-printed-line-is-checked", async () => {
+  const hostile = [`a$(${PAYLOAD})b.txt`, `a"" & ${PAYLOAD} & ""b.txt`, "my file.md", "résumé.md", `a|${PAYLOAD}|b.txt`];
+  const safe = ["plain.txt", "docs/safe-one.md", "src/safe_two.ts"];
+
+  // A. Unit rendering: safe and hostile pairs, one ALLOWLISTED match, rejected entries from a real loaded file.
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-classify-"));
+  try {
+    const file = join(dir, "allowlist.json");
+    await writeFile(file, allowlistJson([
+      { path: "granted.txt", patternId: "aws-access-key-id", valueSha256: [sha256("g")], reason: "fixture" },
+      { path: `bad$(${PAYLOAD}).txt`, patternId: "github-pat", valueSha256: ["zz"], reason: "r" },
+      { path: "legacy.txt", patternId: "email-address", reason: "legacy shape" },
+    ]));
+    const loaded = await loadAllowlist(file);
+    const matches = [
+      ...safe.map((p, i) => matchFor(p, "aws-access-key-id", sha256(`s${i}`))),
+      ...hostile.map((p, i) => matchFor(p, "github-pat", sha256(`h${i}`))),
+      matchFor("granted.txt", "aws-access-key-id", sha256("g")),
+    ];
+    const details = summarizeMatches(matches, loaded).details;
+    const classes = details.map((l) => [classifyDetailLine(l), l] as const);
+    assert.deepEqual(classes.filter(([c]) => c === null).map(([, l]) => l), [], "every printed detail line belongs to a known class");
+    const howto = details.filter((l) => l.startsWith("NO-COMMAND-PRINTED: "));
+    assert.deepEqual(howto, [EXPECTED_HOWTO], "the printed how-to line equals the declared sentence exactly, once");
+    for (const c of ["unlock-constant", "command", "no-command-path", "rejected", "match", "allowlisted"]) {
+      assert.ok(classes.some(([k]) => k === c), `control: the rendering exercises the ${c} class`);
+    }
+
+    // B. More pairs than the cap: the omitted-pairs line is a fixed shape too.
+    const many = Array.from({ length: 13 }, (_, i) => matchFor(i % 2 === 0 ? `f${i}.txt` : `f ${i}.txt`, "aws-access-key-id", sha256(`m${i}`)));
+    const manyDetails = summarizeMatches(many).details;
+    assert.deepEqual(manyDetails.filter((l) => classifyDetailLine(l) === null), [], "every line of the over-the-cap rendering is classified");
+    assert.ok(manyDetails.some((l) => classifyDetailLine(l) === "omitted-pairs"), "control: the omitted-pairs class is exercised");
+  } finally {
+    await removeDir(dir);
+  }
+
+  // C. The real CLI, real output: hostile tree entries plus rejected allowlist entries; every stdout line is classified.
+  const files: Record<string, string> = {};
+  [...hostile, "docs/safe-cli.md"].forEach((p, i) => { files[p] = `${novel("aws-access-key-id", 500 + i).text}\n`; });
+  await withPlumbingRepo(files, async (repo) => {
+    await writeFile(join(repo, ...ALLOWLIST_PATH.split("/")), allowlistJson([
+      { path: `rej$(${PAYLOAD}).txt`, patternId: "aws-access-key-id", valueSha256: ["zz"], reason: "r" },
+    ]));
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, repo);
+    assert.equal(cli.code, 1);
+    const lines = cli.stdout.split(/\r?\n/).filter((l) => l.length > 0).map((l) => l.replace(/^ {2}- /, ""));
+    const unclassified = lines.filter((l) => !l.startsWith("[OSS-01 history-scan]") && classifyDetailLine(l) === null);
+    assert.deepEqual(unclassified, [], "every line the CLI printed belongs to a known class");
+    assert.equal(lines.filter((l) => l.startsWith("NO-COMMAND-PRINTED: ")).length, 1);
+    assert.ok(lines.includes(EXPECTED_HOWTO), "the CLI prints the declared how-to sentence exactly");
+  });
+});
+
 /** Tracked files (from the index) that the scanner's own rule (history-scan.ts looksBinary: a NUL byte in
  * the first 8000 bytes) would skip, unscanned, so they are invisible to OSS-01. Reads each blob from the
  * object database in one `git cat-file --batch` call, never the working tree, so a file that is deleted
