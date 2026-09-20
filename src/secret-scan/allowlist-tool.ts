@@ -264,6 +264,11 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
     if (now && !was) newlyAllowlisted++;
     if (was && !now) newlyBlocking++;
   }
+  // The direct measurement of the subset property over the scanner's own matches. It is reachable, but
+  // never the only failure: a widening always also trips a structural check above (an entry on a pair with
+  // no legacy entry, or an already value-scoped legacy entry that differs), as the exhaustive test
+  // sb2-verify-widening-is-always-also-caught-structurally shows. Kept as an independent second proof, and
+  // its count is what the verify output shows the reviewer.
   if (newlyAllowlisted > 0) problems.push(`${newlyAllowlisted} occurrence(s) are allowlisted by migrated but were not by legacy (a widening)`);
   if (newlyBlocking > 0) problems.push(`${newlyBlocking} occurrence(s) were allowlisted by legacy but would block under migrated`);
 

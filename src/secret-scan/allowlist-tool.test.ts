@@ -99,6 +99,65 @@ test("sb2-verify-rejects-a-widened-set", () => {
   }
 });
 
+// Red-team F2 (post-build round): the count of newly allowlisted occurrences is REACHABLE (a hash added to an
+// already value-scoped entry, or an entry on a pair with no legacy entry, both over a real match), but it is
+// never the only reason verify fails: the structural checks (every migrated entry sits on a legacy pair, an
+// already value-scoped entry is unchanged) always fire alongside it. The two tests pin exactly that, so
+// what the ADR says about verify is what the instrument shows.
+const WIDENING_PROBLEM = /are allowlisted by migrated but were not by legacy/;
+
+test("sb2-verify-counts-and-names-a-widening", () => {
+  const scoped = [{ path: "a.txt", patternId: AWS, valueSha256: [h("v1")], reason: "r" }];
+  const addedHash = verifyMigration(scoped, [{ ...scoped[0]!, valueSha256: [h("v1"), h("v2")].sort() }], [m("a.txt", AWS, "v1"), m("a.txt", AWS, "v2")]);
+  assert.equal(addedHash.counts.newlyAllowlisted, 1, "a backed hash added to an already value-scoped entry is one newly allowlisted occurrence");
+  assert.ok(addedHash.problems.some((p) => WIDENING_PROBLEM.test(p)), "and it is named");
+
+  const addedPair = verifyMigration(
+    [legacyEntry("a.txt", AWS, "r")],
+    [{ path: "a.txt", patternId: AWS, valueSha256: [h("v1")], reason: "r" }, { path: "z.txt", patternId: AWS, valueSha256: [h("v9")], reason: "r" }],
+    [m("a.txt", AWS, "v1"), m("z.txt", AWS, "v9")],
+  );
+  assert.equal(addedPair.counts.newlyAllowlisted, 1, "a value allowlisted on a pair with no legacy entry is one newly allowlisted occurrence");
+  assert.ok(addedPair.problems.some((p) => WIDENING_PROBLEM.test(p)));
+
+  const honest = verifyMigration([legacyEntry("a.txt", AWS, "r")], [{ path: "a.txt", patternId: AWS, valueSha256: [h("v1")], reason: "r" }], [m("a.txt", AWS, "v1")]);
+  assert.equal(honest.counts.newlyAllowlisted, 0, "control: a faithful migration has none");
+  assert.ok(!honest.problems.some((p) => WIDENING_PROBLEM.test(p)));
+});
+
+test("sb2-verify-widening-is-always-also-caught-structurally", () => {
+  // Exhaustive over one pair: 5 legacy shapes x 5 migrated hash lists x every subset of 3 scanned values.
+  const V = ["v1", "v2", "v3"];
+  const legacies: unknown[][] = [
+    [],
+    [legacyEntry("a.txt", AWS, "r")],
+    [{ path: "a.txt", patternId: AWS, valueSha256: [h("v1")], reason: "r" }],
+    [{ path: "a.txt", patternId: AWS, valueSha256: [h("v2")], reason: "r" }],
+    [{ path: "a.txt", patternId: AWS, valueSha256: [h("v1"), h("v2")].sort(), reason: "r" }],
+  ];
+  const lists: string[][] = [[], ["v1"], ["v2"], ["v1", "v2"], ["v1", "v3"]];
+  let cases = 0;
+  let widenings = 0;
+  for (const legacy of legacies) {
+    for (const list of lists) {
+      for (let mask = 0; mask < 1 << V.length; mask++) {
+        const migrated = list.length === 0 ? [] : [{ path: "a.txt", patternId: AWS, valueSha256: list.map(h).sort(), reason: "r" }];
+        const matches = V.filter((_, i) => (mask & (1 << i)) !== 0).map((v) => m("a.txt", AWS, v));
+        const report = verifyMigration(legacy, migrated, matches);
+        cases++;
+        if (report.counts.newlyAllowlisted === 0) continue;
+        widenings++;
+        assert.ok(
+          report.problems.some((p) => !WIDENING_PROBLEM.test(p)),
+          `a widening must also be reported by a structural check, never by the count alone: ${JSON.stringify({ legacy, list, mask })}`,
+        );
+      }
+    }
+  }
+  assert.equal(cases, 5 * 5 * 8);
+  assert.ok(widenings > 0, "control: the enumeration reaches the widening count (it is not vacuous)");
+});
+
 test("sb2-verify-rejects-a-dropped-entry-or-hash-that-still-matches", () => {
   const honest = migrateAllowlist(LEGACY, MATCHES).entries;
   const droppedEntry = clone(honest).slice(1); // the entry for a.txt is gone, its values still match
