@@ -195,6 +195,18 @@ function percentEncode(s: string): string {
   return out;
 }
 
+// The one how-to sentence for a path that gets no runnable command (Issue 241 ruling, Issue 244). It names no
+// path and no command, and it never tells the reader to quote, copy or paste a path: red-team measured every
+// quoting strategy executing a payload for some hostile name in some shell. The test
+// oss01-unlock-no-command-line-is-pinned-verbatim-and-every-printed-line-is-checked declares the same text, so
+// a rewording is a deliberate change to both.
+const NO_COMMAND_HOWTO =
+  "NO-COMMAND-PRINTED: to get the value hash for such a path, compute the sha256 of the matched text with a local sha256 tool " +
+  "over the literal in your own file. The matched text is the whole regex match with no trailing newline, so for " +
+  "generic-password-assignment and aws-secret-access-key it includes the key name, operator and quotes. In the allowlist entry, " +
+  "the path field is the percent-decoded form of the path shown above. Or rename the path to one of [A-Za-z0-9._/-] first, " +
+  "or have a maintainer review it. A shell-safe channel for this hash is tracked in Issue 241.";
+
 function unlockDetails(blocking: HistoryMatch[]): string[] {
   const lines = [
     "UNLOCK: a real secret is rotated and removed from the tree, never allowlisted. A reviewed fixture " +
@@ -237,14 +249,7 @@ function unlockDetails(blocking: HistoryMatch[]): string[] {
     );
   }
   if (needsQuoting) {
-    lines.push(
-      // No instruction to quote, copy or paste a path (Issue 241): red-team measured every quoting strategy
-      // executing a payload for some hostile name in some shell. The hash needs no path at all.
-      "NO-COMMAND-PRINTED: to get the value hash for such a path, compute the sha256 of the matched text, which " +
-        "is the regex match itself, with any sha256 tool over the literal in your own file. Or rename the path to " +
-        "one of [A-Za-z0-9._/-] first, or have a maintainer review it. A shell-safe channel for this hash is " +
-        "tracked in Issue 241.",
-    );
+    lines.push(NO_COMMAND_HOWTO);
   }
   return lines;
 }
