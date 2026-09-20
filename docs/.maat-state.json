@@ -875,7 +875,7 @@
     }
   },
   "adrCatalog": {
-    "version": "60f00853db7f21280e3bfdaedb3f699ed24bc7da",
+    "version": "b63f3ff4d2b4814fafe1239ce4a8b552228026d6",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
@@ -1590,6 +1590,7 @@
           "Adding a value to an entry MUST arrive in a pull request whose diff shows it, with a non-empty reason; no other exemption shape (glob, line range, expiry, in-file marker, second file) MAY be added for this gate.",
           "A migrated entry MUST NOT be widened: the migrated set is a subset of what the file allowlisted before. The generator's verify mode enforces it structurally (every migrated entry sits on a legacy pair with its reason verbatim, every listed hash is carried by a real match, an already value-scoped entry is unchanged) and counts the newly allowlisted occurrences over the scanner's own matches, which MUST be zero.",
           "The allowlist loader MUST fail closed: an unreadable, unparseable or non-array allowlist file yields no entries, so every match blocks.",
+          "A pull request that regenerates the allowlist after a moved base (generate --base) MUST state the count delta of verify's totals against the current ones (108 hashes, 17 credential-shaped), so a reviewer sees any value the regeneration added.",
           "The docs/reviews/ path MUST NOT be excluded from the REVIEWED_BASELINE guard in src/secret-scan/history-scan.test.ts; every credential-shaped grant is pinned to a reviewed baseline at grant time.",
           "A change to a pattern's match boundary in src/secret-scan/patterns.ts MUST be accompanied, in the same pull request, by re-derived valueSha256 lists for every entry of that pattern, each hash checked against the same reviewed literal under the old boundary."
         ]
