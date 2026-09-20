@@ -542,7 +542,18 @@ test("oss01-allowlist-tool-verify-problem-lines-never-carry-a-shell-metacharacte
       await removeDir(scratchShell);
     }
 
+    // Harness sanity on any platform: a bare payload pasted through the same helper does create the marker.
+    const sanity = await shellDirWithPayload();
+    try {
+      pasteLine(P, sanity);
+      assert.ok(existsSync(join(sanity, V_MARKER)), "the paste harness can run a payload in this shell");
+    } finally {
+      await removeDir(sanity);
+    }
+
     // Positive control: the RAW echo (the old shape) executes a payload in this platform shell for some row.
+    // Where the shell is cmd (Windows) it does. In a POSIX sh the bare parenthesis before the path is a syntax
+    // error, so nothing could run there before the fix either; the harness sanity above covers that platform.
     let controlExecuted = 0;
     for (const p of hostile) {
       const control = await shellDirWithPayload();
@@ -553,7 +564,9 @@ test("oss01-allowlist-tool-verify-problem-lines-never-carry-a-shell-metacharacte
         await removeDir(control);
       }
     }
-    assert.ok(controlExecuted > 0, "positive control: the old raw echo must execute a payload in this shell, or this test proves nothing");
+    if (process.platform === "win32") {
+      assert.ok(controlExecuted > 0, "positive control: the old raw echo must execute a payload in cmd, or this test proves nothing");
+    }
   });
 
   // File-level problems: a fixed message, never a snippet of the file. A non-array file, and unparseable input
