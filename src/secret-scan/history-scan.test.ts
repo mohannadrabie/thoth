@@ -1381,6 +1381,30 @@ test("sb2-no-tracked-text-file-is-skipped-as-binary-tolerates-an-unstaged-deleti
   });
 });
 
+// Code-reviewer LOW (post-build round): the ten-pair cap of the unlock lines had no pin, so an off-by-one
+// (nine listed, or eleven) went unseen. Ten pairs get ten commands; every pair past ten is counted.
+test("sb2-unlock-command-lists-ten-pairs-then-counts-the-rest", () => {
+  const pairs = (n: number): HistoryMatch[] => Array.from({ length: n }, (_, i) => matchFor(`files/f${i}.txt`, "aws-access-key-id", sha256(`v${i}`)));
+  const listed = (details: string[]): string[] => details.filter((l) => l.startsWith("HASH-COMMAND for "));
+  const more = (details: string[]): string[] => details.filter((l) => l.startsWith("HASH-COMMAND: "));
+
+  const nine = summarizeMatches(pairs(9)).details;
+  assert.equal(listed(nine).length, 9, "under the cap: every pair listed");
+  assert.deepEqual(more(nine), [], "and no count line");
+  const ten = summarizeMatches(pairs(10)).details;
+  assert.equal(listed(ten).length, 10, "exactly at the cap: all ten listed");
+  assert.deepEqual(more(ten), [], "and nothing is left to count");
+  const twelve = summarizeMatches(pairs(12)).details;
+  assert.equal(listed(twelve).length, 10, "past the cap: still ten commands");
+  assert.equal(more(twelve).length, 1);
+  assert.match(more(twelve)[0] ?? "", /^HASH-COMMAND: 2 more path and pattern pair\(s\)/, "the count line names how many pairs were left out");
+
+  // Two matches at one pair are one pair: they neither add a command nor count against the cap.
+  const doubled = [...pairs(10), matchFor("files/f0.txt", "aws-access-key-id", sha256("another"))];
+  assert.equal(listed(summarizeMatches(doubled).details).length, 10);
+  assert.deepEqual(more(summarizeMatches(doubled).details), []);
+});
+
 // Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
 // the theory that a dated report is immutable. It is not (an addendum or a new report can carry an
 // unreviewed live value on its first commit), so report grants are pinned like every other file.

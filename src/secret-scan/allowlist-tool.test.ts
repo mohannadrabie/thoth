@@ -210,3 +210,99 @@ test("sb2-generator-cli-prints-counts-only", async () => {
     },
   );
 });
+
+// Code-reviewer MED (Issue 240, post-build round): generate and verify must read history AND the legacy
+// allowlist at the BASE ref, never at HEAD, or a regeneration silently blesses whatever the newest
+// commit added. Every test above uses base equal to HEAD, so this pins the case where they differ.
+async function withToolRepoHistory(
+  steps: Array<Record<string, string>>,
+  fn: (dir: string, scratch: string, commits: string[]) => Promise<void>,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-tool-hist-"));
+  const scratch = await mkdtemp(join(tmpdir(), "oss01-sb2-tool-hist-out-"));
+  try {
+    const run = async (...args: string[]): Promise<string> => {
+      const res = await realRunner("git", args, { cwd: dir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+      return res.stdout.trim();
+    };
+    await run("init", "-q", "-b", "main");
+    await run("config", "user.email", ["ci", "example.org"].join("@"));
+    await run("config", "user.name", "Test");
+    await run("config", "commit.gpgsign", "false");
+    const commits: string[] = [];
+    for (const files of steps) {
+      for (const [p, content] of Object.entries(files)) {
+        const abs = join(dir, ...p.split("/"));
+        await mkdir(join(abs, ".."), { recursive: true });
+        await writeFile(abs, content);
+      }
+      await run("add", ".");
+      await run("commit", "-q", "-m", `step ${commits.length + 1}`);
+      commits.push(await run("rev-parse", "HEAD"));
+    }
+    await fn(dir, scratch, commits);
+  } finally {
+    await removeDir(dir);
+    await removeDir(scratch);
+  }
+}
+
+test("sb2-generator-and-verify-scope-history-and-legacy-file-to-the-base-ref", async () => {
+  const one = "AKIA" + "S".repeat(16);
+  const two = "AKIA" + "T".repeat(16);
+  const allowlistPath = "docs/qa/secret-scan-allowlist.json";
+  const legacyBase = [{ path: "fixture.txt", patternId: AWS, reason: "reason at the base" }];
+  const legacyLater = [{ path: "fixture.txt", patternId: AWS, reason: "reason after the base" }];
+  const steps = [
+    { "fixture.txt": `a ${one}\n`, [allowlistPath]: JSON.stringify(legacyBase, null, 2) + "\n" },
+    // the second commit adds a new literal AND changes the legacy file
+    { "fixture.txt": `a ${one}\nb ${two}\n`, [allowlistPath]: JSON.stringify(legacyLater, null, 2) + "\n" },
+  ];
+  await withToolRepoHistory(steps, async (dir, scratch, commits) => {
+    const [first] = commits;
+    assert.ok(first !== undefined && commits.length === 2);
+    const tool = (...args: string[]) => realRunner("node", [TOOL_SCRIPT, ...args], { cwd: dir, encoding: "utf8" });
+    const generate = async (base: string, name: string): Promise<Array<{ valueSha256: string[]; reason: string }>> => {
+      const out = join(scratch, name);
+      const res = await tool("generate", "--base", base, "--out", out);
+      assert.equal(res.code, 0, `generate --base ${base} failed:\n${res.stdout}\n${res.stderr}`);
+      return JSON.parse(await readFile(out, "utf8")) as Array<{ valueSha256: string[]; reason: string }>;
+    };
+
+    // generate: history AND the legacy file come from the base, not from HEAD.
+    const atFirst = await generate(first, "at-first.json");
+    assert.deepEqual(atFirst.map((e) => e.valueSha256), [[h(one)]], "base at the first commit blesses exactly one value: the later literal is not in that history");
+    assert.equal(atFirst[0]?.reason, "reason at the base", "the legacy file is read at the base, not at HEAD");
+    const atHead = await generate("HEAD", "at-head.json");
+    assert.deepEqual(atHead.map((e) => e.valueSha256), [[h(one), h(two)].sort()], "base at HEAD blesses both values");
+    assert.equal(atHead[0]?.reason, "reason after the base");
+
+    // verify: the same scoping. A migrated file that already lists the later value is refused at the first commit.
+    const write = async (name: string, hashes: string[], reason: string): Promise<string> => {
+      const file = join(scratch, name);
+      await writeFile(file, serializeAllowlist([{ path: "fixture.txt", patternId: AWS, valueSha256: hashes, reason }]));
+      return file;
+    };
+    const oneHash = await write("one-hash.json", [h(one)], "reason at the base");
+    const twoHashBaseReason = await write("two-hash-base-reason.json", [h(one), h(two)].sort(), "reason at the base");
+    const twoHashLaterReason = await write("two-hash-later-reason.json", [h(one), h(two)].sort(), "reason after the base");
+    assert.equal((await tool("verify", "--base", first, "--migrated", oneHash)).code, 0, "control: the one-hash file verifies at the first commit");
+    const refused = await tool("verify", "--base", first, "--migrated", twoHashBaseReason);
+    assert.equal(refused.code, 1, `the two-hash file must fail verify at the first commit:\n${refused.stdout}`);
+    assert.match(refused.stdout, /lists 1 hash\(es\) that no scanned match carries/);
+    assert.equal((await tool("verify", "--base", "HEAD", "--migrated", twoHashLaterReason)).code, 0, "control: the two-hash file verifies at HEAD");
+  });
+});
+
+test("sb2-hash-command-prints-one-line-per-match-in-a-blob", async () => {
+  const one = "AKIA" + "U".repeat(16);
+  const two = "AKIA" + "V".repeat(16);
+  await withToolRepo({ "fixture.txt": `a ${one}\nb ${two}\nc ${one}\n` }, async (dir) => {
+    const res = await realRunner("node", [TOOL_SCRIPT, "hash", "HEAD", "fixture.txt", AWS], { cwd: dir, encoding: "utf8" });
+    assert.equal(res.code, 0, `hash failed:\n${res.stdout}\n${res.stderr}`);
+    const hashes = res.stdout.split(/\r?\n/).map((l) => /^([0-9a-f]{64})  /.exec(l)?.[1]).filter((x): x is string => x !== undefined);
+    assert.deepEqual([...hashes].sort(), [h(one), h(two)].sort(), "one line per distinct match in the blob, each with its hash; the repeat is printed once");
+    assert.ok(!res.stdout.includes(one) && !res.stdout.includes(two), "only the redacted form is printed beside each hash");
+  });
+});
