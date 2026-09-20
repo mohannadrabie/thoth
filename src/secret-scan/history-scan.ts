@@ -162,10 +162,13 @@ export function partitionAllowlisted(
   return { blocking, allowlisted };
 }
 
-/** Printable, single-line form of a string that came from the allowlist file. */
+/** Printable, single-line, shell-inert form of a string that came from the allowlist file (Issue 243, red-team
+ * F1): at most 120 code points, then percent-encoded exactly like a path in the no-command line, so no character
+ * of a contributor-authored entry reaches the log unquoted or splits a line. A non-string or empty value is a lone
+ * percent sign, which the encoder never produces on its own and no shell reads as syntax. */
 function clip(s: unknown): string {
-  if (typeof s !== "string") return "?";
-  return [...s.slice(0, 120)].map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? "?" : c)).join("");
+  if (typeof s !== "string" || s.length === 0) return "%";
+  return percentEncode([...s].slice(0, 120).join(""));
 }
 
 const MAX_UNLOCK_COMMANDS = 10;

@@ -1397,7 +1397,7 @@ function oldRejectedLine(index: number, path: unknown, patternId: unknown, reaso
   return `REJECTED-ENTRY index=${index} path=${clipOld(path)} pattern=${clipOld(patternId)}: ${reasonClass}`;
 }
 
-const REJECTED_ENTRY_LINE = /^REJECTED-ENTRY index=(\d+) path=([A-Za-z0-9._/%-]+|\?) pattern=([A-Za-z0-9._/%-]+|\?): ([A-Za-z0-9-]+)$/;
+const REJECTED_ENTRY_LINE = /^REJECTED-ENTRY index=(\d+) path=([A-Za-z0-9._/%-]+) pattern=([A-Za-z0-9._/%-]+): ([A-Za-z0-9-]+)$/;
 const REJECTED_FILE_LINE = /^REJECTED-ALLOWLIST-FILE: (unreadable-or-missing|not-valid-json|not-an-array)$/;
 
 test("oss01-rejected-entry-line-never-carries-a-shell-metacharacter-from-the-allowlist-file", async () => {
@@ -1439,7 +1439,7 @@ test("oss01-rejected-entry-line-never-carries-a-shell-metacharacter-from-the-all
       assert.equal(m[1], String(i), `${label}: index kept`);
       const reasonClass = typeof path !== "string" ? "missing-path" : typeof patternId !== "string" ? "missing-patternId" : "valueSha256-element-malformed";
       assert.equal(m[4], reasonClass, `${label}: the reason class text is kept`);
-      const clip120 = (s: unknown): string => (typeof s === "string" ? pctEncode([...s].slice(0, 120).join("")) : "?");
+      const clip120 = (s: unknown): string => (typeof s === "string" && s.length > 0 ? pctEncode([...s].slice(0, 120).join("")) : "%");
       assert.equal(m[2], clip120(path), `${label}: path field is the percent-encoded, clipped input`);
       assert.equal(m[3], clip120(patternId), `${label}: pattern field is the percent-encoded, clipped input`);
       assert.ok(!SHELL_METACHARS.test(line), `${label}: no shell metacharacter on the line`);
