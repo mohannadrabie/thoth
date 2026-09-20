@@ -167,6 +167,24 @@ function clip(s: unknown): string {
 const MAX_UNLOCK_COMMANDS = 10;
 const HASH_TOOL = "src/secret-scan/allowlist-tool.ts";
 
+// Issue 239 (and red-team F1): the unlock command is printed for a maintainer to paste, and a match's
+// path comes from the tree of a pull request, so it is contributor-chosen. A path is placed in a printed
+// command only when no shell (sh, PowerShell, cmd) can give any character in it a meaning. Every other
+// path gets a line that is not a command and shows the path percent-encoded.
+const SHELL_SAFE = /^[A-Za-z0-9._/-]+$/;
+
+/** Every character outside the safe set becomes %HH, one per UTF-8 byte (upper-case hex). The result
+ * uses only [A-Za-z0-9._/%-], which no shell treats as syntax, and it is injective because a literal
+ * percent is itself encoded. */
+function percentEncode(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    if (SHELL_SAFE.test(ch)) out += ch;
+    else for (const b of Buffer.from(ch, "utf8")) out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
 function unlockDetails(blocking: HistoryMatch[]): string[] {
   const lines = [
     "UNLOCK: a real secret is rotated and removed from the tree, never allowlisted. A reviewed fixture " +
@@ -178,6 +196,7 @@ function unlockDetails(blocking: HistoryMatch[]): string[] {
   ];
   const seen = new Set<string>();
   let omitted = 0;
+  let needsQuoting = false;
   for (const m of blocking) {
     const key = `${m.path}\0${m.patternId}`;
     if (seen.has(key)) continue;
@@ -186,11 +205,35 @@ function unlockDetails(blocking: HistoryMatch[]): string[] {
       omitted++;
       continue;
     }
-    // The command prints, per match in that blob, the hash beside the redacted form shown above. It runs
-    // on the developer's own machine; nothing here prints the hash of a blocked value.
-    lines.push(`HASH-COMMAND for ${m.path} [${m.patternId}]: node ${HASH_TOOL} hash ${m.commit.slice(0, 12)} "${m.path}" ${m.patternId}`);
+    const commit = m.commit.slice(0, 12);
+    if (SHELL_SAFE.test(m.path) && SHELL_SAFE.test(m.patternId) && SHELL_SAFE.test(commit)) {
+      // The command prints, per match in that blob, the hash beside the redacted form shown above. It runs
+      // on the developer's own machine; nothing here prints the hash of a blocked value.
+      lines.push(`HASH-COMMAND for ${m.path} [${m.patternId}]: node ${HASH_TOOL} hash ${commit} "${m.path}" ${m.patternId}`);
+    } else {
+      // Not a command, and it carries no character a shell can act on, so pasting it anywhere runs nothing.
+      needsQuoting = true;
+      lines.push(
+        `NO-COMMAND-PRINTED for path ${percentEncode(m.path)} [${percentEncode(m.patternId)}] at ${percentEncode(commit)}: ` +
+          "the path has characters that need shell quoting, so no command is printed. " +
+          "It is shown percent-encoded, each %HH is one byte, so this line cannot run.",
+      );
+    }
   }
-  if (omitted > 0) lines.push(`HASH-COMMAND: ${omitted} more path and pattern pair(s) use the same command shape.`);
+  if (omitted > 0) {
+    lines.push(
+      `HASH-COMMAND: ${omitted} more path and pattern pair(s) are not listed. Each takes the same command shape, ` +
+        "or the no-command rule when its path needs shell quoting.",
+    );
+  }
+  if (needsQuoting) {
+    lines.push(
+      "NO-COMMAND-PRINTED: to get the hash for such a path, quote the path yourself for your shell and run: " +
+        `node ${HASH_TOOL} hash COMMIT PATH PATTERN-ID. Use the commit and pattern id shown above and the path ` +
+        "spelled exactly as in the match line, since git spells some characters with backslash escapes and the tool " +
+        "looks the path up in that spelling. Run the tool with no arguments for its usage.",
+    );
+  }
   return lines;
 }
 

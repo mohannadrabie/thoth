@@ -1326,21 +1326,39 @@ test("oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path",
 });
 
 /** Tracked files (from the index) that the scanner's own rule (history-scan.ts looksBinary: a NUL byte in
- * the first 8000 bytes) would skip, unscanned, so they are invisible to OSS-01. */
+ * the first 8000 bytes) would skip, unscanned, so they are invisible to OSS-01. Reads each blob from the
+ * object database in one `git cat-file --batch` call, never the working tree, so a file that is deleted
+ * or edited on disk cannot change the answer. Scope: the index (the tree about to be committed); the gate
+ * also walks older commits, which this does not. */
 async function trackedFilesSkippedAsBinary(repoDir: string, knownBinaries: readonly string[]): Promise<string[]> {
   const res = await realRunner("git", ["ls-files", "-s", "-z"], { cwd: repoDir, encoding: "latin1" });
   assert.equal(res.code, 0, res.stderr);
-  const skipped: string[] = [];
+  const entries: Array<{ path: string; sha: string }> = [];
   for (const rec of res.stdout.split("\0")) {
     const tab = rec.indexOf("\t");
     if (tab === -1) continue;
-    if (rec.slice(0, tab).startsWith("160000")) continue; // a submodule gitlink is a directory on disk
+    const [mode, sha] = rec.slice(0, tab).split(" ");
+    if (mode === "160000" || sha === undefined) continue; // a submodule gitlink is a commit in another repo
     const path = rec.slice(tab + 1);
-    if (knownBinaries.includes(path)) continue;
-    const buf = await readFile(join(repoDir, ...path.split("/")));
-    if (buf.subarray(0, Math.min(buf.length, 8000)).includes(0)) skipped.push(path);
+    if (!knownBinaries.includes(path)) entries.push({ path, sha });
   }
-  return skipped;
+  const batch = spawnSync("git", ["cat-file", "--batch"], {
+    cwd: repoDir,
+    input: [...new Set(entries.map((e) => e.sha))].join("\n") + "\n",
+    maxBuffer: 1 << 30,
+  });
+  assert.equal(batch.status, 0, `git cat-file --batch failed: ${String(batch.stderr)}`);
+  const out = batch.stdout;
+  const hasNul = new Map<string, boolean>();
+  for (let pos = 0; pos < out.length; ) {
+    const nl = out.indexOf(0x0a, pos);
+    const [sha, type, size] = out.toString("latin1", pos, nl).split(" ");
+    assert.ok(sha !== undefined && type === "blob" && size !== undefined, `unexpected cat-file header: ${out.toString("latin1", pos, nl)}`);
+    const len = Number(size);
+    hasNul.set(sha, out.subarray(nl + 1, nl + 1 + Math.min(len, 8000)).includes(0));
+    pos = nl + 1 + len + 1;
+  }
+  return entries.filter((e) => hasNul.get(e.sha) === true).map((e) => e.path);
 }
 
 test("sb2-no-tracked-text-file-is-skipped-as-binary", async () => {
