@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry } from "./history-scan.ts";
-import { entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
+import { clip, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
 import { SECRET_PATTERNS } from "./patterns.ts";
 
 export const ALLOWLIST_PATH = "docs/qa/secret-scan-allowlist.json";
@@ -105,7 +105,7 @@ export function classificationLines(entries: readonly AllowlistEntry[]): string[
     if (e.path.startsWith(REPORTS_PREFIX)) underReports += n;
     if (!NON_CREDENTIAL_PATTERN_IDS.includes(e.patternId)) credentialShaped += n;
   }
-  const perPattern = [...byPattern.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, n]) => `${id}=${n}`);
+  const perPattern = [...byPattern.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, n]) => `${clip(id)}=${n}`);
   return [
     `blessed values by pattern: ${perPattern.join(", ")}`,
     `blessed values under ${REPORTS_PREFIX}: ${underReports}`,
@@ -122,7 +122,12 @@ async function readLegacyAtRef(base: string): Promise<unknown> {
   const git = makeGitOps(realRunner, process.cwd());
   const sha = (await git.lsTree(base)).get(ALLOWLIST_PATH);
   if (sha === undefined) throw new Error(`${ALLOWLIST_PATH} is not tracked at ${base}`);
-  return JSON.parse((await git.catFileBlob(sha)).toString("utf8")) as unknown;
+  try {
+    return JSON.parse((await git.catFileBlob(sha)).toString("utf8")) as unknown;
+  } catch {
+    // A fixed message: the parser's own message quotes a piece of the file, which a pull request author chose.
+    throw new Error("the legacy allowlist at the base ref is not valid JSON");
+  }
 }
 
 async function runGenerate(argv: string[]): Promise<number> {
@@ -181,7 +186,7 @@ function parseEntries(input: unknown, label: string, problems: string[], allowLe
     const legacyShaped = why === "missing-valueSha256";
     if (why !== null && !(allowLegacy && legacyShaped)) {
       const o = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-      const where = typeof o.path === "string" && typeof o.patternId === "string" ? ` (${o.path}, ${o.patternId})` : "";
+      const where = typeof o.path === "string" && typeof o.patternId === "string" ? ` (${clip(o.path)}, ${clip(o.patternId)})` : "";
       problems.push(`${label} entry ${index}${where} is not a valid value-scoped entry: ${why}`);
       return;
     }
@@ -215,7 +220,7 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
   const migratedByPair = new Map<string, ParsedEntry>();
   for (const e of migratedEntries) {
     const key = pairKey(e.path, e.patternId);
-    if (migratedByPair.has(key)) problems.push(`migrated has two entries for (${e.path}, ${e.patternId})`);
+    if (migratedByPair.has(key)) problems.push(`migrated has two entries for (${clip(e.path)}, ${clip(e.patternId)})`);
     migratedByPair.set(key, e);
   }
   const hashesAtPair = new Map<string, Set<string>>();
@@ -230,15 +235,15 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
     const key = pairKey(e.path, e.patternId);
     const was = legacyByPair.get(key);
     if (was === undefined) {
-      problems.push(`migrated entry ${e.index} (${e.path}, ${e.patternId}) sits on a pair with no legacy entry`);
+      problems.push(`migrated entry ${e.index} (${clip(e.path)}, ${clip(e.patternId)}) sits on a pair with no legacy entry`);
       continue;
     }
-    if (was.reason !== e.reason) problems.push(`migrated entry ${e.index} (${e.path}, ${e.patternId}) changed its reason`);
+    if (was.reason !== e.reason) problems.push(`migrated entry ${e.index} (${clip(e.path)}, ${clip(e.patternId)}) changed its reason`);
     const real = hashesAtPair.get(key) ?? new Set<string>();
     const unbacked = (e.hashes ?? []).filter((h) => !real.has(h)).length;
-    if (unbacked > 0) problems.push(`migrated entry ${e.index} (${e.path}, ${e.patternId}) lists ${unbacked} hash(es) that no scanned match carries`);
+    if (unbacked > 0) problems.push(`migrated entry ${e.index} (${clip(e.path)}, ${clip(e.patternId)}) lists ${unbacked} hash(es) that no scanned match carries`);
     if (was.hashes !== null && (e.hashes ?? []).join() !== was.hashes.join()) {
-      problems.push(`migrated entry ${e.index} (${e.path}, ${e.patternId}) differs from an already value-scoped legacy entry`);
+      problems.push(`migrated entry ${e.index} (${clip(e.path)}, ${clip(e.patternId)}) differs from an already value-scoped legacy entry`);
     }
   }
 
@@ -248,7 +253,7 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
     if (migratedByPair.has(key)) continue;
     const real = hashesAtPair.get(key) ?? new Set<string>();
     const stillMatches = was.hashes === null ? real.size > 0 : was.hashes.some((h) => real.has(h));
-    if (stillMatches) problems.push(`legacy entry ${was.index} (${was.path}, ${was.patternId}) is missing from migrated although it still matches`);
+    if (stillMatches) problems.push(`legacy entry ${was.index} (${clip(was.path)}, ${clip(was.patternId)}) is missing from migrated although it still matches`);
     else droppedEntries++;
   }
 
@@ -301,7 +306,15 @@ async function runVerify(argv: string[]): Promise<number> {
   const file = argValue(argv, "--migrated");
   if (base === undefined || file === undefined) throw new Error("verify needs --base <ref> and --migrated <file>");
   const git = makeGitOps(realRunner, process.cwd());
-  const migrated = JSON.parse(await readFile(file, "utf8")) as unknown;
+  let migrated: unknown;
+  try {
+    migrated = JSON.parse(await readFile(file, "utf8"));
+  } catch (err) {
+    // A read error keeps its own message (the file name is the developer's argument); a parse error gets a fixed
+    // one, because the parser's message quotes a piece of the file, which a pull request author chose.
+    if (err instanceof SyntaxError) throw new Error("the migrated file is not valid JSON");
+    throw err;
+  }
   const report = verifyMigration(await readLegacyAtRef(base), migrated, await scanHistory(git, { ref: base }));
   const c = report.counts;
   console.log(`[allowlist-tool verify] ${report.ok ? "PASS" : "FAIL"}`);

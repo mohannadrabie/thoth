@@ -163,10 +163,11 @@ export function partitionAllowlisted(
 }
 
 /** Printable, single-line, shell-inert form of a string that came from the allowlist file (Issue 243, red-team
- * F1): at most 120 code points, then percent-encoded exactly like a path in the no-command line, so no character
+ * F1). Also used by the problem and classification lines of allowlist-tool.ts `verify`, which reads the same
+ * file. At most 120 code points, then percent-encoded exactly like a path in the no-command line, so no character
  * of a contributor-authored entry reaches the log unquoted or splits a line. A non-string or empty value is a lone
  * percent sign, which the encoder never produces on its own and no shell reads as syntax. */
-function clip(s: unknown): string {
+export function clip(s: unknown): string {
   if (typeof s !== "string" || s.length === 0) return "%";
   return percentEncode([...s].slice(0, 120).join(""));
 }
