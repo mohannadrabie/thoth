@@ -11,6 +11,10 @@
 // checker; it is QA-14 catching exactly the class of thing it exists to catch, even in its own
 // source. Fixed here by rewording rather than adding a self-exemption.
 //
+// Which text of a changed file is checked (the whole file, or only the text a diff adds for an
+// append-only historical record; the generated adrCatalog mirror excluded) is defined in
+// src/qa/reference-scope.ts. A citation a diff adds is always checked.
+//
 // Every dependency the resolver needs (filesystem existence, ADR ids, Issue lookup, repo slug) is
 // injected — this module's own scanning/classification logic is pure and unit-tested without I/O.
 import { fileURLToPath } from "node:url";
@@ -21,6 +25,7 @@ import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
+import { buildScanTexts } from "./reference-scope.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
 
@@ -810,12 +815,16 @@ async function main(): Promise<void> {
   // Read every scanned file's text once, up front — reused across both passes below so the
   // second (real) pass never re-reads a file whose content could theoretically change between
   // passes (a stronger guarantee than strictly required today, but free and correct).
-  const fileTexts = new Map<string, string>();
-  for (const file of changedFiles) {
-    if (!shouldScanFile(file)) continue;
-    if (!existsSync(resolve(repoRoot, file))) continue; // deleted file, nothing to scan
-    fileTexts.set(file, await readFile(resolve(repoRoot, file), "utf8"));
-  }
+  // Which TEXT of each changed file is scanned (whole file, or only what the diff adds for an
+  // append-only record) is decided in reference-scope.ts; see its header for the rules.
+  const fileTexts = await buildScanTexts(changedFiles, resolved.fullTreeFallback, {
+    diffText: () => git.diffText(base, head),
+    readFile: async (file) => {
+      const abs = resolve(repoRoot, file);
+      return existsSync(abs) ? readFile(abs, "utf8") : null; // deleted file, nothing to scan
+    },
+    shouldScan: shouldScanFile,
+  });
 
   const issueResolution = await resolveIssueCitations(fileTexts, baseDeps, repoSlug, realRunner);
   if (issueResolution.capExceeded) {
