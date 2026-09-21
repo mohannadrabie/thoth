@@ -836,7 +836,7 @@ async function main(): Promise<void> {
   // Which TEXT of each changed file is scanned (whole file, or only what the diff adds for an
   // append-only record) is decided in reference-scope.ts; see its header for the rules.
   const fileTexts = await buildScanTexts(changedFiles, resolved.fullTreeFallback, {
-    diffText: () => git.diffText(base, head),
+    diffText: () => git.diffText(base, head).catch((err: unknown) => { console.error(`[QA-14 reference-resolver] NOTE: cannot read the diff (${String(err).split("\n")[0] ?? ""}), so append-only records are scanned whole.`); throw err; }),
     readFile: async (file) => {
       const abs = resolve(repoRoot, file);
       return existsSync(abs) ? readFile(abs, "utf8") : null; // deleted file, nothing to scan
