@@ -1343,7 +1343,7 @@ test("oss01-unlock-command-never-interpolates-shell-metacharacters-from-a-path",
 // What the how-to line offers instead involves no path: the value hash is the sha256 of the matched text.
 test("oss01-unlock-no-command-line-never-instructs-hand-quoting-or-pasting-a-path", async () => {
   const INSTRUCTS_PATH_HANDLING =
-    /quote (the|this|that|it|your)|hand-quot|quote the path|wrap\b.*\bquotes|\bpaste|copy (the|this) path|spelled (exactly )?as|type the path|match line/i;
+    /quote (the|this|that|it|your)|hand-quot|quote the path|wrap\b.*\bquotes|\bpaste|copy (the|this) path|spelled (exactly )?as|type the path|match line|escape|enclos|surround/i;
   const names: Array<[string, string]> = [
     ["command substitution", `a$(${PAYLOAD})b.txt`],
     ["backticks", `a\`${PAYLOAD}\`b.txt`],
