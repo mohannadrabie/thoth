@@ -1,8 +1,8 @@
 {
   "scope": "s1-229-qa14-red",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 0,
-  "reviewRoundsTotal": 0,
+  "reviewRoundsSinceClean": 1,
+  "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
@@ -2341,5 +2341,6 @@
         ]
       }
     ]
-  }
+  },
+  "note_2026-09-21b": "s1-229-qa14-red review round 1: red-team go (2 MED, Issues 253 and 254), code-reviewer SHIP-AFTER-FIXES (1 MED, Issue 255), cross-domain-reviewer APPROVE-WITH-CONDITIONS (2 LOW docs items). Counted as one REWORK-class round (reviewRoundsSinceClean 1, reviewRoundsTotal 1). Manager triage: every finding fix-now inside the approved scope; JSON tokenizer swapped for a canonical-format parse (three reviewers preferred it, human prefers simplicity); hunk-count parser kept (red-team proved it against the header-spoof attack). Delta goes back to red-team for a re-confirm (CRITICAL, gate-logic change)."
 }
