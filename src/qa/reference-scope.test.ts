@@ -625,6 +625,19 @@ test("diffText failing falls back to whole-file scanning, never to a vacuous pas
   assert.equal(texts.get("docs/REVIEW_LOG.md"), files["docs/REVIEW_LOG.md"]);
 });
 
+test("a diff that cannot be read is announced on stderr and the append-only records are scanned whole", async () => {
+  await withRepo(async (fx) => {
+    const base = await seedExamples(fx); // CHANGELOG already holds an old example
+    await append(fx, "CHANGELOG.md", "- New entry, plain prose.\n");
+    const head = await fx.commit("append prose");
+    // An external diff program that dies fails `git diff` (the text) but not `git diff --name-only` (the file list).
+    const res = await realRunner("node", [RESOLVER_PATH, base, head], { cwd: fx.dir, encoding: "utf8", env: { GIT_EXTERNAL_DIFF: "false" } });
+    assert.equal(res.code, 1, `scanned whole, the old example must fail; output:\n${res.stdout}\n${res.stderr}`);
+    assert.match(res.stdout, /gone-changelog\.md .*\[file: CHANGELOG\.md\]/);
+    assert.match(res.stderr, /NOTE: .*cannot read the diff.*scanned whole/);
+  });
+});
+
 test("an empty diff for a changed append-only file is scanned whole (no attributable header, no vacuous pass)", async () => {
   const files = { "CHANGELOG.md": "# Changelog\n- Old line.\n" };
   const texts = await buildScanTexts(["CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve("")));
