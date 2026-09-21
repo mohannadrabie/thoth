@@ -428,6 +428,14 @@ test(".maat-state.json: a file that is not the canonical two-space serialization
   whole(`${canonical}\n\n`);
 });
 
+test("a valid but pathologically nested .maat-state.json is scanned whole, not thrown on", () => {
+  // JSON.parse reads this (its parser is iterative); JSON.stringify of the result recurses and overflows the stack.
+  const depth = 20000;
+  const deep = `${'{"a":'.repeat(depth)}1${"}".repeat(depth)}`;
+  assert.doesNotThrow(() => JSON.parse(deep), "control: the input is valid JSON");
+  assert.equal(stripAdrCatalog(deep), deep);
+});
+
 test(".maat-state.json: CRLF line endings and one trailing newline are accepted, and escapes inside the mirror do not disturb the cut", () => {
   const bad = "`docs/gone-mirror.md`";
   const state = {

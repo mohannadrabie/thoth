@@ -209,20 +209,21 @@ const isObject = (value: unknown): value is JsonObject => value !== null && type
  * text cannot hide behind a duplicate key, an escaped key spelling, a comment or odd formatting.
  * Anything else, unparseable input included, is returned whole. Stricter, never a pass; the cost is
  * that a change to the format of the tool that writes this file turns QA-14 red on the mirror text.
+ * Every step that can throw sits inside the try: JSON.parse reads a very deeply nested file that
+ * JSON.stringify then overflows the stack on, and that too is returned whole, never thrown.
  */
 export function stripAdrCatalog(text: string): string {
-  let root: unknown;
   try {
-    root = JSON.parse(text);
+    const root: unknown = JSON.parse(text);
+    if (!isObject(root)) return text;
+    if (text.replaceAll("\r\n", "\n").replace(/\n$/, "") !== JSON.stringify(root, null, 2)) return text;
+    for (let node: unknown = root; isObject(node); node = node[MIRROR_CHAIN_KEY]) {
+      if (isObject(node[MIRROR_KEY])) node[MIRROR_KEY] = null; // a non-object value under the key is authored text
+    }
+    return JSON.stringify(root, null, 2);
   } catch {
-    return text;
+    return text; // unparseable, or too deeply nested to re-serialize
   }
-  if (!isObject(root)) return text;
-  if (text.replaceAll("\r\n", "\n").replace(/\n$/, "") !== JSON.stringify(root, null, 2)) return text;
-  for (let node: unknown = root; isObject(node); node = node[MIRROR_CHAIN_KEY]) {
-    if (isObject(node[MIRROR_KEY])) node[MIRROR_KEY] = null; // a non-object value under the key is authored text
-  }
-  return JSON.stringify(root, null, 2);
 }
 
 // --- per-file scan text ---------------------------------------------------------------------------
