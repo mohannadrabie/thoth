@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Citation, ReferenceResolverDeps } from "./reference-resolver.ts";
-import { resolveIssueCitations, scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
+import { makeExistsAtBase, resolveIssueCitations, scanReferences, shouldScanFile, summarizeCitations } from "./reference-resolver.ts";
 import {
   APPEND_ONLY_DIR_PREFIXES,
   APPEND_ONLY_FILES,
@@ -185,6 +185,7 @@ async function withRepo(fn: (fx: Fixture) => Promise<void>): Promise<void> {
             return res.code === 0 ? res.stdout : null;
           },
           shouldScan: shouldScanFile,
+          existsAtBase: makeExistsAtBase(realRunner, dir, base, head),
         });
       },
     };
@@ -554,6 +555,23 @@ test("a base-existence check that fails is treated as absent: whole-file, never 
   assert.equal(texts.get("CHANGELOG.md"), files["CHANGELOG.md"]);
 });
 
+test("makeExistsAtBase: asks git about the merge base once, and any git failure reads as absent", async () => {
+  const calls: string[][] = [];
+  const runner = (code: (args: string[]) => number, stdout = "abc123\n"): Runner => (_cmd, args) => {
+    calls.push(args);
+    return Promise.resolve({ stdout: args[0] === "merge-base" ? stdout : "", stderr: "", code: code(args) });
+  };
+  const ok = makeExistsAtBase(runner(() => 0), "/repo", "base", "head");
+  assert.equal(await ok("CHANGELOG.md"), true);
+  assert.equal(await ok("docs/reviews/x.md"), true);
+  assert.equal(calls.filter((a) => a[0] === "merge-base").length, 1, "the merge base is resolved once");
+  assert.deepEqual(calls.filter((a) => a[0] === "cat-file").map((a) => a[2]), ["abc123:CHANGELOG.md", "abc123:docs/reviews/x.md"]);
+
+  assert.equal(await makeExistsAtBase(runner((a) => (a[0] === "cat-file" ? 128 : 0)), "/repo", "base", "head")("CHANGELOG.md"), false, "path absent at the base");
+  assert.equal(await makeExistsAtBase(runner((a) => (a[0] === "merge-base" ? 1 : 0)), "/repo", "base", "head")("CHANGELOG.md"), false, "no merge base");
+  assert.equal(await makeExistsAtBase(runner(() => 0, "\n"), "/repo", "base", "head")("CHANGELOG.md"), false, "empty merge base output");
+});
+
 test("diffText failing falls back to whole-file scanning, never to a vacuous pass", async () => {
   const files = { "CHANGELOG.md": "# Changelog\n- Old line.\n- New line.\n", "docs/REVIEW_LOG.md": "# Log\n- Row.\n" };
   const texts = await buildScanTexts(
@@ -595,6 +613,9 @@ test("a deleted file (nothing on disk) and a test file are not scanned", async (
 test("a line moved verbatim by the real archive-sweep script from decisions.md to decisions-archive.md exits 0", async () => {
   await withRepo(async (fx) => {
     const movedRow = decisionsRow("Resolved row that quotes the old example `docs/gone-swept.md`.");
+    // The archive already exists at the base, as it does in this repository. A sweep that CREATED the
+    // archive would be a new file, scanned whole, and its rows would be checked (see the rename tests).
+    await fx.write("docs/decisions-archive.md", DECISIONS_HEAD.replace("Decision Log", "Decision Log (archive)"));
     await fx.write("docs/decisions.md", DECISIONS_HEAD + movedRow + decisionsRow("Pending row.", "pending", "2999-01-01"));
     const base = await fx.commit("decisions with a resolved row");
 

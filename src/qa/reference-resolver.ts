@@ -739,6 +739,24 @@ export async function resolveIssueCitations(
   return { citations, distinctIssueNumbers: queriedIssueNumbers.size, capExceeded: false };
 }
 
+/**
+ * Whether a path exists at the base of the three-dot diff (the merge base of base and head), for
+ * reference-scope.ts. Any git failure reads as "no", so the file is then scanned whole.
+ */
+export function makeExistsAtBase(runner: Runner, cwd: string, base: string, head: string): (path: string) => Promise<boolean> {
+  let mergeBase: Promise<string> | undefined;
+  const findMergeBase = async (): Promise<string> => {
+    const res = await runner("git", ["merge-base", base, head], { cwd, encoding: "utf8" });
+    return res.code === 0 ? res.stdout.trim() : "";
+  };
+  return async (path) => {
+    mergeBase ??= findMergeBase();
+    const sha = await mergeBase;
+    if (sha === "") return false;
+    return (await runner("git", ["cat-file", "-e", `${sha}:${path}`], { cwd, encoding: "utf8" })).code === 0;
+  };
+}
+
 async function main(): Promise<void> {
   const repoRoot = process.cwd();
   const base = process.argv[2] ?? process.env.QA14_BASE_REF ?? "HEAD~1";
@@ -824,6 +842,7 @@ async function main(): Promise<void> {
       return existsSync(abs) ? readFile(abs, "utf8") : null; // deleted file, nothing to scan
     },
     shouldScan: shouldScanFile,
+    existsAtBase: makeExistsAtBase(realRunner, repoRoot, base, head),
   });
 
   const issueResolution = await resolveIssueCitations(fileTexts, baseDeps, repoSlug, realRunner);

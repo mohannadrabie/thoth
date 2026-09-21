@@ -6,8 +6,10 @@
 //     and does not rewrite (the decision log and its archive, the review log, the changelog, the
 //     dated review reports). In a diff-mode run only the text the diff ADDS to such a file is
 //     checked; the reference examples that already sit in old rows are not re-litigated every time a
-//     row is appended. A full-tree run, and any file this module cannot attribute in the diff
-//     (see "Fails closed" below), is checked whole.
+//     row is appended. Only a path that exists at the diff base gets this scope: a path absent at the
+//     base (a new file, the destination of a rename) has no old text to skip and is checked whole. A
+//     full-tree run, and any file this module cannot attribute in the diff (see "Fails closed" below),
+//     is checked whole too.
 //  2. GENERATED_MIRROR_FILE. The adrCatalog cache inside docs/.maat-state.json is regenerated from
 //     ADR files under adr/, which this repository does not author and QA-14 never scans. It is
 //     dropped before scanning (root object and the priorScope chain only); every other field of the
@@ -29,8 +31,10 @@
 //
 // Fails closed (whole-file scan, never a vacuous pass): a full-tree run; a diff that cannot be read;
 // a changed file the diff parser cannot attribute (a C-quoted path, a pure rename or mode change with
-// no hunk, a binary diff, a non-default git prefix setting). A removal from an unattributable path
-// licenses nothing.
+// no hunk, a binary diff, a non-default git prefix setting); an append-only path that is absent at the
+// base, which covers a rename WITH an edit (git emits headers for it, so the parser can attribute it,
+// but the moved body is not old text); a base-existence check that fails. A removal from an
+// unattributable path licenses nothing.
 //
 // Pure apart from the injected deps: the diff text and the file reader are passed in, never
 // instantiated here (SE ADR-0003).
@@ -68,8 +72,8 @@ export interface ScanTextDeps {
   /** File text at the head being checked, or null when the file does not exist there. */
   readFile: (repoRelativePath: string) => Promise<string | null>;
   shouldScan: (repoRelativePath: string) => boolean;
-  /** True when the path exists at the diff's base commit. A rejection is treated as "unknown". */
-  existsAtBase?: (repoRelativePath: string) => Promise<boolean>;
+  /** True when the path exists at the base of the diff. A rejection is read as "no": the file is scanned whole. */
+  existsAtBase: (repoRelativePath: string) => Promise<boolean>;
 }
 
 export function isAppendOnlyRecord(repoRelativePath: string): boolean {
@@ -324,6 +328,21 @@ async function readScannable(changedFiles: readonly string[], deps: ScanTextDeps
   return whole;
 }
 
+/** The append-only records that already existed at the base. Only these can be reduced to added text. */
+async function existedAtBase(records: readonly string[], deps: ScanTextDeps): Promise<Set<string>> {
+  const found = new Set<string>();
+  await Promise.all(
+    records.map(async (file) => {
+      try {
+        if (await deps.existsAtBase(file)) found.add(file);
+      } catch {
+        // cannot tell: treat as new, so the whole file is scanned
+      }
+    }),
+  );
+  return found;
+}
+
 async function readDiff(deps: ScanTextDeps): Promise<ParsedDiff | null> {
   try {
     return parseUnifiedDiff(await deps.diffText());
@@ -342,8 +361,9 @@ export async function buildScanTexts(
   deps: ScanTextDeps,
 ): Promise<Map<string, string>> {
   const whole = await readScannable(changedFiles, deps);
-  const needsDiff = !fullTree && [...whole.keys()].some(isAppendOnlyRecord);
-  const parsed = needsDiff ? await readDiff(deps) : null;
+  const records = [...whole.keys()].filter(isAppendOnlyRecord);
+  const parsed = !fullTree && records.length > 0 ? await readDiff(deps) : null;
+  const scoped = parsed === null ? new Set<string>() : await existedAtBase(records, deps);
   const licences = parsed === null ? new Map<string, number>() : moveLicences(parsed, whole);
 
   const out = new Map<string, string>();
@@ -352,7 +372,7 @@ export async function buildScanTexts(
       out.set(file, stripAdrCatalog(text));
       continue;
     }
-    const added = parsed !== null && isAppendOnlyRecord(file) ? parsed.added.get(file) : undefined;
+    const added = scoped.has(file) ? parsed?.added.get(file) : undefined;
     out.set(file, added === undefined ? text : newText(added, licences));
   }
   return out;
