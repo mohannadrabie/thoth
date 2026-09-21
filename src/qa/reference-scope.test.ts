@@ -755,17 +755,40 @@ test("laundering: a line removed from the OLD path of a renamed file does not li
   });
 });
 
-test("laundering control: a line removed from a scanned living file and added to an append-only record is a move (exit 0)", async () => {
+// Fix-now round 1 (Issue #254): the build's control here said a move out of a scanned living file is
+// allowed. That encoded the old rule and was also the exploit: a failing citation in a whole-file
+// scanned document was deleted there and pasted into an append-only record, which diff mode never
+// reads again. Inverted: only a removal from an append-only record licenses a move.
+for (const source of ["docs/STATE.md", "docs/backlog.md", "CLAUDE.md", "docs/plans/some-plan.md", "src/some-module.ts"]) {
+  test(`the move rule does not license an added line whose source removal came from a whole-file-scanned living document (${source})`, async () => {
+    await withRepo(async (fx) => {
+      const line = "- Note cites `docs/gone-move-living.md`.";
+      await fx.write(source, `# Header\n${line}\n`);
+      await fx.write("CHANGELOG.md", "# Changelog\n");
+      const base = await fx.commit("base");
+      assert.equal((await fx.qa14(ZERO_SHA, base)).code, 1, "control: the living document fails while it holds the line");
+      await fx.write(source, "# Header\n");
+      await fx.write("CHANGELOG.md", `# Changelog\n${line}\n`);
+      const head = await fx.commit("move a failing line out of a living document into the changelog");
+      const res = await fx.qa14(base, head);
+      assert.equal(res.code, 1, res.out);
+      assert.match(res.out, /docs\/gone-move-living\.md .*\[file: CHANGELOG\.md\]/);
+    });
+  });
+}
+
+test("laundering: a line removed from an append-only record that the diff deletes (nothing on disk) does not license an added copy", async () => {
   await withRepo(async (fx) => {
-    const line = "- Note cites `docs/gone-move-control.md`.";
-    await fx.write("docs/STATE.md", `# State\n${line}\n`);
+    const line = "- Row cites `docs/gone-laundry-deleted-record.md`.";
+    await fx.write("docs/REVIEW_LOG.md", `# Review log\n${line}\n`);
     await fx.write("CHANGELOG.md", "# Changelog\n");
     const base = await fx.commit("base");
-    await fx.write("docs/STATE.md", "# State\n");
+    await fx.remove("docs/REVIEW_LOG.md");
     await fx.write("CHANGELOG.md", `# Changelog\n${line}\n`);
-    const head = await fx.commit("move a line out of STATE");
+    const head = await fx.commit("delete a record, add its line elsewhere");
     const res = await fx.qa14(base, head);
-    assert.equal(res.code, 0, res.out);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /docs\/gone-laundry-deleted-record\.md .*\[file: CHANGELOG\.md\]/);
   });
 });
 
