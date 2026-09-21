@@ -622,6 +622,27 @@ test("makeExistsAtBase: asks git about the merge base once, and any git failure 
   assert.equal(await makeExistsAtBase(runner(() => 0, "\n"), "/repo", "base", "head")("CHANGELOG.md"), false, "empty merge base output");
 });
 
+test("makeExistsAtBase against real git: a path the base branch gained after the branch point reads absent", async () => {
+  await withRepo(async (fx) => {
+    await seedClean(fx);
+    await fx.git("checkout", "-q", "-b", "feature");
+    await fx.write("docs/feature-only.md", "# Feature\n");
+    await fx.commit("feature work");
+    await fx.git("checkout", "-q", "main");
+    await fx.write("docs/reviews/gained-on-base.md", "# Gained on the base branch after the branch point\n");
+    await fx.commit("base gains a report");
+
+    const gained = "docs/reviews/gained-on-base.md";
+    const tip = await realRunner("git", ["cat-file", "-e", `main:${gained}`], { cwd: fx.dir, encoding: "utf8" });
+    assert.equal(tip.code, 0, "control: the path exists at the tip of the base branch");
+
+    const existsAtBase = makeExistsAtBase(realRunner, fx.dir, "main", "feature");
+    assert.equal(await existsAtBase(gained), false, "absent at the merge base, so a move onto it is scanned whole");
+    assert.equal(await existsAtBase("CHANGELOG.md"), true, "present at the merge base");
+    assert.equal(await existsAtBase("docs/feature-only.md"), false, "added on the feature branch only");
+  });
+});
+
 test("diffText failing falls back to whole-file scanning, never to a vacuous pass", async () => {
   const files = { "CHANGELOG.md": "# Changelog\n- Old line.\n- New line.\n", "docs/REVIEW_LOG.md": "# Log\n- Row.\n" };
   const texts = await buildScanTexts(
