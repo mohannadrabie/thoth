@@ -547,6 +547,9 @@ test("a line moved verbatim by the real archive-sweep script from decisions.md t
 
 test("a moved line with one edit that adds a bad citation exits 1", async () => {
   await withRepo(async (fx) => {
+    // The archive already exists, so the sweep only appends: the moved row is the ONLY line the diff
+    // adds to it, which makes the removed original the sole licence available to that line.
+    await fx.write("docs/decisions-archive.md", DECISIONS_HEAD.replace("Decision Log", "Decision Log (archive)"));
     await fx.write("docs/decisions.md", DECISIONS_HEAD + decisionsRow("Resolved row, plain prose."));
     const base = await fx.commit("decisions with a resolved row");
 
