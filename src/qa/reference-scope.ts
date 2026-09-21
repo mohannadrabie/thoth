@@ -17,8 +17,8 @@
 //     canonical two-space JSON form the writing tool produces; any other form is scanned whole (see
 //     stripAdrCatalog). Applies in full-tree runs too.
 //
-// Nothing here is keyed on a token or on a path-plus-token pair: a citation that a diff adds to any
-// file, an append-only record included, is checked.
+// Nothing here is keyed on a token or on a path-plus-token pair. A citation that a diff adds to any
+// file, an append-only record included, is checked; the one exception is a moved line (below).
 //
 // Moved lines. An added line that is byte-identical (a trailing carriage return ignored) to a line
 // the same diff removes from an append-only record that this run scans (the archive sweep from the
@@ -31,6 +31,13 @@
 // record that diff mode never re-reads. Residual: a line that already sits in one record, unchecked
 // because old text is not re-read, can be re-added in another record as a move; it was already in
 // the repository.
+//
+// Known residual. A word-form issue citation whose number starts the NEXT line (an added line that
+// begins with a bare number, after an unchanged line ending in the word issue) is unclassified in
+// added-text scope, where a whole-file scan would flag it. No code change; disclosed here.
+//
+// Requirement drift. The QA-14 row in REQUIREMENTS.md still reads "every reference in a changed
+// file"; its amendment is tracked in Issue #252.
 //
 // Fails closed (whole-file scan, never a vacuous pass): a full-tree run; a diff that cannot be read;
 // a changed file the diff parser cannot attribute (a C-quoted path, a pure rename or mode change with
@@ -59,26 +66,32 @@ const MIRROR_CHAIN_KEY = "priorScope";
 /** Separator between added runs: text that cannot combine with either neighbour into a citation. */
 const RUN_BREAK = "---";
 
+/** One line a diff adds to a file. */
 export interface AddedLine {
   text: string;
   /** Which contiguous block of added lines (hunk or run within a hunk) this line belongs to. */
   run: number;
 }
+/** What a diff says about each file it names. A path whose header could not be read is in neither map. */
 export interface ParsedDiff {
   /** New-side path -> the lines the diff adds to it. A path is present only if its header was readable. */
   added: Map<string, AddedLine[]>;
   /** Old-side path -> the lines the diff removes from it. Only readable headers are recorded. */
   removed: Map<string, string[]>;
 }
+/** Injected I/O: everything buildScanTexts needs from git and the disk. */
 export interface ScanTextDeps {
+  /** The unified diff between base and head (three-dot), all files. */
   diffText: () => Promise<string>;
   /** File text at the head being checked, or null when the file does not exist there. */
   readFile: (repoRelativePath: string) => Promise<string | null>;
+  /** Whether QA-14 scans this path at all (the resolver's own file filter). */
   shouldScan: (repoRelativePath: string) => boolean;
   /** True when the path exists at the base of the diff. A rejection is read as "no": the file is scanned whole. */
   existsAtBase: (repoRelativePath: string) => Promise<boolean>;
 }
 
+/** True for a listed append-only file or a file under a listed directory. Exact and case-sensitive. */
 export function isAppendOnlyRecord(repoRelativePath: string): boolean {
   return (
     APPEND_ONLY_FILES.includes(repoRelativePath) ||
@@ -86,6 +99,7 @@ export function isAppendOnlyRecord(repoRelativePath: string): boolean {
   );
 }
 
+/** Drops one trailing carriage return, so a CRLF file and an LF file compare equal. */
 const stripCr = (line: string): string => (line.endsWith("\r") ? line.slice(0, -1) : line);
 
 // --- unified diff parsing -------------------------------------------------------------------------
@@ -204,7 +218,7 @@ export function stripAdrCatalog(text: string): string {
     return text;
   }
   if (!isObject(root)) return text;
-  if (text.replace(/\r\n/g, "\n").replace(/\n$/, "") !== JSON.stringify(root, null, 2)) return text;
+  if (text.replaceAll("\r\n", "\n").replace(/\n$/, "") !== JSON.stringify(root, null, 2)) return text;
   for (let node: unknown = root; isObject(node); node = node[MIRROR_CHAIN_KEY]) {
     if (isObject(node[MIRROR_KEY])) node[MIRROR_KEY] = null; // a non-object value under the key is authored text
   }
