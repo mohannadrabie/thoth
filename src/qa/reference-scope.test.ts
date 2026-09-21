@@ -447,11 +447,16 @@ const quotedPathDiff = [
   "",
 ].join("\n");
 
-function fakeDeps(files: Record<string, string>, diff: () => Promise<string>): Parameters<typeof buildScanTexts>[2] {
+function fakeDeps(
+  files: Record<string, string>,
+  diff: () => Promise<string>,
+  existsAtBase: (rel: string) => Promise<boolean> = () => Promise.resolve(true),
+): Parameters<typeof buildScanTexts>[2] {
   return {
     diffText: diff,
     readFile: (rel) => Promise.resolve(files[rel] ?? null),
     shouldScan: shouldScanFile,
+    existsAtBase,
   };
 }
 
@@ -487,6 +492,66 @@ test("a pure rename into an append-only path (no hunks in the diff) is scanned w
     assert.equal(res.code, 1, res.out);
     assert.match(res.out, /docs\/gone-renamed\.md .*\[file: docs\/reviews\/renamed-report\.md\]/);
   });
+});
+
+// Git emits ---/+++ headers only when a hunk exists, so a moved-and-edited file shows one added line
+// under its new path. A path that did not exist at the base is new content: it is checked whole.
+// One test per append-only path, generated from the exported constants so none can be left out.
+for (const dest of [...APPEND_ONLY_FILES, "docs/reviews/moved-report.md"]) {
+  test(`a rename WITH an edit into an append-only path scans the destination whole (${dest})`, async () => {
+    await withRepo(async (fx) => {
+      const body = Array.from({ length: 30 }, (_, i) => `- Stable line number ${i} in a file long enough for rename detection.`).join("\n");
+      await fx.write("docs/scratch.md", `# Scratch\n${body}\n- Standing example \`docs/gone-renamed-edit.md\`.\n`);
+      const base = await fx.commit("scratch with a standing example");
+      await mkdir(join(fx.dir, dirname(dest)), { recursive: true });
+      await fx.git("mv", "docs/scratch.md", dest);
+      await fx.write(dest, (await fx.read(dest)).replace("# Scratch", "# Scratch, reworded"));
+      const head = await fx.commit("rename with an edit");
+      assert.match(await fx.git("diff", "--name-status", "-M", base, head), /^R\d+\tdocs\/scratch\.md\t/, `git must see a rename into ${dest}`);
+      const res = await fx.qa14(base, head);
+      assert.equal(res.code, 1, `the moved body must be checked; output:\n${res.out}`);
+      const destPattern = dest.replace(/[./]/g, "\\$&");
+      assert.match(res.out, new RegExp(`docs/gone-renamed-edit\\.md .*\\[file: ${destPattern}\\]`));
+    });
+  });
+}
+
+test("a rename with an edit into an ordinary path is scanned whole (control: unchanged behavior)", async () => {
+  await withRepo(async (fx) => {
+    await fx.write("docs/scratch.md", "# Scratch\nStanding example `docs/gone-renamed-ordinary.md`.\n- filler one\n- filler two\n- filler three\n- filler four\n");
+    const base = await fx.commit("scratch");
+    await fx.git("mv", "docs/scratch.md", "docs/moved-ordinary.md");
+    await fx.write("docs/moved-ordinary.md", (await fx.read("docs/moved-ordinary.md")).replace("- filler four", "- filler 4"));
+    const head = await fx.commit("rename with an edit");
+    const res = await fx.qa14(base, head);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /docs\/gone-renamed-ordinary\.md .*\[file: docs\/moved-ordinary\.md\]/);
+  });
+});
+
+test("an append-only file that did not exist at the base is scanned whole even though the diff carries its headers and hunk", async () => {
+  const diff = [
+    "diff --git a/docs/reviews/r.md b/docs/reviews/r.md",
+    "index 1111111..2222222 100644",
+    "--- a/docs/reviews/r.md",
+    "+++ b/docs/reviews/r.md",
+    "@@ -1,2 +1,2 @@",
+    " # Report",
+    "+- The one edited line.",
+    "",
+  ].join("\n");
+  const files = { "docs/reviews/r.md": "# Report\n- Moved body line.\n- The one edited line.\n" };
+  const absent = await buildScanTexts(["docs/reviews/r.md"], false, fakeDeps(files, () => Promise.resolve(diff), () => Promise.resolve(false)));
+  assert.equal(absent.get("docs/reviews/r.md"), files["docs/reviews/r.md"]);
+  const present = await buildScanTexts(["docs/reviews/r.md"], false, fakeDeps(files, () => Promise.resolve(diff), () => Promise.resolve(true)));
+  assert.equal(present.get("docs/reviews/r.md"), "- The one edited line.");
+});
+
+test("a base-existence check that fails is treated as absent: whole-file, never a vacuous pass", async () => {
+  const diff = ["diff --git a/CHANGELOG.md b/CHANGELOG.md", "--- a/CHANGELOG.md", "+++ b/CHANGELOG.md", "@@ -1 +1,2 @@", " # Changelog", "+- New line.", ""].join("\n");
+  const files = { "CHANGELOG.md": "# Changelog\n- Old standing line.\n- New line.\n" };
+  const texts = await buildScanTexts(["CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve(diff), () => Promise.reject(new Error("git failed"))));
+  assert.equal(texts.get("CHANGELOG.md"), files["CHANGELOG.md"]);
 });
 
 test("diffText failing falls back to whole-file scanning, never to a vacuous pass", async () => {

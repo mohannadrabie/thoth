@@ -68,6 +68,8 @@ export interface ScanTextDeps {
   /** File text at the head being checked, or null when the file does not exist there. */
   readFile: (repoRelativePath: string) => Promise<string | null>;
   shouldScan: (repoRelativePath: string) => boolean;
+  /** True when the path exists at the diff's base commit. A rejection is treated as "unknown". */
+  existsAtBase?: (repoRelativePath: string) => Promise<boolean>;
 }
 
 export function isAppendOnlyRecord(repoRelativePath: string): boolean {
