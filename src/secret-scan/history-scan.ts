@@ -8,6 +8,13 @@
 // history that actually ships when this branch goes public — not `--all` refs, so an unrelated
 // branch's history isn't in scope for this check. Pass --all-refs to widen it. This is a
 // disclosed design choice, not an assumption (PRINCIPLES.md rule 18).
+//
+// Every blob is scanned. A NUL byte is an ordinary byte here: an earlier rule skipped a whole blob when
+// a NUL sat in its first 8000 bytes, which hid any secret in such a file (Issue 237). A blob is decoded
+// as latin1 and matched against every pattern; a legitimate binary that produces a match is handled by
+// the value-scoped allowlist below, the one exemption this gate has. UTF-16 text (a byte order mark and
+// interleaved NUL bytes) still matches nothing, because latin1 decoding leaves a NUL between every
+// character; that is a stated residual, Issue 246.
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -29,14 +36,6 @@ export interface HistoryMatch {
   /** sha256 (lowercase hex) of the matched bytes, computed when the match is found. The raw text is
    * never stored; this is what a value-scoped allowlist entry is compared against. */
   valueSha256: string;
-}
-
-function looksBinary(buf: Buffer): boolean {
-  const sampleLen = Math.min(buf.length, 8000);
-  for (let i = 0; i < sampleLen; i++) {
-    if (buf[i] === 0) return true;
-  }
-  return false;
 }
 
 export interface ScanOptions {
@@ -81,7 +80,6 @@ async function scanUnseenBlob(
   if (seenBlobs.has(sha)) return null; // dedupe: same blob content already scanned elsewhere
   seenBlobs.add(sha);
   const content = await git.catFileBlob(sha);
-  if (looksBinary(content)) return null;
   return content.toString("latin1");
 }
 

@@ -402,3 +402,42 @@ test("oss01-attack-e-legacy-shaped-report-grant-blocks-at-the-gate (pre-commit C
     assert.notEqual(res.code, 0, "a new report with a live literal and a legacy-shaped whole-file grant must refuse the commit");
   });
 });
+
+// Issue 237: a NUL byte in a staged file must not hide a secret in it from the pre-commit hook. The old rule
+// skipped a whole blob with a NUL in its first 8000 bytes. Literals are built at runtime, distinct per file.
+const NUL_KEY = (n: number): string => "AKIA" + ("NULFILE" + n).padEnd(16, "Q");
+const NUL_FILES: Array<{ path: string; nulAt: number | null }> = [
+  { path: "nul-at-0.dat", nulAt: 0 },
+  { path: "nul-at-1.dat", nulAt: 1 },
+  { path: "nul-at-7999.dat", nulAt: 7999 },
+  { path: "nul-at-8000.dat", nulAt: 8000 },
+  { path: "no-nul.txt", nulAt: null },
+];
+
+test("oss01-nul-byte-does-not-hide-a-secret (pre-commit CLI)", async (t) => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const keys = new Map<string, string>();
+    for (const [i, f] of NUL_FILES.entries()) {
+      const key = NUL_KEY(i);
+      keys.set(f.path, key);
+      const line = `k = ${key}\n`;
+      await writeFile(join(repoDir, f.path), f.nulAt === null ? line : "x".repeat(f.nulAt) + "\u0000\n" + line);
+    }
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "staged files holding keys must refuse the commit");
+    for (const f of NUL_FILES) {
+      await t.test(`the hook names ${f.path} and never prints its literal`, () => {
+        assert.ok(res.stdout.includes(f.path), `${f.path} must be named in the blocking output`);
+        assert.ok(!res.stdout.includes(keys.get(f.path) ?? "?"), "the raw literal is never printed");
+      });
+    }
+  });
+  // Control: a staged NUL-bearing file with nothing secret-shaped in it is not refused.
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "clean.dat"), "\u0000\nnothing secret-shaped here\n");
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.equal(res.code, 0, `control: a NUL-bearing file with no key passes:\n${res.stdout}${res.stderr}`);
+  });
+});

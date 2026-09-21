@@ -110,3 +110,111 @@ test("ipv4-private: matches a private-range address, not a public one", () => {
   priv.regex.lastIndex = 0;
   assert.equal(priv.regex.test("public DNS 8.8.8.8"), false);
 });
+
+// ================================================================================================
+// Issue 237 (the second decode miss the issue names): the scanner reads a blob as latin1, and JS `\s`
+// matches the latin1 character 0xA0. Inside the negated value class of generic-password-assignment that
+// let any UTF-8 character whose second byte is 0xA0 (a grave, for one) END the value early and hide the
+// password. The whitespace-sensitive tokens are enumerated below by a tokenizer over the pattern
+// sources, not by hand. Every planted value is built at runtime.
+// ================================================================================================
+
+interface WhitespaceToken {
+  token: string;
+  where: "outside" | "class" | "negated-class";
+  classBody: string | null;
+}
+
+/** Every `\s` and `\S` in a regex source and where it sits: outside any class, inside a class, or inside
+ * a negated class (the position that hides data). Honors escapes, so an escaped bracket opens no class. */
+function whitespaceTokens(source: string): WhitespaceToken[] {
+  const out: WhitespaceToken[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === "\\") {
+      const token = source.slice(i, i + 2);
+      if (token === "\\s" || token === "\\S") out.push({ token, where: "outside", classBody: null });
+      i += 2;
+      continue;
+    }
+    if (ch === "[") {
+      const negated = source[i + 1] === "^";
+      const start = i + (negated ? 2 : 1);
+      let j = start;
+      while (j < source.length && source[j] !== "]") j += source[j] === "\\" ? 2 : 1;
+      const body = source.slice(start, j);
+      for (let k = 0; k < body.length; k += body[k] === "\\" ? 2 : 1) {
+        const token = body.slice(k, k + 2);
+        if (body[k] === "\\" && (token === "\\s" || token === "\\S")) {
+          out.push({ token, where: negated ? "negated-class" : "class", classBody: body });
+        }
+      }
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+test("oss01-no-negated-whitespace-class-hides-a-high-byte", () => {
+  // The tokenizer is not blind: synthetic sources exercise each position it must tell apart.
+  assert.deepEqual(whitespaceTokens("[^'\"\\s]{8,}").map((t) => t.where), ["negated-class"]);
+  assert.deepEqual(whitespaceTokens("a\\s*b").map((t) => t.where), ["outside"]);
+  assert.deepEqual(
+    whitespaceTokens("[\\s\\S]*?").map((t) => [t.token, t.where, t.classBody]),
+    [["\\s", "class", "\\s\\S"], ["\\S", "class", "\\s\\S"]],
+  );
+  assert.deepEqual(whitespaceTokens("\\[\\s\\]").map((t) => t.where), ["outside"], "an escaped bracket opens no class");
+
+  const all = SECRET_PATTERNS.flatMap((p) => whitespaceTokens(p.regex.source).map((t) => ({ patternId: p.id, ...t })));
+  assert.ok(all.length > 0, "non-vacuous: the catalog has whitespace-sensitive tokens");
+  assert.ok(all.some((t) => t.where === "outside"), "non-vacuous: separator tokens are enumerated");
+  assert.ok(all.some((t) => t.where === "class" && t.classBody === "\\s\\S"), "non-vacuous: the any-character idiom is enumerated");
+
+  const hiding = all.filter((t) => t.where === "negated-class");
+  assert.deepEqual(hiding, [], "no whitespace escape may sit inside a negated class: latin1 0xA0 would end the value and hide it");
+  const unexpected = all.filter((t) => !(t.where === "outside" || (t.where === "class" && t.classBody === "\\s\\S")));
+  assert.deepEqual(unexpected, [], "every remaining whitespace token is a separator or the any-character idiom");
+});
+
+/** A fresh, non-global copy of the generic-password pattern, so no lastIndex leaks between cells. */
+function passwordRegex(): RegExp {
+  const p = findPattern("generic-password-assignment");
+  return new RegExp(p.regex.source, p.regex.flags.replace("g", ""));
+}
+const PASSWORD_NAME = ["pass", "word"].join("");
+
+test("oss01-high-byte-in-a-password-value-does-not-hide-it", () => {
+  const re = passwordRegex();
+  const misses: string[] = [];
+  let cells = 0;
+  for (let b = 0x80; b <= 0xff; b++) {
+    cells++;
+    const text = `${PASSWORD_NAME} = "abcd${String.fromCharCode(b)}efgh"`;
+    if (re.exec(text)?.[0] !== text) misses.push("0x" + b.toString(16).toUpperCase());
+  }
+  assert.equal(cells, 128, "derived: every high byte 0x80 to 0xFF was tried");
+  assert.deepEqual(misses, [], "a high byte inside a password value must leave the whole literal matched");
+});
+
+test("oss01-ascii-whitespace-still-ends-a-password-value", () => {
+  const re = passwordRegex();
+  const ascii: number[] = [];
+  for (let b = 0; b < 0x80; b++) if (/\s/.test(String.fromCharCode(b))) ascii.push(b);
+  assert.ok(ascii.length >= 6, "derived: the ASCII whitespace bytes come from the engine's own definition of whitespace");
+  assert.ok(re.test(`${PASSWORD_NAME} = "abcdefghijklmnop"`), "control: the same value with no whitespace matches");
+  for (const b of ascii) {
+    const text = `${PASSWORD_NAME} = "abcdefgh${String.fromCharCode(b)}ijklmnop"`;
+    assert.equal(re.test(text), false, `ASCII byte 0x${b.toString(16)} inside a value must still end it`);
+  }
+});
+
+test("oss01-latin1-nbsp-separator-still-matches", () => {
+  // A lone 0xA0 as the separator between name, operator and value is matched by the separator tokens'
+  // `\s*`. Those tokens are deliberately left as they are: narrowing them would open a new evasion.
+  const nbsp = String.fromCharCode(0xa0);
+  const text = `${PASSWORD_NAME}${nbsp}=${nbsp}"abcdefgh"`;
+  assert.equal(passwordRegex().exec(text)?.[0], text);
+});
