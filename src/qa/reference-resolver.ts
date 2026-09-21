@@ -54,6 +54,11 @@ export interface Citation {
   // unparseable, issue-candidate), where the distinction doesn't apply. Real digit examples
   // deliberately avoided here — see this file's own header dogfood note.
   markedVia?: "direct" | "continuation";
+  // Repo-relative path of the file the citation was found in. Set only by `resolveIssueCitations`
+  // (which knows which file each text came from); `scanReferences` works on one anonymous text and
+  // never sets it. `summarizeCitations` prints it on each failure line so a failing run names the
+  // file to fix instead of leaving the reader to search the tree.
+  file?: string;
 }
 
 export interface ReferenceResolverDeps {
@@ -551,9 +556,10 @@ export function summarizeCitations(citations: Citation[]): InstrumentResult {
   // never buried the way a silently-skipped or silently-resolved bare `#N` would be.
   const bad = citations.filter((c) => c.verdict !== "resolved" && c.verdict !== "unclassified");
   const unclassified = citations.filter((c) => c.verdict === "unclassified");
+  const where = (c: Citation): string => (c.file === undefined ? "" : ` [file: ${c.file}]`);
   const details = [
-    ...bad.map((c) => `[${c.verdict}] ${c.raw} — ${c.reason}`),
-    ...unclassified.map((c) => `[unclassified] ${c.raw} — ${c.reason}`),
+    ...bad.map((c) => `[${c.verdict}] ${c.raw} — ${c.reason}${where(c)}`),
+    ...unclassified.map((c) => `[unclassified] ${c.raw} — ${c.reason}${where(c)}`),
   ];
 
   if (bad.length > 0) {
@@ -721,8 +727,8 @@ export async function resolveIssueCitations(
     issueExists: (n) => issueCache.get(n) ?? null,
   };
   const citations: Citation[] = [];
-  for (const text of fileTexts.values()) {
-    citations.push(...scanReferences(text, realDeps));
+  for (const [file, text] of fileTexts) {
+    citations.push(...scanReferences(text, realDeps).map((c) => ({ ...c, file })));
   }
 
   return { citations, distinctIssueNumbers: queriedIssueNumbers.size, capExceeded: false };

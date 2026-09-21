@@ -21,10 +21,8 @@ function baseDeps(overrides: Partial<ReferenceResolverDeps> = {}): Omit<Referenc
   };
 }
 
-// The `file` field does not exist on `Citation` until the file-naming change lands; asserting the
-// object shape keeps this file type-clean in both the red and the green state.
 function withFile(c: Omit<Citation, "file">, file: string): Citation {
-  return { ...c, file } as Citation;
+  return { ...c, file };
 }
 
 // --- AC4a: each failure line names its file ---
@@ -63,13 +61,13 @@ test("AC4b: resolveIssueCitations tags every citation with the file it came from
   const runner: Runner = () => Promise.resolve({ stdout: '{"state":"OPEN"}', stderr: "", code: 0 });
   const { citations } = await resolveIssueCitations(fileTexts, baseDeps(), "mohannadrabie/thoth", runner);
   assert.ok(citations.length >= 4, `expected at least four citations, got ${citations.length}`);
-  const byRaw = new Map(citations.map((c) => [c.raw, (c as Citation & { file?: string }).file]));
+  const byRaw = new Map(citations.map((c) => [c.raw, c.file]));
   assert.equal(byRaw.get("docs/gone-one.md"), "docs/one.md");
   assert.equal(byRaw.get("ADR-0021"), "docs/one.md");
   assert.equal(byRaw.get("docs/gone-two.md"), "docs/two.md");
   assert.equal(byRaw.get("#5"), "docs/two.md");
   for (const c of citations) {
-    assert.equal(typeof (c as Citation & { file?: string }).file, "string", `citation ${c.raw} carries no file`);
+    assert.equal(typeof c.file, "string", `citation ${c.raw} carries no file`);
   }
 });
 
@@ -80,7 +78,7 @@ test("AC4b: the same raw citation in two files is reported once per file, each w
   ]);
   const runner: Runner = () => Promise.resolve({ stdout: "", stderr: "", code: 1 });
   const { citations } = await resolveIssueCitations(fileTexts, baseDeps(), "mohannadrabie/thoth", runner);
-  const files = citations.map((c) => (c as Citation & { file?: string }).file).sort();
+  const files = citations.map((c) => c.file).sort();
   assert.deepEqual(files, ["docs/one.md", "docs/two.md"]);
 });
 
