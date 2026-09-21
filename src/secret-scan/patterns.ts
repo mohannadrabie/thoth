@@ -38,7 +38,13 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   { id: "github-fine-grained-pat", description: "GitHub fine-grained personal access token", regex: /github_pat_[A-Za-z0-9]{20,}_[A-Za-z0-9]*/g },
   { id: "slack-token", description: "Slack token", regex: /xox[baprs]-[A-Za-z0-9-]{10,72}/g },
   { id: "private-key-block", description: "PEM private key block", regex: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g },
-  { id: "generic-password-assignment", description: "password/secret/token literal assignment", regex: /\b(?:password|passwd|secret|token|api_key|apikey)\s*[:=]\s*['"][^'"\s]{8,}['"]/gi },
+  // Issue 237: the value class lists ASCII whitespace by hand instead of using the whitespace escape. The
+  // scanner decodes a blob as latin1, and the whitespace escape matches the latin1 character 0xA0, so a
+  // UTF-8 character whose second byte is 0xA0 (an a-grave, C3 A0) ended the value early inside a negated
+  // class and hid the password. The separators around the value keep the whitespace escape on purpose:
+  // there it can only match more, and narrowing it would stop matching a file whose separator is a lone
+  // 0xA0. Pinned by patterns.test.ts.
+  { id: "generic-password-assignment", description: "password/secret/token literal assignment", regex: /\b(?:password|passwd|secret|token|api_key|apikey)\s*[:=]\s*['"][^'" \t\n\v\f\r]{8,}['"]/gi },
   // The suffix must be the END of the dotted name, not a middle segment — measured false
   // positive, GitHub Issue #113: every doc/hook mention of `.claude/settings.local.json` (a real
   // Claude Code config-filename convention, not a hostname), and English prose like
