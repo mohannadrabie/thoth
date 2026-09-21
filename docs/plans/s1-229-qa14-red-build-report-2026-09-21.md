@@ -370,3 +370,43 @@ Runs select the module's tests by name (the rule-specific tests, plus the mirror
 - **Full-tree residual, by ruling:** 182 failures before and after this round (110 in the immutable review reports, 72 elsewhere; the per-file list in section 12 is unchanged). The citation total moved from 5922 to 5997 because this round added text.
 - Protected paths: an empty diff for this round (`git diff --name-status eee54d2..HEAD` over the ci workflow, `src/lib/git.ts`, `REQUIREMENTS.md`, `CLAUDE.md`, `hooks`, `src/secret-scan`, the resolver test file, `docs/reviews`, `docs/decisions.md`, the state file and run log: 0 lines). `git diff --diff-filter=MDR --name-only master...HEAD -- docs/reviews`: 0 lines.
 - `src/qa/reference-resolver.ts` against master: 44 insertions, 10 deletions (this round added the base-existence helper, its wiring and the stderr statement).
+
+## 14. Round 2 close-out (targeted; Phase 2 continued)
+
+Scope: the one new red-team finding (LOW) and the code-reviewer's one optional missing check. Both round-2 reviewers had already ruled go and SHIP. No file outside `src/qa/reference-scope.ts` and `src/qa/reference-scope.test.ts` changed in code; no pre-existing test was edited.
+
+### 14.1 Commits
+
+| Commit | What |
+|---|---|
+| b127198 | Red-team LOW: the canonical-format comparison and the final re-serialization in `stripAdrCatalog` now sit inside the existing try, so a valid but very deeply nested `docs/.maat-state.json` is returned whole instead of throwing a call-stack RangeError. Doc comment extended by two lines. Test: "a valid but pathologically nested .maat-state.json is scanned whole, not thrown on". |
+| bcdcbc1 | Code-reviewer optional check: "makeExistsAtBase against real git: a path the base branch gained after the branch point reads absent". |
+
+### 14.2 Red evidence (commit b127198)
+
+| Step | Result |
+|---|---|
+| Test run before the fix (name-filtered to the new tests) | The new test fails with a call-stack RangeError raised by `JSON.stringify` inside `stripAdrCatalog` (the comparison line). The control assertion in the same test, that `JSON.parse` accepts the 20000-deep input, passed. Failing for the stated reason. |
+| Same run after the fix | Passes. |
+| Depth used | 20000 levels of a single-key object, valid JSON. |
+
+The real-git test (commit bcdcbc1) characterizes behavior that already held, so it was green on first run. Its evidence is the mutation below.
+
+### 14.3 Mutation results (full file, `node --test src/qa/reference-scope.test.ts`, baseline 63 tests)
+
+| Mutation | Result | Tests red |
+|---|---|---|
+| Comparison and re-serialization moved back outside the try (the pre-fix code) | pass 62, fail 1 | The pathologically nested test, alone. |
+| Merge-base lookup changed to resolve the base tip (`merge-base` with the base twice) | pass 62, fail 1 | The real-git merge-base test, alone. |
+| Merge-base lookup replaced by `rev-parse` of the base (the tip; the round-2 code-reviewer mutation named MB) | pass 61, fail 2 | The real-git merge-base test, and the fake-runner test that pins the `merge-base` command name. |
+
+All three mutations were applied to a working copy and reverted; the committed sources are the unmutated ones.
+
+### 14.4 Size pin and timing
+
+- `src/qa/reference-scope.ts` is 329 lines (was 328). The fix restructures the function without shrinking the file; the two added doc-comment lines carry the reason the throwing steps sit inside the try. The immutable code review cites line 327 of this file, which still exists.
+- Cost of the two new tests: about 0.04 s and 0.9 s. The file's wall time on this Windows machine is noisy (two full-file runs at 32.5 s and 33.7 s).
+
+### 14.5 Editorial correction to section 13.5
+
+The per-row red counts in section 13.5 are relative to a named per-row test subset (the tests that row was written to kill), not to the whole test file. The table does not name that subset per row. Red-team measured the inverted-existence mutation on the whole file at 18 red against the 6 in the table (red-team round 2, editorial item 3); the other four rows reproduce exactly on the whole file. The mutants are sound; only the column heading was ambiguous.
