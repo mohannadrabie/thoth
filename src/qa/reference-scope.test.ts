@@ -394,16 +394,58 @@ test(".maat-state.json: a bad citation in an authored field exits 1; the same te
   assert.match(stripAdrCatalog(state({ councilVerdict: { adrCatalog: { rule: `cite ${bad}` } } })), /gone-mirror/);
   // a non-object value under the key is authored text, not the mirror
   assert.match(stripAdrCatalog(state({ adrCatalog: `cite ${bad}` })), /gone-mirror/);
-  // a duplicate key cannot hide earlier authored text (a parse-and-reserialize would drop it)
-  const dup = `{"note": "authored ${bad}", "note": "clean", "adrCatalog": {"adrs": []}}`;
-  assert.match(stripAdrCatalog(dup), /gone-mirror/);
-  // a key spelled with an escape is not the mirror key, so it stays scanned
-  const escaped = `{"adr\\u0043atalog": {"rule": "cite ${bad}"}}`;
-  assert.match(stripAdrCatalog(escaped), /gone-mirror/);
   // unparseable JSON (or anything that is not one root object) is scanned whole
   assert.equal(stripAdrCatalog(`{"adrCatalog": {"rule": "cite ${bad}"`), `{"adrCatalog": {"rule": "cite ${bad}"`);
   assert.equal(stripAdrCatalog(`[1, 2] trailing`), `[1, 2] trailing`);
   assert.equal(stripAdrCatalog(""), "");
+});
+
+// Contract of the cut: the file is accepted only if it equals the two-space JSON.stringify of its own
+// parse (CRLF and one trailing newline aside). Equality proves the parse lost nothing, so authored
+// text cannot hide behind a duplicate key, an escaped key spelling, a comment or odd formatting.
+// Anything else is returned whole, which is stricter and never a pass. (Fix-now round 1: these cases
+// used to pin the hand-written tokenizer, which cut the mirror out of a file like these; the property
+// they guard, that authored text is never hidden, is unchanged.)
+test(".maat-state.json: a file that is not the canonical two-space serialization of its parse is scanned whole", () => {
+  const bad = "`docs/gone-mirror.md`";
+  const whole = (text: string): void => assert.equal(stripAdrCatalog(text), text);
+  const canonical = JSON.stringify({ adrCatalog: { rule: `cite ${bad}` } }, null, 2);
+
+  // a duplicate key: a parse-and-reserialize would drop the earlier authored value
+  whole(`{"note": "authored ${bad}", "note": "clean", "adrCatalog": {"adrs": []}}`);
+  // a duplicate mirror key: both copies stay, so nothing authored can hide in the shadowed one
+  whole(`{\n  "adrCatalog": {\n    "adrs": []\n  },\n  "adrCatalog": {\n    "rule": "cite ${bad}"\n  }\n}`);
+  // a key spelled with an escape is not the mirror key
+  whole(`{"adr\\u0043atalog": {"rule": "cite ${bad}"}}`);
+  // compact formatting, a comment, a byte order mark, a trailing comma, tab indentation
+  whole(JSON.stringify({ scope: "x", adrCatalog: { rule: `cite ${bad}` } }));
+  whole(`// note\n${canonical}`);
+  whole(`﻿${canonical}`);
+  whole(`{\n  "adrCatalog": {\n    "rule": "cite ${bad}"\n  },\n}`);
+  whole(JSON.stringify({ adrCatalog: { rule: `cite ${bad}` } }, null, "\t"));
+  // a non-object root, and two trailing newlines (more than the normalization allows)
+  whole(JSON.stringify([{ adrCatalog: { rule: `cite ${bad}` } }], null, 2));
+  whole(`${canonical}\n\n`);
+});
+
+test(".maat-state.json: CRLF line endings and one trailing newline are accepted, and escapes inside the mirror do not disturb the cut", () => {
+  const bad = "`docs/gone-mirror.md`";
+  const state = {
+    scope: "x",
+    adrCatalog: { adrs: [{ rule: `say "quote" and a \\ backslash then ${bad}`, more: "tab\there" }] },
+    priorScope: { note: `authored after ${bad}`, adrCatalog: { adrs: [{ rule: `nested "q" ${bad}` }] } },
+    tail: "authored tail",
+  };
+  const canonical = JSON.stringify(state, null, 2);
+  const crlf = canonical.replace(/\n/g, "\r\n");
+  for (const text of [canonical, `${canonical}\n`, crlf, `${crlf}\r\n`]) {
+    const out = stripAdrCatalog(text);
+    assert.equal(out.includes("say "), false, "the root mirror text is gone");
+    assert.equal(out.includes("nested "), false, "the nested mirror text is gone");
+    assert.match(out, /authored after `docs\/gone-mirror\.md`/, "authored text beside a nested mirror stays");
+    assert.match(out, /authored tail/, "authored text after the mirror stays");
+    assert.deepEqual(JSON.parse(out), { ...state, adrCatalog: null, priorScope: { ...state.priorScope, adrCatalog: null } });
+  }
 });
 
 test(".maat-state.json end to end: the mirror is excluded in diff mode and in full-tree mode; an authored field is not", async () => {
