@@ -1228,7 +1228,7 @@ test("sb2-unlock-command-never-embeds-a-shell-metacharacter-path", () => {
 /** A throwaway repo built with git plumbing only, so a path a filesystem would refuse (a double quote,
  * a pipe, an angle bracket) can still be a tree entry: no working-tree file is created for it. The
  * allowlist file is written to the working directory (untracked), which is where the gate reads it. */
-async function withPlumbingRepo<T>(files: Record<string, string>, fn: (dir: string) => Promise<T>): Promise<T> {
+async function withPlumbingRepo<T>(files: Record<string, string | Buffer>, fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-plumb-"));
   const blobs = await mkdtemp(join(tmpdir(), "oss01-sb2-blobs-"));
   try {
@@ -1758,4 +1758,130 @@ test("oss01-attack-e-report-grant-without-a-baseline-pin-is-caught-by-the-baseli
     const key = `${report}::aws-access-key-id`;
     assert.ok(unreviewedOccurrenceCount(raw, "aws-access-key-id", REVIEWED_BASELINE[key]?.hashes ?? []) > 0, "with no pinned baseline the live literal is reported as unreviewed");
   });
+});
+
+// ================================================================================================
+// Issue 237 (found by design-challenger, S-B2 pre-build round 1, attack A1): OSS-01 used to skip a whole
+// blob when a NUL byte sat in its first 8000 bytes, in the pre-commit hook and in CI, so any secret in
+// such a file was invisible. A NUL byte is an ordinary byte now: every blob is matched like any other.
+// Every planted literal is built at runtime and every NUL / high byte is an escape, never a raw byte in
+// this file. Hashes in assertions come from the independent `sha256` helper above. UTF-16 text (BOM plus
+// interleaved NUL) is a stated residual, Issue 246: nothing here claims it is covered.
+// ================================================================================================
+
+/** A body with a NUL byte at absolute byte `index` (ASCII filler before it) and the key line AFTER it, so
+ * the literal is only reachable if the scanner reads past the NUL. */
+function nulFirstBody(keyLine: string, index: number): string {
+  return "x".repeat(index) + "\u0000\n" + keyLine + "\n";
+}
+
+const NUL_OFFSETS = [0, 1, 7000, 7999, 8000, 9000];
+
+/** One file per NUL offset plus a NUL-free control, each with its own distinct runtime-built key literal. */
+function nulFixture(seed: number): { files: Record<string, string>; literals: Map<string, { text: string; match: string }> } {
+  const files: Record<string, string> = {};
+  const literals = new Map<string, { text: string; match: string }>();
+  NUL_OFFSETS.forEach((offset, i) => {
+    const path = `nul-at-${offset}.dat`;
+    const lit = novel("aws-access-key-id", seed + i);
+    files[path] = nulFirstBody(lit.text, offset);
+    literals.set(path, lit);
+  });
+  const control = novel("aws-access-key-id", seed + NUL_OFFSETS.length);
+  files["no-nul.txt"] = `${control.text}\n`;
+  literals.set("no-nul.txt", control);
+  return { files, literals };
+}
+
+test("oss01-nul-byte-does-not-hide-a-secret", async (t) => {
+  const { files, literals } = nulFixture(700);
+  await withPlumbingRepo(files, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    for (const [path, lit] of literals) {
+      await t.test(`scanHistory matches the key literal in ${path}`, () => {
+        const mine = matches.filter((m) => m.path === path);
+        assert.equal(mine.length, 1, `${path}: exactly one match expected, got ${mine.length}`);
+        assert.equal(mine[0]?.patternId, "aws-access-key-id");
+        assert.equal(mine[0]?.valueSha256, sha256(lit.match), "the hash is the independent hash of the literal");
+      });
+    }
+    assert.equal(matches.length, literals.size, "derived: one match per fixture file, nothing else");
+  });
+});
+
+test("oss01-nul-byte-does-not-hide-a-secret (history-scan CLI)", async (t) => {
+  const { files, literals } = nulFixture(720);
+  await withPlumbingRepo(files, async (dir) => {
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(cli.code, 1, `the CI entry point must fail on a tree holding keys, stderr: ${cli.stderr}`);
+    for (const [path, lit] of literals) {
+      await t.test(`the CI entry point names ${path}`, () => {
+        assert.ok(cli.stdout.includes(path), `${path} must be named in the blocking output`);
+        assert.ok(!cli.stdout.includes(lit.match), "the raw literal is never printed");
+      });
+    }
+  });
+  // Controls: the exit code means something. A NUL-free key repo fails; a NUL-bearing repo with no key passes.
+  const solo = novel("aws-access-key-id", 740);
+  await withPlumbingRepo({ "solo.txt": `${solo.text}\n` }, async (dir) => {
+    assert.equal((await runCli(HISTORY_SCAN_SCRIPT, dir)).code, 1, "control: a NUL-free key file fails the gate");
+  });
+  await withPlumbingRepo({ "clean.dat": nulFirstBody("nothing secret-shaped here", 0) }, async (dir) => {
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(cli.code, 0, `control: a NUL-bearing file with no key passes, got:\n${cli.stdout}${cli.stderr}`);
+  });
+});
+
+test("oss01-nul-bearing-blob-is-governed-by-the-value-scoped-allowlist", async () => {
+  const granted = novel("aws-access-key-id", 760);
+  const fresh = novel("aws-access-key-id", 761);
+  const legacy = novel("aws-access-key-id", 762);
+  const files = {
+    "granted.dat": `\u0000\n${granted.text}\n${fresh.text}\n`,
+    "legacy.dat": `\u0000\n${legacy.text}\n`,
+  };
+  const entries = [
+    { path: "granted.dat", patternId: "aws-access-key-id", valueSha256: [sha256(granted.match)], reason: "synthetic fixture" },
+    { path: "legacy.dat", patternId: "aws-access-key-id", reason: "legacy whole-file shape, must not be honored" },
+  ];
+  await withPlumbingRepo(files, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(entries));
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, allowlist);
+    assert.deepEqual(allowlisted.map((m) => [m.path, m.valueSha256]), [["granted.dat", sha256(granted.match)]], "the granted literal in a NUL-bearing blob is allowlisted");
+    assert.deepEqual(
+      blocking.map((m) => [m.path, m.valueSha256]).sort(),
+      [["granted.dat", sha256(fresh.match)], ["legacy.dat", sha256(legacy.match)]].sort(),
+      "a novel literal in the granted file and a legacy-shaped grant both block",
+    );
+    const result = summarizeMatches(matches, allowlist);
+    const output = [result.summary, ...result.details].join("\n");
+    assert.equal(result.ok, false);
+    assert.ok(result.details.some((d) => d.startsWith("ALLOWLISTED") && d.includes("granted.dat")), "the granted literal is still reported");
+    for (const secret of [granted.match, fresh.match, legacy.match]) assert.ok(!output.includes(secret), "no raw value in the output");
+  });
+  // Control: with only the granted literal present the same blob passes and is still reported.
+  await withPlumbingRepo({ "granted.dat": `\u0000\n${granted.text}\n` }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson([entries[0]]));
+    const result = summarizeMatches(await scanHistory(makeGitOps(realRunner, dir)), await loadAllowlist(join(dir, ALLOWLIST_PATH)));
+    assert.equal(result.ok, true, "an allowlisted NUL-bearing blob does not fail the gate");
+    assert.ok(result.details.some((d) => d.startsWith("ALLOWLISTED") && d.includes("granted.dat")), "and is reported, never silently dropped");
+  });
+});
+
+test("oss01-utf8-character-ending-in-0xa0-does-not-hide-a-password", async (t) => {
+  // The scanner reads a blob as latin1, where JS whitespace includes 0xA0. UTF-8 "a grave" is C3 A0 and
+  // "e acute" is C3 A9: the first used to end the password value early and hide it, the second never did.
+  const name = ["pass", "word"].join("");
+  for (const [label, ch] of [["a grave (C3 A0)", "à"], ["e acute (C3 A9), control", "é"]] as const) {
+    await t.test(`a password containing ${label} is matched`, async () => {
+      const line = `${name} = "abcd${ch}efgh"`;
+      await withPlumbingRepo({ "utf8-password.txt": `${line}\n` }, async (dir) => {
+        const found = (await scanHistory(makeGitOps(realRunner, dir))).filter((m) => m.patternId === "generic-password-assignment");
+        assert.equal(found.length, 1, "the password literal is matched");
+        assert.equal(found[0]?.valueSha256, sha256(line), "the hash is the independent hash of the file's own bytes");
+      });
+    });
+  }
 });
