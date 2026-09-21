@@ -42,7 +42,7 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   // scanner decodes a blob as latin1, and the whitespace escape matches the latin1 character 0xA0, so a
   // UTF-8 character whose second byte is 0xA0 (an a-grave, C3 A0) ended the value early inside a negated
   // class and hid the password. The separators around the value keep the whitespace escape on purpose:
-  // there it can only match more, and narrowing it would stop matching a file whose separator is a lone
+  // there it hides no data, and narrowing it would stop matching a file whose separator is a lone
   // 0xA0. Pinned by patterns.test.ts.
   { id: "generic-password-assignment", description: "password/secret/token literal assignment", regex: /\b(?:password|passwd|secret|token|api_key|apikey)\s*[:=]\s*['"][^'" \t\n\v\f\r]{8,}['"]/gi },
   // The suffix must be the END of the dotted name, not a middle segment — measured false
