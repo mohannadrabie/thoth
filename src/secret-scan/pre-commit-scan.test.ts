@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { realRunner } from "../lib/exec.ts";
 
 const SCAN_SCRIPT = fileURLToPath(new URL("./pre-commit-scan.ts", import.meta.url));
@@ -82,7 +83,7 @@ test("GitHub Issue #194 (red-team round-2, [MED], regression): a PASSING run's s
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "allowed.js", patternId: "aws-access-key-id", reason: "test fixture, not a real credential" },
+        { path: "allowed.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture, not a real credential" },
       ]),
     );
     await writeFile(join(repoDir, "allowed.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -134,7 +135,7 @@ test("R2: an allowlisted-but-real match does not fail the exit code -- the under
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "config.js", patternId: "aws-access-key-id", reason: "test fixture, not a real credential" },
+        { path: "config.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture, not a real credential" },
       ]),
     );
     await writeFile(join(repoDir, "config.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -151,7 +152,7 @@ test("R2: a match NOT on the allowlist still fails, even alongside an allowliste
     await writeFile(
       join(repoDir, "docs", "qa", "secret-scan-allowlist.json"),
       JSON.stringify([
-        { path: "allowed.js", patternId: "aws-access-key-id", reason: "test fixture" },
+        { path: "allowed.js", patternId: "aws-access-key-id", valueSha256: [sha256Of(FAKE_SECRET)], reason: "test fixture" },
       ]),
     );
     await writeFile(join(repoDir, "allowed.js"), `const key = "${FAKE_SECRET}";\n`);
@@ -303,5 +304,101 @@ test("R7 (red-team [SUSPICION->settled], regression): `git commit -am` with a se
     assert.notEqual(commitRes.code, 0, "git commit -am must auto-stage tracked.js's new content and refuse it");
     const afterLog = await gitOk(repoDir, "log", "-1", "--format=%H");
     assert.equal(afterLog, beforeLog, "nothing must land");
+  });
+});
+
+// ================================================================================================
+// Issues 136 and 203 (story S-B2): the pre-commit CLI honors only value-scoped entries. Novel values
+// are built at runtime so this file's text carries no new secret-shaped literal beyond FAKE_SECRET.
+// ================================================================================================
+
+function sha256Of(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+const NOVEL_SECRET = "AKIA" + "N".repeat(16); // AWS-key-shaped, built at runtime, never granted anywhere
+const ALLOWLIST_FILE = "docs/qa/secret-scan-allowlist.json";
+
+async function writeAllowlist(repoDir: string, entries: unknown[]): Promise<void> {
+  await mkdir(join(repoDir, "docs", "qa"), { recursive: true });
+  await writeFile(join(repoDir, ...ALLOWLIST_FILE.split("/")), JSON.stringify(entries));
+}
+
+const GRANT_FAKE = {
+  path: "allowed.js",
+  patternId: "aws-access-key-id",
+  valueSha256: [sha256Of(FAKE_SECRET)],
+  reason: "synthetic fixture, not a real credential",
+};
+
+test("oss01-allowlisted-file-still-blocks-a-novel-secret (pre-commit CLI: granted plus novel in one file)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeAllowlist(repoDir, [GRANT_FAKE]);
+    await writeFile(join(repoDir, "allowed.js"), `const a = "${FAKE_SECRET}";\nconst b = "${NOVEL_SECRET}";\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, `a novel secret in a granted file must refuse the commit:\n${res.stdout}`);
+    assert.match(res.stdout, /UNLOCK/, "the refusal names its unlock");
+    assert.ok(!res.stdout.includes(NOVEL_SECRET), "the raw novel value is never printed");
+  });
+});
+
+test("oss01-allowlisted-file-still-blocks-a-novel-secret (pre-commit CLI: novel alone in the granted file)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeAllowlist(repoDir, [GRANT_FAKE]);
+    await writeFile(join(repoDir, "allowed.js"), `const b = "${NOVEL_SECRET}";\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "the file is granted for a different value; the novel one must block");
+  });
+});
+
+test("oss01-allowlisted-file-still-blocks-a-novel-secret (pre-commit CLI: control, granted literal alone exits 0)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeAllowlist(repoDir, [GRANT_FAKE]);
+    await writeFile(join(repoDir, "allowed.js"), `const a = "${FAKE_SECRET}";\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.equal(res.code, 0, `positive control: the granted literal alone must pass:\n${res.stdout}\n${res.stderr}`);
+  });
+});
+
+test("sb2-partial-migration-does-not-leave-legacy-shape-entries-honored (pre-commit CLI)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const valid = (path: string) => ({ ...GRANT_FAKE, path });
+    await writeAllowlist(repoDir, [
+      valid("a.js"),
+      { path: "b.js", patternId: "aws-access-key-id", reason: "legacy shape: path and pattern only" },
+      valid("c.js"),
+    ]);
+    // Distinct bytes per file: the scanner dedupes byte-identical blobs, evaluating only the first path.
+    for (const f of ["a.js", "b.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}"; // ${f}\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "the legacy-shaped entry must not exempt b.js");
+    assert.match(res.stdout, /REJECTED-ENTRY index=1 path=b\.js pattern=aws-access-key-id/, "the rejected entry is named in the refusal");
+  });
+});
+
+test("sb2-partial-migration-control-all-valid-entries-are-honored (pre-commit CLI)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const valid = (path: string) => ({ ...GRANT_FAKE, path });
+    await writeAllowlist(repoDir, [valid("a.js"), valid("c.js")]);
+    for (const f of ["a.js", "c.js"]) await writeFile(join(repoDir, f), `const k = "${FAKE_SECRET}"; // ${f}\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.equal(res.code, 0, `control: value-scoped entries for the granted literal must pass:\n${res.stdout}`);
+  });
+});
+
+test("oss01-attack-e-legacy-shaped-report-grant-blocks-at-the-gate (pre-commit CLI)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const report = ["docs", "reviews", "zz-attack-e-report.md"].join("/");
+    await writeAllowlist(repoDir, [{ path: report, patternId: "aws-access-key-id", reason: "attacker-supplied whole-file grant" }]);
+    await mkdir(join(repoDir, "docs", "reviews"), { recursive: true });
+    await writeFile(join(repoDir, ...report.split("/")), `a live literal: ${NOVEL_SECRET}\n`);
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "a new report with a live literal and a legacy-shaped whole-file grant must refuse the commit");
   });
 });

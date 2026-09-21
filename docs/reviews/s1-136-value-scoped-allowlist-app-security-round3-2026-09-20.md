@@ -1,0 +1,86 @@
+# s1-136-value-scoped-allowlist: application-security confirm, round 3, 2026-09-20
+
+[app-security-reviewer]
+App Security Reviewer (Horus) -- reviewing for exploitable weakness
+
+- Story S-B2 (issues 136 and 203), branch `fix/s1-136-value-scoped-allowlist`, HEAD c0326d5. Delta under review: `git diff 0ca15db HEAD` (6 files: `src/secret-scan/history-scan.ts`, its test file, the ADR `docs/adr/thoth-0002-value-scoped-secret-scan-allowlist.md`, the phase-1 plan, the changelog, `docs/.maat-state.json`). Tier CRITICAL (not re-litigated). Targeted confirm of my round-2 APPROVE (`docs/reviews/s1-136-value-scoped-allowlist-app-security-round2-2026-09-19.md`, kept unedited).
+- ADR check: `node docs/adr-cache.mjs --ensure` printed `ADR cache HIT: reused 37 ADR(s) [adr/devops:12, adr/software-engineering:23, docs/adr:2] from catalog ... (fp b63f3ff) [CACHE=HIT]`. Rules read for my domain: THOTH-ADR-0002 (unlock-output rule, moved-base rule), devops ADR-0008, SE ADR-0001. No violation.
+- Method: real commands against the shipped code; every experiment in scratch repos and a scratch clone outside the repository. No tracked file edited, nothing pushed, the untracked root `prompt` file untouched. No payload, secret-shaped literal, allowlisted value or hash of one is written here: payloads are described and every scratch literal was built at runtime.
+
+## Verdict: APPROVE (round-2 LOW 1 is closed by removal and the removal is safe; the guidance that replaced it is correct for every pattern id; one pre-existing LOW remains and is tracked; one derived wording suspicion)
+
+The how-to line now names no path and no command, is one fixed ASCII string that no contributor input reaches, and the instruction it gives (hash the regex match text with any sha256 tool) produced the gate's own hash for 10 of 10 pattern ids in the catalog. Every wrong way I tried to follow it failed closed. Nothing in the delta widens what a printed line can carry: the set of places that print a raw path is the same four as at the base of the delta, at the same code, three lines lower.
+
+## Findings, ranked by exploitability x impact
+
+### 1. [LOW][demonstrated] Pre-existing, unchanged, tracked: three other line kinds still echo contributor-chosen text raw (round-2 LOW 2, plus its siblings)
+- **Evidence.** Raw-path emit sites in `src/secret-scan/history-scan.ts` at HEAD: `:278` (blocking match line), `:262` (allowlisted line), `:254` (rejected-entry line; `clip()` keeps every character except control characters, which become a question mark), and `:219` (behind the safe-set gate). At 0ca15db the same four sites exist (`:273`, `:257`, `:249`, `:216`); `git diff 0ca15db HEAD -U0` on that file touches none of them (the only lines mentioning a path are the removed how-to text). No new place prints a raw path; the delta did not worsen it.
+- **Demonstrated (scratch, real CLI).** The 17 blocking match lines whose path carries a payload, pasted raw and stripped into seven invocation modes: 63 of 230 runs executed a payload (this is also the positive control for the harness). Seven hostile allowlist entries (substitution, backticks, a newline plus a workflow-command lookalike, a U+2028, a percent-variable name, a 400-character path, bidi and zero-width characters) through the real CLI produced 7 rejected-entry lines plus a file-level rejection line: 0 lines not prefixed with two spaces and a dash, 0 lines starting with a double colon (no workflow-command forgery; the newline became a question mark). Pasted, 14 of 98 runs executed a payload (bash 4 of 14 per mode, PowerShell 1 of 14, cmd 0). Nothing in the tool's text tells anyone to paste any of these lines.
+- **Attack sketch.** A contributor names a file (or an allowlist entry) with a command substitution; a maintainer pastes the log line into a shell.
+- **Tracked.** Issue 241 covers the match line and a shell-safe channel. The allowlisted and rejected-entry lines are the same class and are not named there; fold them into that Issue rather than open a second one.
+- **Exposure:** LOW cap, basis: measured (1 of 374 tracked paths needs quoting today, a benign space; paths are contributor-chosen; a paste step is required and never requested). **Minimal fix:** print the path percent-encoded on those lines too and keep the raw spelling only where the `hash` lookup needs it (a design step, per Issue 241).
+
+### 2. [LOW][derived] Suspicion: "any sha256 tool" does not say local
+- **Evidence.** The how-to line (`src/secret-scan/history-scan.ts:238-245`) and the ADR row say "any sha256 tool over the literal in your own file". It presupposes a fixture, and the first line of the same block says a real secret is rotated and never allowlisted. A reader holding a real credential could still read "any tool" as an online hasher.
+- **Not demonstrated, not blocking, no test.** Prose reasoning only (derived, capped at LOW). Resolves as a residual-register or backlog line: say "a local sha256 tool" when the Issue 241 channel lands.
+
+### CLEAN, verified sound
+
+3. [CLEAN][demonstrated] **(1) Every unlock line, hostile and unusual names: zero payloads.** 65 tree entries built with git plumbing (`mktree`, so names a filesystem or `update-index` refuses are still entries), in 7 batches, each run twice: default `core.quotePath` and `core.quotePath=false` (14 runs of the real CLI, all exit 1). Names: command substitution, backticks, PowerShell subexpression inside double quotes, semicolon, single and double ampersand, pipe, output and input redirect, percent forms (comspec-style, double percent, the current-directory `CD` form including a construction whose encoding yields a percent, `CD`, percent shape, path variable, argument slots, star), quote parity, tab, ESC, BEL, SOH, DEL, CR, C1 CSI, NEL, U+2028, U+2029, a raw newline, a newline plus a workflow-command lookalike, names that are themselves workflow commands, bidi, zero-width, no-break space, full-width look-alikes, smart quotes and dashes, emoji, accents, names that already look percent-encoded, leading-dash names, dots, 3,000-, 5,000- and 100,000-character names, and safe paths. The 14 runs printed 172 unlock-class lines (133 distinct): 18 runnable commands (each fully matches the fixed safe-charset shape), 112 no-command lines (each fully matches a fixed shape whose only variable parts are `[A-Za-z0-9._/%-]`), 2 fixed UNLOCK lines, 1 distinct how-to line, 0 other. Every distinct line, raw with the two-space-dash prefix and prefix-stripped, was pasted into bash -c, bash on a script file, sh -c, Windows PowerShell 5.1 by encoded command and by script file, cmd /c, and cmd on a batch file: **1,846 runs, 0 payloads, 0 stray files** (4 of 266 lines per -c mode were over that mode's command-line length limit and ran only in the three script-file modes). Positive controls, same harness: the old command shape rebuilt from the same tree entries executed a payload in 49 of 230 runs (bash 12 of 32 per -c mode, PowerShell 5 and 6), and the pre-existing match lines in 63 of 230. Not run: PowerShell 7 (not installed) and a hosted CI log.
+4. [CLEAN][demonstrated] **No path in the how-to line, no workflow-command line, no new attacker text, no hash for a blocked match.** The how-to line was one single distinct string across all 14 runs, ASCII-only, with none of the shell metacharacters the test lists (square brackets excepted, inert here). 0 of 330 output lines were unprefixed (every line is the bracketed status line or starts with two spaces and a dash); 0 start with a double colon raw or trimmed; 0 of 172 unlock-class lines carry a non-ASCII byte. On a blocking-only 14-pair run: 0 sixty-four-hex strings in stdout and 0 in the written report. The percent encoding was verified in round 2 (1,112,064 code points, 200,000 random strings, injective, fixed charset); the delta changed only its comment, and the cmd caveat it now states is right: a percent-delimited hex-only name can only substitute text (I built the encoding shape that yields the current-directory form; it substitutes and runs nothing).
+5. [CLEAN][demonstrated] **(2) The guidance is safe and correct for every pattern id.** For each of the 10 catalog ids (the six in the allowlist plus the four others, including the two context-including ones, `generic-password-assignment` and `aws-secret-access-key`, whose match text includes key name, operator and quotes; also a multi-line block and a non-ASCII password character) I built a runtime literal in a committed file, took the regex match text, hashed those exact bytes with an external tool (`sha256sum`, and PowerShell `Get-FileHash`) and compared with the gate's own `hash` subcommand: 10 of 10 equal for both tools, and an allowlist entry holding that hash made the gate PASS 10 of 10. Wrong ways to follow it, each put into an entry and run through the gate: hashing with a trailing newline, the whole file, UTF-16 text, and (for the two context patterns) the secret alone: 0 of 38 produced an exemption; each blocked (fail closed; the 3 cases where the whole line equalled the match were the correct value by construction). A wrong hash can only vouch for the one text it is the hash of, so it cannot widen the exemption. The line does not push toward allowlisting a real secret: the block's first line says a real secret is rotated and removed, never allowlisted, and the how-to adds "or have a maintainer review it". Publishing an unsalted hash of a wrong grant is the ADR's existing residual row (0 of 108 blessed values use the two crackable context patterns, by instrument). ADR, plan and changelog wording match the code (the changelog omits the third alternative; see Editorial).
+6. [CLEAN][demonstrated] **The new test bites.** Scratch clone at HEAD, 15 mutants of `src/secret-scan/history-scan.ts`: the how-to told to quote, told to use the match-line spelling, told to paste, told to hand-quote, naming the hash command again, dropping Issue 241, dropping the rename alternative, dropping "matched text", adding a dollar sign, adding a backtick, embedding the raw last path, widening the safe set by a space, removing the line, printing it once per pair, and appending the percent-encoded path: 14 killed. The one survivor (the percent-encoded path appended to the how-to line) is inert percent-encoded ASCII and not worth a test. The touched test file has 49 pass; the three secret-scan test files 82 pass.
+7. [CLEAN][demonstrated] **(4) No regression; ratchet and untouched set hold.** A safe-path run: the printed command, with the tool path made absolute, exited 0 and printed one line with the hash beside the redacted form. A 14-pair repo: 10 runnable lines then one "4 more ... not listed" line (the ten-pair cap). `allowlist-tool verify --base 25291ff --migrated docs/qa/secret-scan-allowlist.json`: PASS, exit 0, 50 legacy and 50 migrated entries, 0 dropped, 108 value hashes, occurrences allowlisted before 1535 and after 1535, newly allowlisted 0, newly blocking 0. `git diff 0ca15db HEAD --stat` over `src/secret-scan/patterns.ts`, `src/secret-scan/pre-commit-scan.ts`, `src/secret-scan/simulated-commit.ts`, `src/secret-scan/pre-commit-scan.test.ts`, `src/secret-scan/allowlist-tool.ts`, `.github/workflows/ci.yml`, `.githooks/pre-commit`, `src/lib/git.ts`, `docs/STATE.md`, `docs/decisions.md`, `CLAUDE.md`, `docs/adr-cache.mjs`, `docs/qa/secret-scan-allowlist.json` and `docs/reviews`: empty (0 bytes). No stale hand-quote instruction remains outside the changelog, plan and review log, which describe its removal.
+8. [CLEAN][demonstrated] **(5) ADR rule 9 (moved-base count delta) is served; residual rows are accurate.** The ADR frontmatter holds 9 rules, the catalog entry in `docs/.maat-state.json` holds the same 9 (equal as sets), the body's Rules for agents holds 9 bold MUST bullets, and the moved-base rule is in all three (the ADR status is still "proposed"; acceptance is the human's). Spot-checked by instrument: verify prints 108 hashes and 17 credential-shaped; blessed by pattern, aws-access-key-id=12 (12 of 108), and the two context-including patterns are not among the six blessed ids (0 of 108); the allowlist has 50 entries and 50 distinct path and pattern pairs; `git ls-files` gives 374 tracked paths, exactly 1 outside the safe set (the one with a plain space), matching the new residual row.
+
+## Checks run (raw)
+
+```
+node --test src/secret-scan/history-scan.test.ts
+  tests 49  pass 49  fail 0  cancelled 0  skipped 0  todo 0
+node --test src/secret-scan/history-scan.test.ts src/secret-scan/allowlist-tool.test.ts src/secret-scan/pre-commit-scan.test.ts
+  tests 82  pass 82  fail 0  cancelled 0  skipped 0  todo 0
+npm test (full)
+  tests 941  suites 0  pass 941  fail 0  cancelled 0  skipped 0  todo 0   exit=0
+npm run typecheck   exit=0
+npm run lint        exit=0
+npm run oss:secret-scan   [OSS-01 history-scan] PASS: 0 blocking (1817 allowlisted)   exit=0
+allowlist-tool verify --base 25291ff --migrated docs/qa/secret-scan-allowlist.json   PASS   exit=0
+paste harness: 133 distinct unlock-class lines x 2 forms x 7 modes = 1846 runs, payloads 0 (controls: old shape 49/230, match lines 63/230)
+rejected-entry lines: 7 entries + file-level, 0 unprefixed, 0 double-colon; paste 14/98 (pre-existing class)
+hash matrix: 10/10 pattern ids equal (sha256sum and Get-FileHash); 0/38 wrong routes exempted
+mutants of the how-to line and safe set: 14 of 15 killed (the survivor is inert)
+catalog parity: 9 = 9 = 9, moved-base rule present in all three
+```
+
+## Findings to tests
+
+- Open findings 2 (one LOW demonstrated, one LOW derived); executable failing tests 0. Finding 1 is pre-existing display behaviour whose failing test belongs to Issue 241 (the red-team report names it); finding 2 is prose reasoning with no executable form. Both resolve as residual-register or Issue 241 scope lines, per rule 19. Nothing blocks and there is no condition.
+
+## Editorial (verdict-neutral)
+
+- The changelog names two alternatives (compute the hash, rename the path); the code line and the ADR name three (they add "have a maintainer review it").
+- The how-to line says "the regex match" without saying where the regexes live (`src/secret-scan/patterns.ts`); a developer who hashes the secret alone for a context pattern gets a hash that blocks (fail closed). The block's second UNLOCK line already states the include-context rule.
+- When more than ten pairs blocked and every hostile path falls beyond the tenth, the how-to line is not printed (it is set only for listed pairs) while the omitted-pairs line refers to "the no-command rule". Pre-existing, fail closed, cosmetic.
+
+## Single next action
+
+Manager: proceed with S-B2 to merge-handoff (the human owns the merge, the ADR acceptance and the named-exception decision for issue 89); fold finding 1's two sibling line kinds and finding 2's "local" wording into Issue 241.
+
+Persistence: this report; a REVIEW_LOG row; no bug Issue (0 new HIGH or MED).
+
+RECEIPT: verdict=APPROVE
+findings:
+1. [ISSUE][LOW][demonstrated] src/secret-scan/history-scan.ts:278 -- pre-existing and unchanged: match, allowlisted (:262) and rejected-entry (:254) lines echo contributor-chosen text raw; pasted into a shell they run a payload (match lines 63 of 230 runs, rejected 14 of 98) though nothing tells anyone to paste them; no new raw-path site, 0 unprefixed or double-colon lines; fold the two sibling kinds into Issue 241 (percent-encode the display)
+2. [SUSPICION][LOW][derived] src/secret-scan/history-scan.ts:238 -- "any sha256 tool" does not say local, so a reader holding a real credential could reach for an online hasher; say "a local sha256 tool" when Issue 241 lands (residual line, no test)
+3. [CLEAN][demonstrated] hostile names: 65 tree entries, 14 real-CLI runs, 172 unlock-class lines (18 runnable, 112 no-command, 2 fixed, 1 how-to), pasted raw and stripped in 7 modes, 1846 runs, 0 payloads; controls old shape 49 of 230, match lines 63 of 230
+4. [CLEAN][demonstrated] how-to line is one fixed ASCII string with no path (1 distinct across 14 runs), 0 workflow-command or unprefixed lines, 0 sixty-four-hex strings for blocked matches, the encoding comment on cmd percent forms is right
+5. [CLEAN][demonstrated] guidance correct and fail-closed: sha256 of the regex match text equals the gate hash for 10 of 10 pattern ids in sha256sum and Get-FileHash (context patterns included), gate PASS 10 of 10; 0 of 38 wrong routes exempted anything
+6. [CLEAN][demonstrated] new test bites: 14 of 15 mutants killed, the survivor (percent-encoded path in the how-to line) is inert
+7. [CLEAN][demonstrated] no regression: safe-path command runs and prints the hash, ten-pair cap holds, verify PASS (50 entries, 108 hashes, 1535 before and after, 0 newly allowlisted, 0 newly blocking), untouched-set diffstat empty; full 941/0/0, touched 82/0/0, typecheck, lint, secret-scan exit 0
+8. [CLEAN][demonstrated] ADR rule 9 served (frontmatter 9 = catalog 9 = body 9, moved-base rule in all three) and residual rows accurate (108, 17, 12 of 108, 0 of 108 context patterns, 50 distinct pairs, 1 of 374 unsafe path)
+counts: issues=1 suspicions=1 clean=6
+evidence: demonstrated=7 code-traced=0 derived=1
+checks="941/0/0"
+adr=HIT(3)
+report=docs/reviews/s1-136-value-scoped-allowlist-app-security-round3-2026-09-20.md

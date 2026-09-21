@@ -1,0 +1,114 @@
+// Spike for GitHub Issues #136 + #203 (story s1-136-value-scoped-allowlist), PRINCIPLES rules 17-18.
+// Question it answers: over the scanner's own scope, how many distinct (path, patternId, value-sha256)
+// triples exist, and how do they compare with the allowlist's (path, patternId) pairs today?
+// Scope reproduced exactly as src/secret-scan/history-scan.ts scans it: every commit reachable from
+// the given ref, blobs deduped by sha across the whole walk, binary blobs skipped, blob text decoded
+// latin1; plus the simulated pre-commit tree (src/secret-scan/pre-commit-scan.ts) with its own dedupe.
+// Output is COUNTS ONLY. No matched value, no hash, and no redaction prefix is ever printed.
+//
+// Run: node docs/spikes/s1-136-value-triples-2026-09-19.mjs [ref]
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { makeGitOps } from "../../src/lib/git.ts";
+import { realRunner } from "../../src/lib/exec.ts";
+import { SECRET_PATTERNS } from "../../src/secret-scan/patterns.ts";
+import { buildSimulatedCommit } from "../../src/secret-scan/simulated-commit.ts";
+
+const ref = process.argv[2] ?? "HEAD";
+const root = process.cwd();
+const git = makeGitOps(realRunner, root);
+
+const binary = (buf) => buf.subarray(0, Math.min(buf.length, 8000)).includes(0);
+// The matched BYTES (latin1 round trip of the scanner's decoded string) are what gets hashed.
+const digest = (s) => createHash("sha256").update(Buffer.from(s, "latin1")).digest("hex");
+
+async function scanCommits(commits) {
+  const seen = new Set();
+  const triples = new Map(); // key -> { path, patternId }
+  let occurrences = 0;
+  let nonAscii = 0;
+  let hashMs = 0;
+  let blobs = 0;
+  for (const commit of commits) {
+    for (const [path, sha] of await git.lsTree(commit)) {
+      if (seen.has(sha)) continue;
+      seen.add(sha);
+      const buf = await git.catFileBlob(sha);
+      if (binary(buf)) continue;
+      blobs++;
+      const text = buf.toString("latin1");
+      for (const p of SECRET_PATTERNS) {
+        p.regex.lastIndex = 0;
+        for (const m of text.matchAll(p.regex)) {
+          occurrences++;
+          if (/[^\x00-\x7f]/.test(m[0])) nonAscii++;
+          const t0 = performance.now();
+          const h = digest(m[0]);
+          hashMs += performance.now() - t0;
+          triples.set(`${path}\0${p.id}\0${h}`, { path, patternId: p.id });
+        }
+      }
+    }
+  }
+  return { triples, occurrences, nonAscii, hashMs, blobs, commits: commits.length };
+}
+
+const allowlist = JSON.parse(await readFile("docs/qa/secret-scan-allowlist.json", "utf8"));
+const grantKey = (e) => `${e.path}\0${e.patternId}`;
+const grants = new Set(allowlist.map(grantKey));
+
+const hist = await scanCommits(await git.revList(ref));
+const simSha = await buildSimulatedCommit(realRunner, root);
+const sim = await scanCommits([simSha]);
+
+const union = new Map([...hist.triples, ...sim.triples]);
+const pairs = new Map();
+const byPattern = {};
+for (const [k, v] of union) {
+  const pk = `${v.path}\0${v.patternId}`;
+  pairs.set(pk, (pairs.get(pk) ?? 0) + 1);
+  byPattern[v.patternId] = (byPattern[v.patternId] ?? 0) + 1;
+}
+let nonGrantedTriples = 0;
+for (const v of union.values()) if (!grants.has(`${v.path}\0${v.patternId}`)) nonGrantedTriples++;
+const grantsWithMatch = [...grants].filter((g) => pairs.has(g)).length;
+const perPair = [...pairs.values()].sort((a, b) => b - a);
+const nonGrantedPairs = [...pairs.keys()].filter((k) => !grants.has(k)).length;
+
+console.log(`ref=${ref}`);
+console.log(`history: commits=${hist.commits} uniqueTextBlobsScanned=${hist.blobs} occurrences=${hist.occurrences} distinctTriples=${hist.triples.size} nonAsciiMatches=${hist.nonAscii}`);
+console.log(`simulated pre-commit tree: blobsScanned=${sim.blobs} occurrences=${sim.occurrences} distinctTriples=${sim.triples.size} nonAsciiMatches=${sim.nonAscii}`);
+console.log(`union distinctTriples=${union.size} distinctPairs=${pairs.size} allowlistEntries=${allowlist.length} distinctGrantPairs=${grants.size}`);
+console.log(`by pattern: ${JSON.stringify(byPattern)}`);
+console.log(`grants matching something: ${grantsWithMatch} of ${grants.size}`);
+console.log(`non-granted triples (would block today): ${nonGrantedTriples}; non-granted pairs: ${nonGrantedPairs}`);
+console.log(`triples per pair, top 10: ${perPair.slice(0, 10).join(",")}`);
+console.log(`hash cost: ${hist.occurrences + sim.occurrences} digests in ${(hist.hashMs + sim.hashMs).toFixed(2)} ms total (history ${hist.hashMs.toFixed(2)} ms, simulated tree ${sim.hashMs.toFixed(2)} ms)`);
+
+// Sharp end named by docs/backlog.md (human ruling): three pairs on the pattern-catalog test file.
+const NAMED = ["github-fine-grained-pat", "github-pat", "internal-hostname"].map(
+  (id) => `src/secret-scan/patterns.test.ts\0${id}`,
+);
+console.log(`human-named pairs (fine-grained-pat, github-pat, internal-hostname) distinct values: ${NAMED.map((k) => pairs.get(k) ?? 0).join(",")}`);
+
+// Issue #203 input: credential-shaped grants, split by whether the path is under docs/reviews/. A grant
+// is a distinct (path, patternId) pair; values are counted from the file text as it is today (what the
+// REVIEWED_BASELINE guard compares), not from history.
+const NON_CRED = new Set(["internal-hostname", "ipv4-private", "email-address"]);
+const credGrants = [...grants].filter((g) => !NON_CRED.has(g.split("\0")[1]));
+const reportGrants = credGrants.filter((g) => g.startsWith("docs/reviews/"));
+let reportLiveValues = 0;
+let reportGrantsWithLive = 0;
+for (const g of reportGrants) {
+  const [path, id] = g.split("\0");
+  const pat = SECRET_PATTERNS.find((x) => x.id === id);
+  const raw = await readFile(path, "utf8");
+  const vals = new Set([...raw.matchAll(new RegExp(pat.regex.source, pat.regex.flags))].map((m) => digest(m[0])));
+  reportLiveValues += vals.size;
+  if (vals.size > 0) reportGrantsWithLive++;
+}
+console.log(
+  `credential-shaped grant pairs=${credGrants.length}; under docs/reviews/=${reportGrants.length} ` +
+    `(with a live value in today's text: ${reportGrantsWithLive}, distinct live values across them: ${reportLiveValues}); ` +
+    `other=${credGrants.length - reportGrants.length}`,
+);
