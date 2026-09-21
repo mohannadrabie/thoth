@@ -420,7 +420,7 @@ test(".maat-state.json: a file that is not the canonical two-space serialization
   // compact formatting, a comment, a byte order mark, a trailing comma, tab indentation
   whole(JSON.stringify({ scope: "x", adrCatalog: { rule: `cite ${bad}` } }));
   whole(`// note\n${canonical}`);
-  whole(`﻿${canonical}`);
+  whole(String.fromCharCode(0xfeff) + canonical);
   whole(`{\n  "adrCatalog": {\n    "rule": "cite ${bad}"\n  },\n}`);
   whole(JSON.stringify({ adrCatalog: { rule: `cite ${bad}` } }, null, "\t"));
   // a non-object root, and two trailing newlines (more than the normalization allows)

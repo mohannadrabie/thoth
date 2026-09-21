@@ -10,10 +10,12 @@
 //     base (a new file, the destination of a rename) has no old text to skip and is checked whole. A
 //     full-tree run, and any file this module cannot attribute in the diff (see "Fails closed" below),
 //     is checked whole too.
-//  2. GENERATED_MIRROR_FILE. The adrCatalog cache inside docs/.maat-state.json is regenerated from
-//     ADR files under adr/, which this repository does not author and QA-14 never scans. It is
+//  2. GENERATED_MIRROR_FILE. The adrCatalog cache inside docs/.maat-state.json is a generated cache
+//     of ADR text, regenerated from the ADR files, which are the source of truth. It is
 //     dropped before scanning (root object and the priorScope chain only); every other field of the
-//     file, authored notes included, is scanned whole. Applies in full-tree runs too.
+//     file, authored notes included, is scanned whole. The cut is made only on a file in the
+//     canonical two-space JSON form the writing tool produces; any other form is scanned whole (see
+//     stripAdrCatalog). Applies in full-tree runs too.
 //
 // Nothing here is keyed on a token or on a path-plus-token pair: a citation that a diff adds to any
 // file, an append-only record included, is checked.
@@ -49,7 +51,7 @@ export const APPEND_ONLY_FILES: readonly string[] = [
 ];
 /** Directories whose every file is an append-only, dated record (immutable once merged). */
 export const APPEND_ONLY_DIR_PREFIXES: readonly string[] = ["docs/reviews/"];
-/** File holding a generated cache of ADR text this repository does not author. */
+/** File holding a generated cache of ADR text. */
 export const GENERATED_MIRROR_FILE = "docs/.maat-state.json";
 /** The generated key inside GENERATED_MIRROR_FILE, and the key its nested snapshots hang from. */
 const MIRROR_KEY = "adrCatalog";
@@ -183,89 +185,16 @@ export function parseUnifiedDiff(diffText: string): ParsedDiff {
 
 // --- the generated mirror -------------------------------------------------------------------------
 
-function skipWhitespace(t: string, from: number): number {
-  let i = from;
-  while (i < t.length && " \t\r\n".includes(t.charAt(i))) i += 1;
-  return i;
-}
-
-/** End index (exclusive) of the string token starting at `from`. Input is known-valid JSON. */
-function skipString(t: string, from: number): number {
-  let i = from + 1;
-  while (i < t.length) {
-    const c = t.charAt(i);
-    if (c === "\\") i += 2;
-    else if (c === '"') return i + 1;
-    else i += 1;
-  }
-  return i;
-}
-
-/** End index (exclusive) of the object or array starting at `from`. Input is known-valid JSON. */
-function skipContainer(t: string, from: number): number {
-  let depth = 0;
-  let i = from;
-  while (i < t.length) {
-    const c = t.charAt(i);
-    if (c === '"') {
-      i = skipString(t, i);
-      continue;
-    }
-    if (c === "{" || c === "[") depth += 1;
-    else if (c === "}" || c === "]") {
-      depth -= 1;
-      if (depth === 0) return i + 1;
-    }
-    i += 1;
-  }
-  return i;
-}
-
-/** End index (exclusive) of the JSON value starting at `from`. Input is known-valid JSON. */
-function skipValue(t: string, from: number): number {
-  const first = t.charAt(from);
-  if (first === '"') return skipString(t, from);
-  if (first === "{" || first === "[") return skipContainer(t, from);
-  let i = from;
-  while (i < t.length && !",}] \t\r\n".includes(t.charAt(i))) i += 1; // number, true, false, null
-  return i;
-}
-
-interface KeySpan {
-  key: string; // the key as written between its quotes, escapes unresolved
-  valueStart: number;
-  valueEnd: number;
-}
-
-/** Every member of the object starting at `objectStart`, duplicates included. Input is known-valid JSON. */
-function objectMembers(t: string, objectStart: number): KeySpan[] {
-  const members: KeySpan[] = [];
-  let i = skipWhitespace(t, objectStart + 1);
-  while (i < t.length && t.charAt(i) !== "}") {
-    const keyEnd = skipString(t, i);
-    const key = t.slice(i + 1, keyEnd - 1);
-    i = skipWhitespace(t, skipWhitespace(t, keyEnd) + 1); // past the colon
-    const valueEnd = skipValue(t, i);
-    members.push({ key, valueStart: i, valueEnd });
-    i = skipWhitespace(t, valueEnd);
-    if (t.charAt(i) === ",") i = skipWhitespace(t, i + 1);
-  }
-  return members;
-}
-
-function collectMirrorSpans(t: string, objectStart: number, spans: [number, number][]): void {
-  for (const m of objectMembers(t, objectStart)) {
-    if (t.charAt(m.valueStart) !== "{") continue; // a non-object value under either key is authored text
-    if (m.key === MIRROR_KEY) spans.push([m.valueStart, m.valueEnd]);
-    else if (m.key === MIRROR_CHAIN_KEY) collectMirrorSpans(t, m.valueStart, spans);
-  }
-}
+type JsonObject = Record<string, unknown>;
+const isObject = (value: unknown): value is JsonObject => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
  * Text of GENERATED_MIRROR_FILE with each adrCatalog object (root, and along the priorScope chain)
- * cut out of the ORIGINAL text. Working on the original text, not on a parse-and-reserialize, keeps
- * every other character scannable: a duplicate key cannot hide an earlier value, and no escape is
- * decoded into or out of a citation. Anything that is not one valid JSON object is returned whole.
+ * replaced by null. The file is accepted only if it equals the two-space JSON.stringify of its own
+ * parse (CRLF and one trailing newline aside): equality proves the parse lost nothing, so authored
+ * text cannot hide behind a duplicate key, an escaped key spelling, a comment or odd formatting.
+ * Anything else, unparseable input included, is returned whole. Stricter, never a pass; the cost is
+ * that a change to the format of the tool that writes this file turns QA-14 red on the mirror text.
  */
 export function stripAdrCatalog(text: string): string {
   let root: unknown;
@@ -274,13 +203,12 @@ export function stripAdrCatalog(text: string): string {
   } catch {
     return text;
   }
-  if (root === null || typeof root !== "object" || Array.isArray(root)) return text;
-  const spans: [number, number][] = [];
-  collectMirrorSpans(text, skipWhitespace(text, 0), spans);
-  spans.sort((a, b) => b[0] - a[0]); // cut from the end so earlier offsets stay valid
-  let out = text;
-  for (const [start, end] of spans) out = `${out.slice(0, start)}null${out.slice(end)}`;
-  return out;
+  if (!isObject(root)) return text;
+  if (text.replace(/\r\n/g, "\n").replace(/\n$/, "") !== JSON.stringify(root, null, 2)) return text;
+  for (let node: unknown = root; isObject(node); node = node[MIRROR_CHAIN_KEY]) {
+    if (isObject(node[MIRROR_KEY])) node[MIRROR_KEY] = null; // a non-object value under the key is authored text
+  }
+  return JSON.stringify(root, null, 2);
 }
 
 // --- per-file scan text ---------------------------------------------------------------------------
