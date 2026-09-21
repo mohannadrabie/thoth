@@ -965,6 +965,82 @@ test("added text from separate runs is never joined into a false adjacency", asy
   assert.equal(cites.some((c) => /^issue#5$/i.test(c.raw)), false);
 });
 
+// Fix-now round 1 (code-reviewer finding 3): assertions that kill three surviving mutants of the
+// module: pendingBreak, the run split inside a hunk, and the tab handling in a header path.
+
+function changelogHunk(...body: string[]): string {
+  return ["diff --git a/CHANGELOG.md b/CHANGELOG.md", "--- a/CHANGELOG.md", "+++ b/CHANGELOG.md", ...body, ""].join("\n");
+}
+
+test("a licensed (moved) line between two added lines separates them in the scanned text", async () => {
+  const diff = [
+    "diff --git a/docs/decisions.md b/docs/decisions.md",
+    "--- a/docs/decisions.md",
+    "+++ b/docs/decisions.md",
+    "@@ -1,2 +1 @@",
+    " # Decisions",
+    "-- Moved line.",
+    changelogHunk("@@ -1 +1,4 @@", " # Changelog", "+- First new line.", "+- Moved line.", "+- Second new line."),
+  ].join("\n");
+  const files = { "docs/decisions.md": "# Decisions\n", "CHANGELOG.md": "# Changelog\n- First new line.\n- Moved line.\n- Second new line.\n" };
+  const texts = await buildScanTexts(["docs/decisions.md", "CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve(diff)));
+  assert.equal(texts.get("CHANGELOG.md"), "- First new line.\n---\n- Second new line.");
+});
+
+test("added lines split by a context line inside one hunk are separate runs", async () => {
+  const diff = changelogHunk("@@ -1,2 +1,4 @@", " # Changelog", "+- Added A.", " - stable context", "+- Added B.");
+  const files = { "CHANGELOG.md": "unused\n" };
+  const texts = await buildScanTexts(["CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve(diff)));
+  assert.equal(texts.get("CHANGELOG.md"), "- Added A.\n---\n- Added B.");
+  const runs = parseUnifiedDiff(diff).added.get("CHANGELOG.md")?.map((l) => l.run) ?? [];
+  assert.equal(runs.length, 2);
+  assert.notEqual(runs[0], runs[1]);
+});
+
+test("added lines split by a removed line inside one hunk are separate runs", async () => {
+  const diff = changelogHunk("@@ -1,2 +1,3 @@", " # Changelog", "+- Added A.", "-- Old removed line.", "+- Added B.");
+  const files = { "CHANGELOG.md": "unused\n" };
+  const texts = await buildScanTexts(["CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve(diff)));
+  assert.equal(texts.get("CHANGELOG.md"), "- Added A.\n---\n- Added B.");
+});
+
+test("two added lines with nothing between them stay one run", async () => {
+  const diff = changelogHunk("@@ -1 +1,3 @@", " # Changelog", "+- Added A.", "+- Added B.");
+  const files = { "CHANGELOG.md": "unused\n" };
+  const texts = await buildScanTexts(["CHANGELOG.md"], false, fakeDeps(files, () => Promise.resolve(diff)));
+  assert.equal(texts.get("CHANGELOG.md"), "- Added A.\n- Added B.");
+});
+
+test("parseUnifiedDiff: git's trailing tab after a header path that holds a space is not part of the path", () => {
+  const diff = [
+    "diff --git a/docs/reviews/my report.md b/docs/reviews/my report.md",
+    "--- a/docs/reviews/my report.md\t",
+    "+++ b/docs/reviews/my report.md\t",
+    "@@ -1,2 +1,2 @@",
+    " # Report",
+    "-Old line.",
+    "+New line.",
+    "",
+  ].join("\n");
+  const parsed = parseUnifiedDiff(diff);
+  assert.deepEqual([...parsed.added.keys()], ["docs/reviews/my report.md"]);
+  assert.deepEqual(parsed.added.get("docs/reviews/my report.md")?.map((l) => l.text), ["New line."]);
+  assert.deepEqual(parsed.removed.get("docs/reviews/my report.md"), ["Old line."]);
+});
+
+test("an addendum to an existing report whose path contains a space is scanned as added text, not whole", async () => {
+  await withRepo(async (fx) => {
+    await fx.write("docs/reviews/my report.md", "# Report\n\nOld example `docs/gone-space-old.md`.\n");
+    const base = await fx.commit("report with a space in its name");
+    await append(fx, "docs/reviews/my report.md", "\nAddendum cites `docs/gone-space-new.md`.\n");
+    const head = await fx.commit("addendum");
+    const res = await fx.qa14(base, head);
+    assert.equal(res.code, 1, res.out);
+    assert.match(res.out, /docs\/gone-space-new\.md .*\[file: docs\/reviews\/my report\.md\]/);
+    assert.doesNotMatch(res.out, /gone-space-old/);
+  });
+});
+
 test("scope constants: the append-only set and the mirror are the ones the requirement text names", () => {
   assert.deepEqual([...APPEND_ONLY_FILES].sort(), ["CHANGELOG.md", "docs/REVIEW_LOG.md", "docs/decisions-archive.md", "docs/decisions.md"]);
   assert.deepEqual([...APPEND_ONLY_DIR_PREFIXES], ["docs/reviews/"]);
