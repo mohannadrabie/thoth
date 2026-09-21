@@ -53,10 +53,10 @@
 | AC4a | pass | three tests, section AC4a of `src/qa/reference-scope.test.ts` |
 | AC4b | pass | four tests, section AC4b of the same file |
 | AC5 | pass | `git diff --diff-filter=MDR --name-only master...HEAD -- docs/reviews` printed nothing, exit 0 |
-| AC6 | pass except QA-14 rows | section 6 (QA-14 diff-mode and full-tree rows are in section 12, after the docs commits) |
+| AC6 | pass | sections 6 and 12 (the full-tree QA-14 run exits 1 by design; its residual is in section 12) |
 | AC7 | measured | section 7 |
 | AC8 | pass | AC1 and AC3d above are the regression tests |
-| AC9 | see section 12 | `node src/qa/reference-resolver.ts master HEAD` on the final head |
+| AC9 | pass | `node src/qa/reference-resolver.ts master HEAD` exits 0 on the head after commit 7 (section 12) |
 | AC10 | pass | `APPEND_ONLY_FILES`, `APPEND_ONLY_DIR_PREFIXES`, `GENERATED_MIRROR_FILE` are named exports with a doc comment each; the module header states the reason for both narrowings and what fails closed; the Manager's ruling row names what QA-14 no longer checks |
 | AC11 | pass | see section 8 |
 
@@ -112,7 +112,7 @@ The plan's M1 to M4 plus the Manager's M5, and further mutations for the fail-cl
 | `npm run lint` | 0 | no output |
 | `node src/qa/completeness-claim-checker.ts` (QA-15) | 0 | `PASS: 2 file(s) checked, all completeness claims verified.` |
 | `node src/qa/broken-instrument-gate.ts` (QA-16) | 0 | `VACUOUS-PASS: 0 known-broken instruments registered` (pre-existing: nothing is registered) |
-| QA-14 diff-mode `master HEAD`; QA-14 full-tree | see section 12 | |
+| QA-14 diff-mode `master HEAD`; QA-14 full-tree | 0; 1 | section 12 |
 
 `src/qa/reference-resolver.test.ts` is unmodified by this story (empty diff against master), so no existing test was edited. Test count for the resolver file is 85 because the file contained 85 tests at the base.
 
@@ -184,6 +184,52 @@ Method (as in the plan): the 15 most recent PR merges on master's first-parent h
 - **Setting STATE.md and backlog.md aside is what commit 5 does for the current tree.** Historical merges cannot show it, because their files are read at the merge commit.
 - **Reading.** In every merge the shipped figure is below the whole-file figure. What remains is text the PR itself added: new review reports quoting standing example names (eleven of the twelve merges that still fail), plus additions to REVIEW_LOG.md, CHANGELOG.md, decisions.md, a plan, hooks and CLAUDE.md. That is the accepted residual: the gate flags new text that quotes an example.
 
-## 12. Final gate runs and full-tree residual (measured at the final head)
+## 12. Final gate runs and full-tree residual (measured at the head after commit 7)
 
-Recorded in commit 8, after the last docs commit, so that each run sees the final tree.
+Runs at dd11898 (working tree clean). Raw result lines and exit codes:
+
+| Command | Exit | Result |
+|---|---|---|
+| `node src/qa/reference-resolver.ts master HEAD` (QA-14 diff mode, AC9) | 0 | `PASS: 567 citation(s): 448 resolved, 119 unclassified (non-blocking, no explicit citation marker) — 0 failed.` |
+| `node src/qa/reference-resolver.ts 0000000000000000000000000000000000000000 HEAD` (QA-14 full-tree) | 1 | `FAIL: 182 of 5922 citation(s) failed to resolve; 866 more unclassified (non-blocking).` |
+| `node src/qa/completeness-claim-checker.ts` (QA-15) | 0 | `PASS: 2 file(s) checked, all completeness claims verified.` |
+
+- **AC9 met:** the story's own diff, including the plan, the CHANGELOG entry, this report and the reworded living docs, exits 0 with no failing citation.
+- Sections 6 and 12 together complete AC6: every command exits 0 except the full-tree QA-14 run, which is red by design and disclosed below.
+- This section was added after commit 7. The run above sees the tree as of commit 7; commit 8 changes only this file. The final receipt run of the diff-mode command is repeated after commit 8.
+
+### Full-tree residual (whole-file mode, by design)
+
+Full-tree mode reads every file whole, so it cannot reach green without editing `docs/reviews/`, which PRINCIPLES rule 11 forbids (ruling Q1).
+
+| Area | Failures | Files |
+|---|---|---|
+| Immutable review reports under `docs/reviews/` | 110 | 49 |
+| Every other file | 72 | 16 |
+| Total | 182 | 65 |
+
+Failures by kind: 156 unresolved-authority, 14 unparseable, 12 cross-repo-issue.
+
+The 16 other files (counts from the shipped file-naming output; `sed | sort | uniq -c` over the failure lines):
+
+| Failures | File | Disposition |
+|---|---|---|
+| 28 | REQUIREMENTS.md | stale predecessor-era citations; follow-up F3 |
+| 7 | docs/REVIEW_LOG.md | append-only record, whole in full-tree mode |
+| 6 | docs/decisions.md | append-only record, whole in full-tree mode |
+| 5 | CHANGELOG.md | append-only record, whole in full-tree mode |
+| 5 | docs/manager-summary-format.md | ruling D4 |
+| 4 | docs/decisions-archive.md | append-only record, whole in full-tree mode |
+| 3 | CLAUDE.md | ruling D4 (not editable here) |
+| 2 | .claude/settings.json | ruling D4 |
+| 2 | docs/adr-cache-check.md | ruling D4 |
+| 2 | docs/plans/S5-phase1-2026-09-06.md | ruling D4 |
+| 2 | docs/plans/S6-phase1-v2-2026-09-08.md | ruling D4 |
+| 2 | hooks/sessionstart-tool-enum.mjs | ruling D4 (sensitive area, not edited) |
+| 1 | docs/plans/qa14-marker-redesign-phase1-2026-09-11.md | ruling D4 |
+| 1 | hooks/userpromptsubmit-halt-relay.mjs | ruling D4 (sensitive area, not edited) |
+| 1 | src/qa/gate-command-path-check.ts | ruling D4 |
+| 1 | src/secret-scan/patterns.ts | ruling D4 (sensitive area, not edited) |
+
+- **Change from the base (measured at 22b7141: 193 failures, 110 in 49 review files, 83 in 19 other files):** 11 fewer. Nine come from the reworded standing examples in STATE.md and backlog.md, two from the `adrCatalog` mirror in `docs/.maat-state.json`. Those three files no longer appear.
+- Where a listed file is an append-only record (REVIEW_LOG.md, decisions.md, CHANGELOG.md, decisions-archive.md), a diff-mode run that touches it checks only the added text; only the full-tree run reports these.
