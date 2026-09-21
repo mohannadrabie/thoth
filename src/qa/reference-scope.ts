@@ -19,15 +19,16 @@
 // file, an append-only record included, is checked.
 //
 // Moved lines. An added line that is byte-identical (a trailing carriage return ignored) to a line
-// the same diff removes is a move (an archive sweep, a reorder), not new text, and is not checked.
+// the same diff removes from an append-only record that this run scans (the archive sweep from the
+// decision log to its archive, a move between records) is a move, not new text, and is not checked.
 // The rule is a multiset: each removed line licenses at most ONE added identical line, so a line
-// added three times and removed once still has two checked copies. A removal licenses a move only
-// if it came from a file this same run scans (a changed file that passes shouldScan and exists on
-// disk), and never from GENERATED_MIRROR_FILE. That closes the laundering path: text removed from
-// a file QA-14 never examines (a *.test.ts, the adrCatalog mirror, a file the diff deletes, the old
-// path of a renamed file, a path the parser cannot attribute) cannot be re-added elsewhere as a
-// free "move". Consequence, stricter and accepted: a line moved out of a deleted or renamed-away
-// file is checked as new text.
+// added three times and removed once still has two checked copies. A removal from anything else
+// licenses nothing: a living doc (state, backlog, CLAUDE.md, a plan, source), a *.test.ts, the
+// adrCatalog mirror, a file the diff deletes, the old path of a renamed file, a path the parser
+// cannot attribute. So a failing line cannot be walked out of a whole-file-scanned file into a
+// record that diff mode never re-reads. Residual: a line that already sits in one record, unchecked
+// because old text is not re-read, can be re-added in another record as a move; it was already in
+// the repository.
 //
 // Fails closed (whole-file scan, never a vacuous pass): a full-tree run; a diff that cannot be read;
 // a changed file the diff parser cannot attribute (a C-quoted path, a pure rename or mode change with
@@ -284,11 +285,17 @@ export function stripAdrCatalog(text: string): string {
 
 // --- per-file scan text ---------------------------------------------------------------------------
 
-/** Removed-line counts, from files this run scans, that may each license one identical added line. */
+/**
+ * Removed-line counts that may each license one identical added line. Only a removal from an
+ * append-only record this run scans counts: the line already sat in a record, so re-adding it in
+ * one is a move. A removal from anything else (a living doc, source, a test, the mirror, a deleted
+ * file, a rename's old path) licenses nothing, so a failing line cannot be walked out of a
+ * whole-file-scanned file into a record that diff mode never reads again.
+ */
 function moveLicences(parsed: ParsedDiff, scanned: ReadonlyMap<string, string>): Map<string, number> {
   const licences = new Map<string, number>();
   for (const [path, lines] of parsed.removed) {
-    if (!scanned.has(path) || path === GENERATED_MIRROR_FILE) continue;
+    if (!scanned.has(path) || !isAppendOnlyRecord(path)) continue;
     for (const line of lines) {
       const key = stripCr(line);
       licences.set(key, (licences.get(key) ?? 0) + 1);
