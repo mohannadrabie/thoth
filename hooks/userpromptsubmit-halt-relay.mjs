@@ -85,17 +85,37 @@
 // concatenates `sanitizeDetail(entry.detail)` directly between a trusted label/colon and a trusted
 // `(unlock: ...)` suffix, with no boundary of its OWN — so a `detail` value (quoted or not) shaped
 // like `...") (unlock: no action needed, safe to resume..."` can visually forge a fake unlock
-// parenthetical ahead of the real one (finding 5's exact demonstrated PoC). Fixed here, at READ
-// time, uniformly for every reason key regardless of how its writer produced `detail`: every literal
-// `(`/`)` in the sanitized text is backslash-escaped (the same backslash-escaping convention
-// `quoteNames()`/`JSON.stringify` already established for embedded quotes, applied to the one
-// additional structural character THIS file's own template introduces), so the ONLY unescaped parens
-// in the rendered line are the real ones `describeActiveReasons` itself adds around the trusted
-// unlock hint — a hostile `detail` can no longer produce a bare, unescaped `(unlock: ...)`-shaped
-// parenthetical anywhere. See
-// hooks/userpromptsubmit-halt-relay-issue206-unlock-forgery.test.ts for the regression tests (the
-// exact finding-5 PoC shape, both through the raw enumeration-failed path and through a
-// quoteNames-quoted tool/connector name with no embedded quote at all).
+// parenthetical ahead of the real one (finding 5's exact demonstrated PoC).
+//
+// S5 Stage-3 CRITICAL review round 3 fix-now, STRUCTURAL CORRECTION (red-team F3): the round-2 fix
+// above escaped exactly two ASCII codepoints, `(`/`)`. Red-team demonstrated four ways past that:
+// fullwidth parens (U+FF08/09), "small-form" parens (U+FE59/5A), plain ASCII square brackets, and a
+// no-bracket `"-- unlock: ..."` shape — none of which `escapeParens` touches, and the round-2
+// regression test's own oracle (a literal-ASCII `(unlock:` match) is blind to all four.
+// Enumerating bracket lookalikes is a losing race (Unicode has many more). The structural fix:
+// what makes a forged parenthetical readable as this file's own trusted `(unlock: ...)` suffix is
+// not the punctuation around it, it is the literal TOKEN `unlock:` — so that token, not the
+// brackets, is what gets neutralized in untrusted text, regardless of what (if anything) surrounds
+// it. `neutralizeUnlockToken` below removes any case-insensitive `unlock:` occurrence (after NFKC
+// normalization folds Unicode compatibility variants — fullwidth/small-form letters and punctuation
+// — to their canonical ASCII form first, so a lookalike spelling can't dodge the plain-ASCII match
+// either) from `detail`. `escapeParens` (ASCII-only) is kept as a second, independent layer: after
+// NFKC folding, the fullwidth/small-form parens THEMSELVES are already canonical ASCII parens, so
+// they get escaped too, same as before — belt-and-suspenders, not a replacement. The square-bracket
+// and no-bracket shapes have no parens to escape at all, so `neutralizeUnlockToken` is the ONLY
+// defense against those two, which is exactly why it runs unconditionally, not only when parens are
+// present. See hooks/userpromptsubmit-halt-relay-issue206-unlock-forgery.test.ts for the regression
+// tests (the exact finding-5 PoC shape, plus red-team's four demonstrated evasions).
+//
+// S5 Stage-3 CRITICAL review round 3 fix-now (GitHub Issue #276 / red-team F4): the reason KEY
+// itself reaches the rendered message twice (the label, and — for an unmapped key — inside the
+// generic unlock-hint fallback), and until this round neither call site sanitized it: an unmapped
+// key could carry a forged parenthetical, ANSI/BEL control bytes, an embedded newline (splitting
+// the documented single-stderr-line contract), or unbounded length. Both `friendlyLabelFor` and
+// `unlockHintFor` below now route an unmapped key through `sanitizeDetail` at its fallback site —
+// the exact same discipline already applied to `detail`, reused rather than duplicated. A KNOWN key
+// (a real own-property of FRIENDLY_LABELS/UNLOCK_HINTS) is matched against the RAW key first, so
+// sanitization never breaks a legitimate lookup — only the raw-key fallback text is sanitized.
 import { readFileSync, existsSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -103,27 +123,49 @@ const MAX_DETAIL_LENGTH = 200;
 
 /** Backslash-escapes literal `(`/`)` characters (GitHub Issue #206, app-security finding 5) — see
  * this file's own header comment above for the full citation and reasoning. Applied unconditionally
- * to every `detail` value, regardless of reason key, so a future reason key whose writer forgets to
- * pre-quote its own `detail` (the way quoteNames() does today for the two SUR-03 tool/connector
- * keys) is defended by default, not only the keys this pass happened to check. */
+ * to every `detail`/key value, regardless of reason key, so a future reason key whose writer forgets
+ * to pre-quote its own `detail` (the way quoteNames() does today for the two SUR-03 tool/connector
+ * keys) is defended by default, not only the keys this pass happened to check. Second, independent
+ * layer alongside `neutralizeUnlockToken` below — not the primary defense on its own (see this
+ * file's own header comment on why the structural token-removal fix was needed). */
 function escapeParens(text) {
   return text.replace(/[()]/g, (c) => (c === "(" ? "\\(" : "\\)"));
 }
 
-/** Length-caps, control-character-strips, and paren-escapes a third-party-controlled `detail`
- * string before it is interpolated into a chat-visible message (GitHub Issues #97 and #206). Strips
- * ASCII control characters (0x00-0x1F, 0x7F) — this also removes newlines, which matters here
- * specifically: this file's own `blockWithMessage` writes `fullMessage` as a SINGLE stderr line
- * (documented as "the first line of stderr" being what Claude Code reads), so an embedded newline in
- * `detail` could otherwise truncate or split the message. Parens are escaped next (see
- * `escapeParens`), so the 200-char length budget accounts for any added backslashes. Truncation is
- * marked explicitly ("...[truncated]") rather than silently cutting the string, so a reader never
+/** GitHub Issue #206 / red-team F3 (round 3, structural fix — see this file's own header comment
+ * for the full reasoning): case-insensitively removes any `unlock:` occurrence (optional whitespace
+ * between the word and the colon) from untrusted text. This is what actually defeats a forged
+ * `(unlock: ...)`-shaped parenthetical, independent of what bracket characters (if any) surround
+ * it — a forged parenthetical missing the literal token `unlock:` no longer reads as this file's own
+ * trusted unlock hint, regardless of whether it was wrapped in fullwidth parens, square brackets, or
+ * nothing at all. Never deletes the SURROUNDING attacker text (only this one structural token),
+ * matching this file's existing "neutralize the danger, don't erase the disclosure" discipline
+ * (`sanitizeDetail`'s own doc comment). */
+function neutralizeUnlockToken(text) {
+  return text.replace(/unlock\s*:/gi, "[unlock-token-removed]");
+}
+
+/** Length-caps, control-character-strips, Unicode-normalizes, neutralizes the `unlock:` token, and
+ * paren-escapes a third-party-controlled string (`detail`, or — round 3 — a reason KEY at its
+ * fallback render site) before it is interpolated into a chat-visible message (GitHub Issues #97,
+ * #206, #276). Strips ASCII control characters (0x00-0x1F, 0x7F) first — this also removes
+ * newlines, which matters here specifically: this file's own `blockWithMessage` writes
+ * `fullMessage` as a SINGLE stderr line (documented as "the first line of stderr" being what Claude
+ * Code reads), so an embedded newline could otherwise truncate or split the message. NFKC
+ * normalization runs next, folding Unicode compatibility variants (fullwidth/small-form letters and
+ * punctuation) to their canonical ASCII form, so neither of the two structural defenses below has to
+ * separately enumerate every visual lookalike codepoint. The `unlock:` token is neutralized next
+ * (see `neutralizeUnlockToken`), then parens are escaped (see `escapeParens`) — the 200-char length
+ * budget accounts for both transforms' own added/changed text, since it is measured last. Truncation
+ * is marked explicitly ("...[truncated]") rather than silently cutting the string, so a reader never
  * mistakes a capped message for the complete one. */
 function sanitizeDetail(detail) {
   const text = typeof detail === "string" ? detail : String(detail ?? "(no detail recorded)");
   // eslint-disable-next-line no-control-regex -- deliberate: stripping control characters IS the point.
   const stripped = text.replace(/[\x00-\x1F\x7F]/g, "");
-  const parenEscaped = escapeParens(stripped);
+  const normalized = stripped.normalize("NFKC");
+  const unlockNeutralized = neutralizeUnlockToken(normalized);
+  const parenEscaped = escapeParens(unlockNeutralized);
   return parenEscaped.length > MAX_DETAIL_LENGTH ? `${parenEscaped.slice(0, MAX_DETAIL_LENGTH)}...[truncated]` : parenEscaped;
 }
 
@@ -149,11 +191,21 @@ const UNLOCK_HINTS = Object.freeze({
  * generic, still-actionable text. This still fails closed (exit 2 is unaffected either way) but
  * names neither the real reason nor a real unlock. `Object.hasOwn(UNLOCK_HINTS, reasonKey)` checks
  * membership without walking the prototype chain, so a reason key matching an inherited
- * Object.prototype member now correctly falls through to the generic fallback below. */
+ * Object.prototype member now correctly falls through to the generic fallback below.
+ *
+ * S5 Stage-3 CRITICAL review round 3 fix-now (GitHub Issue #276 / red-team F4 — see this file's own
+ * header comment for the full reasoning): the KNOWN-key check above is against the RAW `reasonKey`
+ * (matching a real map entry must never depend on a sanitized transform of it), but the FALLBACK
+ * text — the one branch that embeds an unmapped, untrusted reason key directly into this file's own
+ * trusted `(unlock: ...)` structure — now routes that key through `sanitizeDetail`, the exact same
+ * discipline already applied to `detail`: control-strip, NFKC-normalize, neutralize any `unlock:`
+ * token, escape parens, length-cap. Whoever writes `.thoth/halt-state/<id>.json` chooses the key
+ * (a named CLAUDE.md sensitive surface); a future reason key sourced from a tool/connector name is
+ * now defended the same way `detail` already is. */
 function unlockHintFor(reasonKey) {
   return Object.hasOwn(UNLOCK_HINTS, reasonKey)
     ? UNLOCK_HINTS[reasonKey]
-    : `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session`;
+    : `unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${sanitizeDetail(reasonKey)}" condition named in the detail above, then resume or start a new session`;
 }
 
 /** `friendly-halt-messages` story: short, human-readable labels for the SUR-03-owned reason keys
@@ -170,9 +222,14 @@ const FRIENDLY_LABELS = Object.freeze({
 /** Same prototype-chain fix as `unlockHintFor` above (FIX-NOW, `red-team`, CRITICAL-tier review
  * round): `Object.hasOwn` instead of a bare `??` lookup, so a reason key shaped like `constructor`
  * etc. falls back to the raw key itself rather than resolving to an inherited
- * `Object.prototype` member. */
+ * `Object.prototype` member.
+ *
+ * S5 Stage-3 CRITICAL review round 3 fix-now (GitHub Issue #276 / red-team F4): the KNOWN-key check
+ * is against the RAW `reasonKey` (as above), but the fallback — this is the OTHER of the two render
+ * sites a raw key could previously reach unsanitized — now returns `sanitizeDetail(reasonKey)`
+ * rather than the bare key, for the same reasons `unlockHintFor`'s own fallback does. */
 function friendlyLabelFor(reasonKey) {
-  return Object.hasOwn(FRIENDLY_LABELS, reasonKey) ? FRIENDLY_LABELS[reasonKey] : reasonKey;
+  return Object.hasOwn(FRIENDLY_LABELS, reasonKey) ? FRIENDLY_LABELS[reasonKey] : sanitizeDetail(reasonKey);
 }
 
 function readStdin() {
@@ -191,28 +248,49 @@ function projectDir() {
   return process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 }
 
-// GitHub Issue #96 fix (spike resolved): mirrors hooks/sessionstart-tool-enum.mjs's own
-// `resolveFallbackSessionId()` EXACTLY — `CLAUDE_SESSION_ID` is a real, host-supplied environment
-// variable Claude Code sets on every hook subprocess's `process.env` (confirmed via the official
-// Claude Code hooks/Settings Reference documentation, code.claude.com/docs/en/hooks — the same
-// trust tier as the already-used `CLAUDE_PROJECT_DIR` above, not a new or untrusted input channel).
-// Used below as the fallback when `input.session_id` (from this script's own stdin) isn't a string —
-// so this script's own session_id resolution agrees with the writer's (sessionstart-tool-enum.mjs):
-// a real, host-provided session id (unique per session) is preferred over the shared, ambiguous
-// "unknown-session" literal on BOTH sides of this mechanism. Both sides MUST stay in sync — a
-// mismatch here reopens Issue #96 in a different shape: one side resolving a real per-session id
-// while the other still falls to the shared literal means one side's halt-state write lands
-// somewhere the other side never checks.
+// GitHub Issue #96 fix, CORRECTED (S5 Stage-3 CRITICAL review round 3 fix-now — red-team F1 /
+// app-security finding 1 / ADR-0021 INT-07 violation, mirrors hooks/sessionstart-tool-enum.mjs's own
+// `resolveFallbackSessionId()` EXACTLY, including this correction — see that file's own header
+// comment for the full citation): the PREVIOUS build of this fix read
+// `process.env.CLAUDE_SESSION_ID` and cited code.claude.com/docs/en/hooks as confirming it. Both the
+// name and the citation were wrong — `CLAUDE_SESSION_ID` does not exist as a real environment
+// variable on this runtime (it is only ever a text-template placeholder Claude Code substitutes into
+// prompt/skill TEXT, never a real `process.env` key on a hook subprocess), and that documentation
+// page never names it at all. The correct variable, `CLAUDE_CODE_SESSION_ID`, is confirmed by
+// MEASUREMENT (a fresh `claude -p` session in a throwaway scratch directory, a diagnostic
+// SessionStart hook dumping its own `process.env`, run once, output read) — the same trust tier as
+// the already-used `CLAUDE_PROJECT_DIR` above, not a new or untrusted input channel.
+// Used below as the fallback when `input.session_id` (from this script's own stdin) isn't a
+// validly-shaped string — so this script's own session_id resolution agrees with the writer's
+// (sessionstart-tool-enum.mjs): a real, host-provided session id (unique per session) is preferred
+// over the shared, ambiguous "unknown-session" literal on BOTH sides of this mechanism. Both sides
+// MUST stay in sync — a mismatch here reopens Issue #96 in a different shape: one side resolving a
+// real per-session id while the other still falls to the shared literal means one side's halt-state
+// write lands somewhere the other side never checks.
 //
 // Deliberately NOT applied to the case where `JSON.parse(raw)` itself throws below (genuinely
 // malformed, non-empty, non-JSON stdin) — that path is unconditionally fail-closed already (see this
 // file's own bottom-level `main().catch`, which blocks exit 2 regardless of any session id or
 // halt-state content at all), so it is already maximally safe in the one direction that matters here
 // and needs no session-id-aware handling to stay that way.
+//
+// This relay is read-only (see this file's own header comment) and never calls `reconcileReason` —
+// GitHub Issue #274 / red-team F2's cross-session set:false guard lives entirely in
+// sessionstart-tool-enum.mjs, the only writer. Nothing here needs an equivalent trust boolean.
 const UNKNOWN_SESSION_ID = "unknown-session";
+
+/** Identical to sessionstart-tool-enum.mjs's own `isValidSessionId` — see that file's own header
+ * comment for the full reasoning (GitHub Issue #276 / red-team F5, defense-in-depth; also closes
+ * red-team F2's own noted "same-shape sibling" of a stdin `session_id: ""`). Gates BOTH the
+ * stdin-derived id below and `resolveFallbackSessionId()`'s env-derived id before either reaches
+ * `haltStatePath`'s own `join()` call. */
+function isValidSessionId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(id);
+}
+
 function resolveFallbackSessionId() {
-  const envSessionId = process.env.CLAUDE_SESSION_ID;
-  return typeof envSessionId === "string" && envSessionId.length > 0 ? envSessionId : UNKNOWN_SESSION_ID;
+  const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  return isValidSessionId(envSessionId) ? envSessionId : UNKNOWN_SESSION_ID;
 }
 
 function haltStatePath(sessionId) {
@@ -304,11 +382,14 @@ function describeActiveReasons(activeReasons) {
 async function main() {
   const raw = await readStdin();
   const input = raw.trim() === "" ? {} : JSON.parse(raw);
-  // HAPPY PATH UNCHANGED (GitHub Issue #96 fix): this condition
-  // (`typeof input.session_id === "string"`) is byte-identical to before — only the ELSE branch's
-  // fallback VALUE changed, from the bare "unknown-session" literal to
-  // resolveFallbackSessionId()'s result (see its own header comment above).
-  const sessionId = typeof input.session_id === "string" ? input.session_id : resolveFallbackSessionId();
+  // HAPPY PATH is still, deliberately, the common case (GitHub Issue #96 fix): this condition is
+  // `typeof input.session_id === "string"`, additionally gated by `isValidSessionId` (round 3,
+  // GitHub Issue #276 / red-team F5 — see that function's own header comment). A real Claude Code
+  // session id (an RFC-4122 UUID) always passes, so this never narrows the happy path in practice —
+  // a malformed/hostile stdin session_id now falls to `resolveFallbackSessionId()`'s result exactly
+  // like "not a string at all" always has.
+  const stdinSessionId = typeof input.session_id === "string" ? input.session_id : undefined;
+  const sessionId = isValidSessionId(stdinSessionId) ? stdinSessionId : resolveFallbackSessionId();
 
   const p = haltStatePath(sessionId);
   if (!existsSync(p)) {

@@ -235,13 +235,23 @@ test("S5-R2-N1: THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH (the removed env-va
 test("S5-R2-Issue96-escalation: the shared 'unknown-session' fallback bucket is NEVER reconciled to set:false -- a second, different colliding invocation whose OWN condition is resolved must not silently clear a still-active halt that belongs to a different invocation", () => {
   const tree = makeFixtureTree("issue96-escalation");
   try {
+    // S5 Stage-3 CRITICAL review round 3 fix-now: this test's whole point is the DOUBLE-failure
+    // case (stdin has no usable session_id AND no env fallback resolves either), so
+    // CLAUDE_CODE_SESSION_ID must be forced empty here -- deterministic regardless of the ambient
+    // shell environment this test happens to run in (this repo's own dev/CI shells are frequently
+    // themselves Claude-Code-spawned, so the correctly-working #96 fix would otherwise pick up a
+    // REAL ambient session id here and this test would stop exercising the shared-bucket path it
+    // exists to cover). Matches the convention already established in
+    // hooks/sessionstart-tool-enum-session-id-fallback.test.ts's own "double-failure" test.
+    const env = { ...fixtureEnv(tree), CLAUDE_CODE_SESSION_ID: "" };
+
     // Run A: session_id is absent from stdin entirely (Issue #96's own precondition -- "should
     // never happen per the documented contract"), and this invocation's own real condition IS
     // active (an unclassified MCP server is present) -- sessionId resolves to the shared fallback
     // bucket, "unknown-session", and writes SUR-03-unclassified-tool: set:true there.
     writeProjectSettingsJson(tree, { enableAllProjectMcpServers: true });
     writeProjectMcpJson(tree, { mcpServers: { "session-a-bad-server": { command: "node", args: [] } } });
-    const runA = runHook(SESSIONSTART_SCRIPT, { hook_event_name: "SessionStart", source: "startup" }, fixtureEnv(tree));
+    const runA = runHook(SESSIONSTART_SCRIPT, { hook_event_name: "SessionStart", source: "startup" }, env);
     assert.equal(runA.code, 0, `expected clean exit 0; got stderr=${runA.stderr}`);
     const afterA = reasonsOf(readHaltState(tree, "unknown-session"));
     assert.equal(
@@ -249,7 +259,7 @@ test("S5-R2-Issue96-escalation: the shared 'unknown-session' fallback bucket is 
       true,
       `expected run A's own genuinely-active condition to be recorded under the shared fallback bucket; got ${JSON.stringify(afterA)}`,
     );
-    const relayAfterA = runHook(RELAY_SCRIPT, { hook_event_name: "UserPromptSubmit", prompt: "hi" }, fixtureEnv(tree));
+    const relayAfterA = runHook(RELAY_SCRIPT, { hook_event_name: "UserPromptSubmit", prompt: "hi" }, env);
     assert.equal(relayAfterA.code, 2, "expected the relay to block for the shared fallback session right after run A");
 
     // Run B: a DIFFERENT logical invocation (different underlying condition -- its own MCP server
@@ -259,7 +269,7 @@ test("S5-R2-Issue96-escalation: the shared 'unknown-session' fallback bucket is 
     // discharging run A's still-genuinely-active halt. After this fix, the bucket is additive-only:
     // this write must be skipped entirely for the fallback bucket.
     writeProjectMcpJson(tree, { mcpServers: {} }); // run B's OWN condition is now resolved
-    const runB = runHook(SESSIONSTART_SCRIPT, { hook_event_name: "SessionStart", source: "startup" }, fixtureEnv(tree));
+    const runB = runHook(SESSIONSTART_SCRIPT, { hook_event_name: "SessionStart", source: "startup" }, env);
     assert.equal(runB.code, 0, `expected clean exit 0; got stderr=${runB.stderr}`);
     const afterB = reasonsOf(readHaltState(tree, "unknown-session"));
     assert.equal(
@@ -268,7 +278,7 @@ test("S5-R2-Issue96-escalation: the shared 'unknown-session' fallback bucket is 
       `expected run A's active halt under the shared fallback bucket to remain set:true -- a second, DIFFERENT colliding invocation must never clear it; got ${JSON.stringify(afterB)}`,
     );
 
-    const relayAfterB = runHook(RELAY_SCRIPT, { hook_event_name: "UserPromptSubmit", prompt: "hi" }, fixtureEnv(tree));
+    const relayAfterB = runHook(RELAY_SCRIPT, { hook_event_name: "UserPromptSubmit", prompt: "hi" }, env);
     assert.equal(
       relayAfterB.code,
       2,

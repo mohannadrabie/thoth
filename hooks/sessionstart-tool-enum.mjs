@@ -84,36 +84,77 @@ const ENUMERATION_FAILED_REASON_KEY = "SUR-03-enumeration-failed";
 // red-team's F5 demonstrated: a resumed session whose tool became classified stayed permanently
 // blocked because nothing ever cleared its reason). main() below reconciles every one of them, every run.
 //
-// The literal fallback session id used only as the LAST RESORT, when stdin's own `session_id`
-// cannot be resolved to a real, host-supplied string AND the process-environment fallback below
-// (`resolveFallbackSessionId`) is also unavailable (GitHub Issue #96's "double failure" case). S5
-// Stage-3 CRITICAL review round 2 (`app-security-reviewer` finding 6 / `red-team`'s Stop Brief
+// The literal fallback session id used when stdin's own `session_id` cannot be resolved to a real,
+// host-supplied string AND the process-environment fallback below (`resolveFallbackSessionId`) is
+// also unavailable/unusable (GitHub Issue #96's "double failure" case) — OR (S5 Stage-3 CRITICAL
+// review round 3 fix-now, GitHub Issue #274 / red-team F2 / app-security finding 2) whenever this
+// run's own `sessionId` was NOT read directly from THIS invocation's own stdin `session_id` field.
+// S5 Stage-3 CRITICAL review round 2 (`app-security-reviewer` finding 6 / `red-team`'s Stop Brief
 // escalation) demonstrated that once AC5's reconciliation could write set:false, two DIFFERENT
 // failed-session_id-resolution invocations sharing this one literal bucket meant one invocation's
 // own resolved state could silently clear a genuinely-still-active halt belonging to a different
 // invocation — a fail-open escalation of what was previously only a safe-direction (stuck-blocked)
 // gap. `reconcileReason` below is the fix: this bucket is additive-only (may still be set:true),
-// never reconciled to set:false. That fix stays intact and unmodified by the #96 fix below: with a
-// real per-session fallback now available (see `resolveFallbackSessionId`), `sessionId` only ever
-// equals this literal exactly when BOTH stdin's own `session_id` AND
-// `process.env.CLAUDE_SESSION_ID` are unavailable — i.e. exactly the ambiguous, multi-invocation
-// case this guard exists to protect. A run that resolves a real per-session id (whether from stdin
-// or from the env fallback) never touches this bucket at all, so the guard's own meaning is
-// preserved unchanged, not just its code.
+// never reconciled to set:false.
+//
+// Round 3 correction (why this comment changed): round 2's fix scoped the guard to the literal
+// string `sessionId === UNKNOWN_SESSION_ID` only, reasoning that a real per-session id is "by
+// construction" never ambiguous. Red-team demonstrated that reasoning was wrong the moment
+// `resolveFallbackSessionId()` can return a real-looking session id from the process environment
+// (see that function's own header comment below): an environment value can legitimately name a
+// DIFFERENT, currently-active session (nested Claude Code sessions, an inherited shell export, a
+// tmux/CI environment reused across invocations) — in which case `sessionId` is a real string, not
+// the literal, and round 2's guard let a `set:false` reconciliation through, silently clearing that
+// OTHER session's genuinely active halt. The guard's real invariant was never "is this the shared
+// literal" — it was always "does this invocation actually KNOW it owns this session id". The only
+// source that guarantees that is the host handing THIS invocation its OWN `session_id` on THIS
+// invocation's OWN stdin: `main()` below now threads a `sessionIdFromStdin` boolean into
+// `reconcileReason`, and the additive-only guard fires whenever that boolean is false — which
+// includes the literal-bucket case as a special case (stdin never resolved anything, so
+// `sessionIdFromStdin` is false there too), so this comment's own prior claim ("the guard's own
+// meaning is preserved unchanged, not just its code") is corrected, not repeated: the guard's REACH
+// changed, deliberately, because its OLD reach was insufficient once a second untrusted source
+// (env) could produce a real-shaped id.
 const UNKNOWN_SESSION_ID = "unknown-session";
 
-// GitHub Issue #96 fix (spike resolved, docs/decisions.md's 2026-09-07 row superseded by this
-// build): `CLAUDE_SESSION_ID` is a real, host-supplied environment variable Claude Code sets on
-// every hook subprocess's `process.env` — confirmed via the official Claude Code hooks/Settings
-// Reference documentation (code.claude.com/docs/en/hooks), the SAME trust tier and source class
-// already relied on for `CLAUDE_PROJECT_DIR` (`projectDir()` above) — not a new or untrusted input
-// channel. When stdin itself fails to parse, or parses but its `session_id` field isn't a string,
-// this is now consulted BEFORE falling back to the shared `UNKNOWN_SESSION_ID` literal, so a
-// malformed-stdin invocation still resolves to the REAL, unique session id whenever the runtime
-// provides one, and this script's halt-state write lands where
-// hooks/userpromptsubmit-halt-relay.mjs's own real-session lookup will actually find it (previously
-// it landed in `unknown-session.json`, which the relay never reads for a real session — a fail-open
-// gap in what is supposed to be a fail-closed mechanism, criterion 17).
+/** S5 Stage-3 CRITICAL review round 3 fix-now (GitHub Issue #276 / red-team F5, defense-in-depth;
+ * also closes red-team F2's own noted "same-shape sibling"): a resolved session id — from EITHER
+ * trusted source (stdin's own `session_id` field, or the `CLAUDE_CODE_SESSION_ID` env fallback
+ * below) — is only ever treated as USABLE when it matches this narrow, closed charset. This
+ * function is the single gate both `main()`'s stdin-derived id and `resolveFallbackSessionId()`'s
+ * env-derived id are checked against before either one is trusted for a halt-state path/bucket key
+ * (`haltStatePath`'s own `join()` call) or for the `reconcileReason` trust boolean. A session id
+ * shaped with a path separator, `..`, or any other character outside this set never reaches
+ * `join()` as a live value; malformed/empty/oversized input is treated exactly like "not resolved
+ * at all" and falls through to the safe, additive-only `UNKNOWN_SESSION_ID` bucket. This also
+ * closes red-team F2's own footnote: a stdin `session_id` of `""` is a string but not a USABLE
+ * session id, and previously bypassed the anti-collision guard the same way an env-resolved id
+ * could; it is now rejected here, on both hook files, by the same one check. A real Claude Code
+ * session id (an RFC-4122 UUID) is comfortably inside this pattern — this never narrows the happy
+ * path. */
+function isValidSessionId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(id);
+}
+
+// GitHub Issue #96 fix, CORRECTED (S5 Stage-3 CRITICAL review round 3 fix-now — red-team F1 /
+// app-security finding 1 / ADR-0021 INT-07 violation: "no control ... may rest on an unverified
+// third party's claim about its own behavior ... where thoth can verify directly, it MUST"). The
+// PREVIOUS build of this fix read `process.env.CLAUDE_SESSION_ID` and cited
+// code.claude.com/docs/en/hooks as confirming it. Both the name and the citation were wrong:
+// `CLAUDE_SESSION_ID` does not exist as a real environment variable on this runtime — it is only
+// ever a text-template PLACEHOLDER Claude Code substitutes into prompt/skill TEXT, never a real
+// `process.env` key on a hook subprocess — and that documentation page never names it at all. The
+// previous fix was therefore a complete no-op: every malformed-stdin invocation still fell straight
+// through to the shared `UNKNOWN_SESSION_ID` literal, byte-for-byte as it did before that "fix"
+// shipped, while the CHANGELOG and this file's own comments narrated it as closed.
+//
+// The correct variable, `CLAUDE_CODE_SESSION_ID`, is confirmed by MEASUREMENT, not documentation
+// prose: a fresh `claude -p` session, launched in a throwaway scratch directory, with a diagnostic
+// SessionStart hook that dumped its own `process.env` to a file, run once, output read directly —
+// `CLAUDE_CODE_SESSION_ID` was present, set to that fresh session's own distinct id (proving it is
+// genuinely per-session, not env leakage from an ambient parent process). This is the spike
+// PRINCIPLES rule 18 requires before any number/fact a design leans on ships — it was skipped in
+// the prior build (a WebSearch was substituted for it) and is not skipped here.
 //
 // Deliberately a FALLBACK OF LAST RESORT ONLY: main() below calls this to compute its own initial
 // `sessionId` default (covering the case where stdin fails to parse at all, before `input.session_id`
@@ -128,9 +169,17 @@ const UNKNOWN_SESSION_ID = "unknown-session";
 // agree on how to recover a session id when stdin is degraded. If they resolved differently, the
 // mismatch would reopen Issue #96 in a different shape: one side landing on a real per-session id
 // while the other still falls to the shared "unknown-session" bucket.
+//
+// Trust asymmetry (GitHub Issue #274 / red-team F2, see UNKNOWN_SESSION_ID's own header comment
+// above for the full reasoning): this env-resolved value is trusted for WHERE to write/read a
+// halt-state file (a fail-closed disclosure — writing to the wrong bucket only means a genuine
+// condition is reported in the wrong place, never that it is suppressed), but it is NEVER trusted
+// to AUTHORIZE clearing (`set:false`) another reason's active halt — that authorization is reserved
+// for a `sessionId` that came from this exact invocation's own stdin `session_id` field. See
+// `reconcileReason`'s own `sessionIdFromStdin` parameter.
 function resolveFallbackSessionId() {
-  const envSessionId = process.env.CLAUDE_SESSION_ID;
-  return typeof envSessionId === "string" && envSessionId.length > 0 ? envSessionId : UNKNOWN_SESSION_ID;
+  const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  return isValidSessionId(envSessionId) ? envSessionId : UNKNOWN_SESSION_ID;
 }
 
 function readStdin() {
@@ -250,27 +299,45 @@ function wasReasonActive(initialHaltState, reasonKey) {
 /** AC5: reconciles one of this script's OWN reason keys to the CURRENT truth this run — but only
  * ever WRITES when there is something to say: `active` true always writes `set:true` with
  * `detail` (whether or not a file/key existed before); `active` false writes an explicit
- * `set:false` ONLY when `initialHaltState` shows this exact key was PREVIOUSLY `set:true` —
- * otherwise (never active, nothing to clear) the file is left completely untouched for this key,
- * preserving criterion 4's own "a fully-classified, unconfigured session leaves no halt-state file
- * at all" contract (test-writer's own AC-4 test, unmodified).
+ * `set:false` ONLY when BOTH (a) `sessionIdFromStdin` is true, AND (b) `initialHaltState` shows
+ * this exact key was PREVIOUSLY `set:true` — otherwise (never active and nothing to clear, OR this
+ * invocation cannot prove it owns this session id) the file is left completely untouched for this
+ * key, preserving criterion 4's own "a fully-classified, unconfigured session leaves no halt-state
+ * file at all" contract (test-writer's own AC-4 test, unmodified).
  *
- * This is the fix for red-team's F5 sticky-halt finding: SessionStart genuinely re-runs on a
- * resumed session (demonstrated in F5's own report), so a session whose unclassified tool has
- * since been reclassified (or whose stdin parsed cleanly this time) is unblocked automatically on
- * the next SessionStart, not left bricked forever — without ever creating a spurious file/key for
- * a condition that was never active to begin with. */
-function reconcileReason(initialHaltState, sessionId, reasonKey, active, activeDetail, fixtureLocation) {
+ * `sessionIdFromStdin` (S5 Stage-3 CRITICAL review round 3 fix-now, GitHub Issue #274 / red-team F2
+ * / app-security finding 2 — see UNKNOWN_SESSION_ID's own header comment above for the full
+ * reasoning): true only when THIS run's `sessionId` was read directly from THIS invocation's own
+ * stdin `session_id` field — the one case the host itself vouches this id belongs to THIS
+ * invocation, by construction. Every other path (stdin missing/malformed/invalid-shaped, or a
+ * fallback to `resolveFallbackSessionId()`'s env-derived value, real or the literal
+ * `UNKNOWN_SESSION_ID`) passes `false`, and this function's `set:false` branch is then skipped
+ * regardless of `sessionId`'s own value — an env-resolved id is trusted enough to WRITE a
+ * fail-closed `set:true` disclosure (the safe direction, always allowed above) but never trusted
+ * enough to CLEAR someone else's possibly-still-active halt, because nothing on this runtime
+ * guarantees an env-resolved session id is unique to this one invocation (nested sessions, an
+ * inherited shell export, a reused CI/tmux environment all legitimately produce a collision).
+ *
+ * This is also the fix for red-team's F5 (round-1) sticky-halt finding: SessionStart genuinely
+ * re-runs on a resumed session, so a session whose unclassified tool has since been reclassified
+ * (or whose stdin parsed cleanly this time, WITH a valid session_id) is unblocked automatically on
+ * the next SessionStart, not left bricked forever — without ever creating a spurious file/key for a
+ * condition that was never active to begin with, and without ever clearing a reason this invocation
+ * cannot prove is its own. */
+function reconcileReason(initialHaltState, sessionId, reasonKey, active, activeDetail, fixtureLocation, sessionIdFromStdin) {
   if (active) {
     writeHaltReason(sessionId, reasonKey, true, activeDetail, fixtureLocation);
-  } else if (sessionId === UNKNOWN_SESSION_ID) {
-    // GitHub Issue #96 escalation (S5 Stage-3 CRITICAL review round 2, `app-security-reviewer`
-    // finding 6 / `red-team`'s Stop Brief): the shared fallback bucket is NEVER reconciled to
-    // set:false, regardless of what wasReasonActive says -- a colliding invocation that also failed
-    // to resolve a real session_id has no way to know whether the previously-set:true entry under
-    // this bucket belongs to its own logical session or a different one, so it must never clear it.
-    // This bucket may still be additively set:true (above); it just never transitions back to
-    // false, preserving the pre-round-2 safe direction (stuck-blocked, not fail-open).
+  } else if (!sessionIdFromStdin) {
+    // GitHub Issue #274 / red-team F2 (S5 Stage-3 CRITICAL review round 3 fix-now — supersedes
+    // round 2's narrower `sessionId === UNKNOWN_SESSION_ID` literal check, which red-team
+    // demonstrated end-to-end was insufficient the moment an env-resolved id could be a real,
+    // different, currently-active session's own id): this invocation's own `sessionId` was NOT
+    // read from its own stdin, so it has no way to know whether the previously-set:true entry it
+    // is about to touch belongs to its own logical session or a different one — it must never
+    // clear it, regardless of what `sessionId`'s own string value happens to be (the shared
+    // UNKNOWN_SESSION_ID literal is one instance of this, not the only one). A reason may still be
+    // additively set:true above; it just never transitions back to false via this path, preserving
+    // the safe direction (stuck-blocked, not fail-open).
   } else if (wasReasonActive(initialHaltState, reasonKey)) {
     writeHaltReason(sessionId, reasonKey, false, "condition no longer holds as of this SessionStart run", fixtureLocation);
   }
@@ -430,21 +497,29 @@ async function main() {
   // as much an "internal exception during enumeration" as a malformed ~/.claude.json is, and both
   // must still result in a best-effort halt-state write, never a silent no-halt.
   //
-  // FIXED (GitHub Issue #96, spike resolved — docs/decisions.md's 2026-09-07 row superseded by this
-  // build): when stdin ITSELF fails to parse, session_id now falls back to
-  // `resolveFallbackSessionId()` (process.env.CLAUDE_SESSION_ID when available) rather than jumping
+  // FIXED (GitHub Issue #96, corrected in S5 Stage-3 CRITICAL review round 3 — see
+  // resolveFallbackSessionId's own header comment for the full correction): when stdin ITSELF fails
+  // to parse, session_id now falls back to `resolveFallbackSessionId()`
+  // (`process.env.CLAUDE_CODE_SESSION_ID` when available and validly shaped) rather than jumping
   // straight to the shared `UNKNOWN_SESSION_ID` literal — computed ONCE here, before the try block,
-  // so it is both this run's initial default (covering "stdin never parsed at all") AND the exact
-  // value the `else` branch inside the try below reuses (covering "stdin parsed, but its own
-  // session_id field wasn't usable") — one resolution, two call sites, guaranteed consistent.
-  // Previously (round 2 and earlier) this fallback was unconditionally the shared literal, and the
-  // catch below wrote its reason to "unknown-session.json" rather than the real session's own file —
-  // the relay for the real session never saw it. `reconcileReason`'s set:false branch still never
-  // applies to the shared UNKNOWN_SESSION_ID bucket specifically — see UNKNOWN_SESSION_ID's own
-  // header comment above for why that guard's meaning is preserved, not just its code, now that a
-  // real per-session fallback exists.
+  // so it is both this run's initial default (covering "stdin never parsed at all") AND the value
+  // the code inside the try below falls back to (covering "stdin parsed, but its own session_id
+  // field wasn't usable") — one resolution, two call sites, guaranteed consistent. Previously
+  // (round 2 and earlier) this fallback was unconditionally the shared literal, and the catch below
+  // wrote its reason to "unknown-session.json" rather than the real session's own file — the relay
+  // for the real session never saw it.
+  //
+  // `sessionIdFromStdin` (GitHub Issue #274 / red-team F2, round 3 — see reconcileReason's own
+  // header comment for the full reasoning): tracks whether THIS run's `sessionId` was read directly
+  // from THIS invocation's own stdin `session_id` field, the one case the host itself vouches this
+  // id is this invocation's own. Starts false (matches the fallback default above); only ever set
+  // true inside the try block, and only when stdin's own field is both a string AND a validly-shaped
+  // session id (`isValidSessionId`). Threaded into every `reconcileReason` call below so an
+  // env-resolved (or literal-fallback) sessionId is never trusted to clear another session's
+  // possibly-still-active halt, only to disclose a fail-closed condition under its own bucket.
   const fallbackSessionId = resolveFallbackSessionId();
   let sessionId = fallbackSessionId;
+  let sessionIdFromStdin = false;
   // Resolved OUTSIDE (before) the try block, and independently of stdin/sessionId resolution, so it
   // is available to the catch handler below even when a LATER step throws -- S5 fix-now condition
   // ("record the resolved fixture path in halt-state, so a non-default load is never silent") must
@@ -465,10 +540,21 @@ async function main() {
   try {
     const raw = await readStdin();
     const input = raw.trim() === "" ? {} : JSON.parse(raw);
-    // HAPPY PATH UNCHANGED: this condition (`typeof input.session_id === "string"`) is byte-identical
-    // to before the #96 fix — only the ELSE branch's fallback VALUE changed, from the bare
-    // UNKNOWN_SESSION_ID literal to fallbackSessionId (already resolved above, before this try block).
-    sessionId = typeof input.session_id === "string" ? input.session_id : fallbackSessionId;
+    // HAPPY PATH is still, deliberately, the common case: `typeof input.session_id === "string"` is
+    // unchanged from before the #96 fix, now additionally gated by `isValidSessionId` (round 3,
+    // GitHub Issue #276 / red-team F5 — rejects a shape-invalid session id, e.g. containing a path
+    // separator, "..", or an empty string; see that function's own header comment). A real Claude
+    // Code session id (an RFC-4122 UUID) always passes, so this never narrows the happy path in
+    // practice — only a malformed/hostile stdin value is affected, and it now falls to
+    // `fallbackSessionId` exactly like "not a string at all" always has.
+    const stdinSessionId = typeof input.session_id === "string" ? input.session_id : undefined;
+    if (isValidSessionId(stdinSessionId)) {
+      sessionId = stdinSessionId;
+      sessionIdFromStdin = true;
+    } else {
+      sessionId = fallbackSessionId;
+      sessionIdFromStdin = false;
+    }
 
     // Snapshot ONCE, before any of this run's own writes -- see wasReasonActive/reconcileReason's
     // own header comments for why this matters (deciding whether a currently-inactive reason has
@@ -482,9 +568,9 @@ async function main() {
     // "only ever set, never clear" (red-team F5's sticky-halt finding). A resolved condition writes
     // set:false explicitly, unblocking a resumed session whose tool/connector situation has since
     // been fixed, without requiring any manual halt-state edit — but a condition that was NEVER
-    // active leaves the file/key untouched (criterion 4's vanilla no-file contract). See
-    // reconcileReason's own header comment for the one exception (the UNKNOWN_SESSION_ID fallback
-    // bucket is additive-only, never reconciled to set:false).
+    // active leaves the file/key untouched (criterion 4's vanilla no-file contract), and a
+    // set:false is only ever actually written when `sessionIdFromStdin` is true (GitHub Issue #274
+    // / red-team F2 — see reconcileReason's own header comment for the full reasoning).
     reconcileReason(
       initialHaltState,
       sessionId,
@@ -492,6 +578,7 @@ async function main() {
       inventoryResult.haltRequired,
       quoteNames(inventoryResult.unclassified),
       fixtureLocation,
+      sessionIdFromStdin,
     );
     reconcileReason(
       initialHaltState,
@@ -500,6 +587,7 @@ async function main() {
       unknownConnectorNames.length > 0,
       quoteNames(unknownConnectorNames),
       fixtureLocation,
+      sessionIdFromStdin,
     );
     // This run completed enumeration successfully — reconcile ENUMERATION_FAILED_REASON_KEY closed
     // too, in case a PRIOR run on this same session id had set it (e.g. a transient malformed file
@@ -511,6 +599,7 @@ async function main() {
       false,
       "enumeration completed without error",
       fixtureLocation,
+      sessionIdFromStdin,
     );
   } catch (err) {
     // Criterion 17: the whole computation's own exception path still results in a halt-state
