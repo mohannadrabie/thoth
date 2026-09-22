@@ -11,6 +11,10 @@
 // checker; it is QA-14 catching exactly the class of thing it exists to catch, even in its own
 // source. Fixed here by rewording rather than adding a self-exemption.
 //
+// Which text of a changed file is checked (the whole file, or only the text a diff adds for an
+// append-only historical record; the generated adrCatalog mirror excluded) is defined in
+// src/qa/reference-scope.ts. A citation a diff adds is always checked.
+//
 // Every dependency the resolver needs (filesystem existence, ADR ids, Issue lookup, repo slug) is
 // injected — this module's own scanning/classification logic is pure and unit-tested without I/O.
 import { fileURLToPath } from "node:url";
@@ -21,6 +25,7 @@ import { makeGitOps, resolveChangedFiles } from "../lib/git.ts";
 import type { Runner } from "../lib/exec.ts";
 import { realRunner } from "../lib/exec.ts";
 import { listFilesRecursive } from "../lib/fs-walk.ts";
+import { buildScanTexts } from "./reference-scope.ts";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
 
@@ -54,6 +59,11 @@ export interface Citation {
   // unparseable, issue-candidate), where the distinction doesn't apply. Real digit examples
   // deliberately avoided here — see this file's own header dogfood note.
   markedVia?: "direct" | "continuation";
+  // Repo-relative path of the file the citation was found in. Set only by `resolveIssueCitations`
+  // (which knows which file each text came from); `scanReferences` works on one anonymous text and
+  // never sets it. `summarizeCitations` prints it on each failure line so a failing run names the
+  // file to fix instead of leaving the reader to search the tree.
+  file?: string;
 }
 
 export interface ReferenceResolverDeps {
@@ -551,9 +561,10 @@ export function summarizeCitations(citations: Citation[]): InstrumentResult {
   // never buried the way a silently-skipped or silently-resolved bare `#N` would be.
   const bad = citations.filter((c) => c.verdict !== "resolved" && c.verdict !== "unclassified");
   const unclassified = citations.filter((c) => c.verdict === "unclassified");
+  const where = (c: Citation): string => (c.file === undefined ? "" : ` [file: ${c.file}]`);
   const details = [
-    ...bad.map((c) => `[${c.verdict}] ${c.raw} — ${c.reason}`),
-    ...unclassified.map((c) => `[unclassified] ${c.raw} — ${c.reason}`),
+    ...bad.map((c) => `[${c.verdict}] ${c.raw} — ${c.reason}${where(c)}`),
+    ...unclassified.map((c) => `[unclassified] ${c.raw} — ${c.reason}${where(c)}`),
   ];
 
   if (bad.length > 0) {
@@ -721,11 +732,29 @@ export async function resolveIssueCitations(
     issueExists: (n) => issueCache.get(n) ?? null,
   };
   const citations: Citation[] = [];
-  for (const text of fileTexts.values()) {
-    citations.push(...scanReferences(text, realDeps));
+  for (const [file, text] of fileTexts) {
+    citations.push(...scanReferences(text, realDeps).map((c) => ({ ...c, file })));
   }
 
   return { citations, distinctIssueNumbers: queriedIssueNumbers.size, capExceeded: false };
+}
+
+/**
+ * Whether a path exists at the base of the three-dot diff (the merge base of base and head), for
+ * reference-scope.ts. Any git failure reads as "no", so the file is then scanned whole.
+ */
+export function makeExistsAtBase(runner: Runner, cwd: string, base: string, head: string): (path: string) => Promise<boolean> {
+  let mergeBase: Promise<string> | undefined;
+  const findMergeBase = async (): Promise<string> => {
+    const res = await runner("git", ["merge-base", base, head], { cwd, encoding: "utf8" });
+    return res.code === 0 ? res.stdout.trim() : "";
+  };
+  return async (path) => {
+    mergeBase ??= findMergeBase();
+    const sha = await mergeBase;
+    if (sha === "") return false;
+    return (await runner("git", ["cat-file", "-e", `${sha}:${path}`], { cwd, encoding: "utf8" })).code === 0;
+  };
 }
 
 async function main(): Promise<void> {
@@ -804,12 +833,17 @@ async function main(): Promise<void> {
   // Read every scanned file's text once, up front — reused across both passes below so the
   // second (real) pass never re-reads a file whose content could theoretically change between
   // passes (a stronger guarantee than strictly required today, but free and correct).
-  const fileTexts = new Map<string, string>();
-  for (const file of changedFiles) {
-    if (!shouldScanFile(file)) continue;
-    if (!existsSync(resolve(repoRoot, file))) continue; // deleted file, nothing to scan
-    fileTexts.set(file, await readFile(resolve(repoRoot, file), "utf8"));
-  }
+  // Which TEXT of each changed file is scanned (whole file, or only what the diff adds for an
+  // append-only record) is decided in reference-scope.ts; see its header for the rules.
+  const fileTexts = await buildScanTexts(changedFiles, resolved.fullTreeFallback, {
+    diffText: () => git.diffText(base, head).catch((err: unknown) => { console.error(`[QA-14 reference-resolver] NOTE: cannot read the diff (${String(err).split("\n")[0] ?? ""}), so append-only records are scanned whole.`); throw err; }),
+    readFile: async (file) => {
+      const abs = resolve(repoRoot, file);
+      return existsSync(abs) ? readFile(abs, "utf8") : null; // deleted file, nothing to scan
+    },
+    shouldScan: shouldScanFile,
+    existsAtBase: makeExistsAtBase(realRunner, repoRoot, base, head),
+  });
 
   const issueResolution = await resolveIssueCitations(fileTexts, baseDeps, repoSlug, realRunner);
   if (issueResolution.capExceeded) {
