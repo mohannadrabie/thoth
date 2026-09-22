@@ -212,6 +212,23 @@ test("sb2-hash-lines-hash-the-regex-match-text", () => {
   assert.throws(() => hashLines("x", "not-a-pattern"), Error);
 });
 
+// Issue 267 (red-team, fix-now round, MED): oss01-scan-timeout is not in SECRET_PATTERNS (it names a scan
+// failure, not a real pattern), so looking it up there threw "unknown pattern id" before reading a single
+// byte -- the HASH-COMMAND the gate prints for every scan-timeout block never ran, for any path or commit.
+// Direct unit-level proof, complementing the real-CLI end-to-end proof in history-scan.test.ts's own
+// oss01-every-blocking-pattern-id-has-a-runnable-unlock-command.
+test("sb2-hash-lines-computes-the-scan-timeout-pattern-id-without-throwing", () => {
+  const hostile = "a-".repeat(100_000); // proven-hostile shape (history-scan.test.ts), times out well under 1s
+  assert.doesNotThrow(() => hashLines(hostile, "oss01-scan-timeout"), "the old code threw 'unknown pattern id' here");
+  const lines = hashLines(hostile, "oss01-scan-timeout");
+  assert.ok(lines.length > 0, "at least one real pattern times out on this hostile shape");
+  for (const line of lines) {
+    assert.match(line, /^[0-9a-f]{64} {2}.*SCAN-TIMEOUT/, "each line pairs a real hash with the scan-timeout redacted form");
+  }
+  // Control: ordinary text has nothing to report for this pattern id -- no false positive from the new path.
+  assert.deepEqual(hashLines("nothing hostile here\n", "oss01-scan-timeout"), []);
+});
+
 async function withToolRepo(files: Record<string, string>, fn: (dir: string, scratch: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "oss01-sb2-tool-repo-"));
   const scratch = await mkdtemp(join(tmpdir(), "oss01-sb2-tool-out-"));

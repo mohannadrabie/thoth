@@ -35,7 +35,10 @@
 // recorded as a blocking finding under the reserved `oss01-scan-timeout` pattern id rather than silently
 // skipped, so the gate fails closed instead of passing a blob nobody actually scanned. That finding is a
 // plain `HistoryMatch` like any other, reviewable and grantable through the SAME value-scoped allowlist —
-// THOTH-ADR-0002 forbids a NEW exemption shape, not reuse of the existing one for a new kind of finding.
+// THOTH-ADR-0002 forbids a NEW exemption shape, not reuse of the existing one for a new kind of finding —
+// and, since Issue 264 (fix-now round), its `valueSha256` is a hash of this variant's own scanned text
+// (not `text.length`), so the property that makes the existing shape safe to reuse — content addressing —
+// actually holds for this finding kind too, not just its field names.
 //
 // Blob dedupe and path scoping (Issue 250): a blob's own content is scanned once per distinct sha
 // (matching is pure over the blob's own bytes, so re-scanning an identical blob would only reproduce the
@@ -79,10 +82,27 @@ export interface ScanOptions {
  * BOM, to real text — see `decodeBlobVariants`), so for every pattern in this catalog (ASCII-only match
  * shapes) the latin1 round trip recovers the same bytes whichever path the text came from; the result
  * equals the hash of the same literal read from a plain-ASCII file, which is the idiom this repo's
- * reviewed-baseline tests already use. Unchanged by Issues 246/247/250: still the one hash function, still
- * over the matched text only, never the surrounding blob. */
+ * reviewed-baseline tests already use.
+ *
+ * Issue 266 (app-security-reviewer, fix-now round): `Buffer.from(str, "latin1")` truncates any JS string
+ * code point above 0xFF to its low byte. The latin1-decoded variant's own `toString("latin1")` never
+ * produces one of those (every byte maps 1:1 into 0x00-0xFF), so this branch is unreachable for that
+ * variant — but the UTF-16 variant (Issue 246) can. For the two patterns whose value class is open or
+ * negated (`generic-password-assignment`, `private-key-block`), a UTF-16-decoded match built from
+ * high-code-point characters (visually nothing like a reviewed ASCII literal) truncated to the exact same
+ * low-byte sequence as an already-reviewed plain-ASCII value, colliding on `valueSha256` — demonstrated:
+ * Armenian-range glyphs shifted to the same low bytes as `"SuperSecretPW1"` hashed identically to it.
+ * Rather than reject the match outright (which would silently stop reporting a genuine secret that merely
+ * contains a non-latin1 character, the worse failure mode for a security gate), a match containing a code
+ * point above 0xFF is hashed over its own UTF-16LE code units instead — lossless, so two distinct matched
+ * strings never collide — while every match that stays inside 0x00-0xFF (every latin1-variant match, and
+ * every UTF-16-variant match of genuinely ASCII-or-latin1-range text, which is the common, intended case)
+ * keeps the existing latin1 hash unchanged, so the "one entry covers both forms" equivalence this module's
+ * header comment describes still holds for the case it was designed for. */
 function hashMatchedBytes(matched: string): string {
-  return createHash("sha256").update(Buffer.from(matched, "latin1")).digest("hex");
+  const hasHighCodePoint = [...matched].some((ch) => (ch.codePointAt(0) ?? 0) > 0xff);
+  const bytes = Buffer.from(matched, hasHighCodePoint ? "utf16le" : "latin1");
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /** Every way one blob's raw bytes are decoded and matched (Issue 246). ALWAYS includes the latin1
@@ -171,14 +191,25 @@ export function scanBlobText(
       // Fail closed (Issue 247): a pattern that could not finish against this blob within the scan-time
       // budget is reported as a blocking finding, never silently skipped — a timeout is not the same
       // thing as "no match", and treating it that way would reopen exactly the class of blind spot
-      // Issue 237 closed. The hash carries no blob content (nothing was matched), so it discloses
-      // nothing about the blob's real bytes; it exists only so this exact (blob, pattern) outcome is
-      // reviewable and, if a human judges it a genuine oversized-but-legitimate asset, grantable.
+      // Issue 237 closed.
+      //
+      // Issue 264 (red-team + app-security-reviewer, fix-now round, HIGH): the hash below MUST be a
+      // function of this variant's own decoded text, not of `text.length` alone. A length-only hash
+      // meant two blobs of the same decoded length that both time out on the same pattern at the same
+      // path produced the IDENTICAL valueSha256 — demonstrated: a 200,000-byte padding blob and a
+      // 200,000-byte blob carrying a real hostname and email hashed identically, so granting the first
+      // (a legitimate, reviewed oversized asset) silently exempted the second (an attacker's blob of the
+      // same length) forever, with zero allowlist.json diff and zero reviewer visibility — THOTH-ADR-0002's
+      // "hash over the matched bytes" rule, applied to a finding that has no matched bytes of its own, so
+      // it is hashed over the blob's own scanned text instead. This keeps the finding content-addressed
+      // like every other one: two different blobs (even the same length) never share a hash, so one grant
+      // covers exactly the one blob it was reviewed against, and a novel blob at the same path — however
+      // similar in size — still blocks and still names its own unlock.
       found.push({
         patternId: SCAN_TIMEOUT_PATTERN_ID,
         description: `scan of this blob against pattern '${pattern.id}' did not finish within ${SCAN_TIMEOUT_MS}ms and was stopped; this is a scan that could not complete, not a secret match`,
         redacted: `…[SCAN-TIMEOUT pattern=${pattern.id} bytes=${text.length}]`,
-        valueSha256: hashMatchedBytes(`${SCAN_TIMEOUT_PATTERN_ID}:${pattern.id}:${text.length}`),
+        valueSha256: hashMatchedBytes(`${SCAN_TIMEOUT_PATTERN_ID}:${pattern.id}:${text}`),
       });
       continue;
     }

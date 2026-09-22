@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry } from "./history-scan.ts";
-import { clip, decodeBlobVariants, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
+import { SCAN_TIMEOUT_PATTERN_ID, clip, decodeBlobVariants, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
 import { SECRET_PATTERNS } from "./patterns.ts";
 
 export const ALLOWLIST_PATH = "docs/qa/secret-scan-allowlist.json";
@@ -294,8 +294,22 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
 }
 
 /** One line per match of `patternId` in `text`: the sha256 of the matched bytes, two spaces, then the
- * redacted form the block message showed, so a developer can pair a hash with a blocked match. */
+ * redacted form the block message showed, so a developer can pair a hash with a blocked match.
+ *
+ * Issue 267 (red-team, fix-now round, MED): `oss01-scan-timeout` is not in `SECRET_PATTERNS` (it names a
+ * scan failure, not a real pattern — see `history-scan.ts`), so looking it up there and throwing on "not
+ * found" made the HASH-COMMAND the gate prints for EVERY scan-timeout block fail, unconditionally, for
+ * every path and every commit — there was no way to actually compute and grant that finding kind. Fixed
+ * together with Issue 264 (never alone: landing this without 264 would make the content-blind grant easy
+ * to add) by re-running every real pattern against `text` and keeping only the resulting
+ * `oss01-scan-timeout` findings — the exact same computation `scanBlobText` performs for the gate itself,
+ * so this reproduces the identical hash(es) the gate reported, whichever real pattern(s) timed out. */
 export function hashLines(text: string, patternId: string): string[] {
+  if (patternId === SCAN_TIMEOUT_PATTERN_ID) {
+    return scanBlobText(text, SECRET_PATTERNS)
+      .filter((f) => f.patternId === SCAN_TIMEOUT_PATTERN_ID)
+      .map((f) => `${f.valueSha256}  ${f.redacted}`);
+  }
   const pattern = SECRET_PATTERNS.find((p) => p.id === patternId);
   if (pattern === undefined) throw new Error(`unknown pattern id ${patternId}`);
   return scanBlobText(text, [pattern]).map((f) => `${f.valueSha256}  ${f.redacted}`);

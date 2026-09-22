@@ -302,3 +302,98 @@ test("oss01-latin1-nbsp-separator-still-matches", () => {
   const text = `${PASSWORD_NAME}${nbsp}=${nbsp}"abcdefgh"`;
   assert.equal(passwordRegex().exec(text)?.[0], text);
 });
+
+// ================================================================================================
+// Issue 268 (red-team, fix-now round, MED): `oss01-no-negated-class-rejects-a-high-byte` (above) only
+// extracts NEGATED classes ([^...]) before probing them, and its own stated premise -- "a non-negated
+// class can only match MORE, never hide data" -- is false. Demonstrated: a POSITIVE class narrower than
+// the shipped one, or a lookahead, hides a high byte exactly the same way a negated class can, and every
+// one of those spellings passes the old guard green because it never looks at how the class was written.
+// This replaces syntax classification with a whole-PATTERN behaviour sweep: splice every byte 0x80-0xFF
+// into each exemplar's real value position and run the REAL, shipped regex end to end, asserting the
+// match still covers the whole literal -- construct-independent by design, so a future narrowing, however
+// it is spelled, cannot pass this the way it passed the syntax-scoped guard it supersedes. Named per
+// red-team's own suggested test: oss01-no-value-class-however-written-hides-a-high-byte.
+// ================================================================================================
+
+/** One exemplar per catalog pattern with a free-form ("value class") match region -- the two patterns
+ * app-security-reviewer identified as carrying an open or negated class. `withByte(b)` splices byte `b`
+ * (0x80-0xFF, as a JS char code) into the value position; the WHOLE returned string must always be what
+ * the pattern matches -- nothing before or after the spliced byte may be left unmatched. */
+const VALUE_CLASS_EXEMPLARS: Record<string, { regex: RegExp; withByte: (b: number) => string }> = {
+  "generic-password-assignment": {
+    regex: findPattern("generic-password-assignment").regex,
+    withByte: (b) => `${PASSWORD_NAME} = "abcd${String.fromCharCode(b)}efgh"`,
+  },
+  "private-key-block": {
+    regex: findPattern("private-key-block").regex,
+    withByte: (b) => {
+      const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+      const end = ["-----END", "PRIVATE KEY-----"].join(" ");
+      return [begin, `MIIB${String.fromCharCode(b)}AAAA`, end].join("\n");
+    },
+  },
+};
+
+/** Behaviourally sweeps `re` (a fresh, non-global copy is made internally) against `withByte`'s exemplar
+ * for every byte 0x80-0xFF; returns the bytes, if any, where the whole exemplar was NOT the match -- i.e.
+ * a high byte that ended the value early (a truncated match) or kept the pattern from matching the
+ * literal at all (a `null` match, the same net effect: the literal goes unreported). */
+function sweepAgainstRegex(re: RegExp, withByte: (b: number) => string): string[] {
+  const fresh = new RegExp(re.source, re.flags.replace("g", ""));
+  const hidden: string[] = [];
+  for (let b = 0x80; b <= 0xff; b++) {
+    const text = withByte(b);
+    fresh.lastIndex = 0;
+    if (fresh.exec(text)?.[0] !== text) hidden.push("0x" + b.toString(16).toUpperCase());
+  }
+  return hidden;
+}
+
+test("oss01-no-value-class-however-written-hides-a-high-byte", () => {
+  const ids = Object.keys(VALUE_CLASS_EXEMPLARS);
+  assert.ok(ids.length >= 2, "non-vacuous: both catalog patterns with a free-form value class are covered");
+  for (const [id, spec] of Object.entries(VALUE_CLASS_EXEMPLARS)) {
+    const hidden = sweepAgainstRegex(spec.regex, spec.withByte);
+    assert.deepEqual(
+      hidden,
+      [],
+      `pattern ${id} hides high byte(s) ${hidden.join(",")} somewhere in its value class, however that class is spelled`,
+    );
+  }
+});
+
+test("oss01-no-value-class-however-written-hides-a-high-byte: catches non-negated spellings the old guard missed (positive control)", () => {
+  const shipped = findPattern("generic-password-assignment").regex.source;
+  const classBody = negatedClasses(shipped)[0];
+  assert.ok(classBody !== undefined, "control: the shipped source has a negated class to swap out");
+  const shippedClass = `[^${classBody}]`;
+  assert.ok(shipped.includes(shippedClass), "control: the exact class text is present in the shipped source");
+  const flags = findPattern("generic-password-assignment").regex.flags.replace("g", "");
+  const { withByte } = VALUE_CLASS_EXEMPLARS["generic-password-assignment"]!;
+
+  // Two of red-team's own demonstrated shapes -- neither is a negated class, so `negatedClasses()` (the
+  // #249 guard's own extractor) finds NOTHING to probe in either mutated source, proving the old guard is
+  // vacuous against them, while this whole-pattern sweep is not.
+  // The shipped source's own trailing `{8,}` quantifier stays put -- only the class token itself
+  // (`[^...]`) is swapped for an alternate spelling, never widened with a second quantifier.
+  const alternateShapes: Record<string, string> = {
+    "positive printable-ASCII class [\\x21-\\x7e]": "[\\x21-\\x7e]",
+    "positive class [\\w!@#$%^&*()+=./-]": "[\\w!@#$%^&*()+=./-]",
+  };
+  for (const [label, altClass] of Object.entries(alternateShapes)) {
+    const mutatedSource = shipped.replace(shippedClass, altClass);
+    assert.notEqual(mutatedSource, shipped, `control: the substitution for ${label} actually changed the source`);
+    assert.deepEqual(
+      negatedClasses(mutatedSource),
+      [],
+      `control: ${label} is not a negated class -- the OLD guard's own extractor must be blind to it`,
+    );
+    const mutated = new RegExp(mutatedSource, flags);
+    const hidden = sweepAgainstRegex(mutated, withByte);
+    assert.ok(
+      hidden.length > 0,
+      `${label}: this whole-pattern sweep must catch the same defect class the old, syntax-scoped guard missed`,
+    );
+  }
+});
