@@ -1,15 +1,25 @@
 {
-  "scope": "s1-229-qa14-red",
-  "tier": "CRITICAL",
+  "scope": "s1-242-qa15-timeout-headroom",
+  "tier": "STANDARD",
   "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-21a": "s1-229-qa14-red (GitHub Issue 229): story-implementer PROPOSED CRITICAL, Manager RATIFIED unchanged (run-log tier-ratified). Reason: the change alters which text a P0 CI gate examines, and a scoping bug fails open. Manager rulings (human preapproved, ratification pending at PR): Q1 green means the diff-mode run CI performs; full-tree measured and disclosed. Q2 whole-file scan kept for living docs; added-text-only scan for append-only records (decisions.md, decisions-archive.md, REVIEW_LOG.md, CHANGELOG.md, docs/reviews) plus an adrCatalog mirror exclusion; no (path, token) exemption; the moved-line rule has multiset semantics. Q3 docs/reviews immutable, STATE.md and backlog.md reworded in place. D1-D4 accepted as the plan defaults. REQUIREMENTS.md QA-14 text amendment NOT applied here (would turn this PR red on 28 stale citations); flagged for the human. design-challenger pre-build SKIPPED by Manager ruling; three questions go to red-team. Reviewers: red-team, code-reviewer, cross-domain-reviewer. test-writer not dispatched (internal QA instrument). Plan: docs/plans/s1-229-qa14-red-phase1-2026-09-21.md.",
+  "note_2026-09-22a": "s1-242-qa15-timeout-headroom (GitHub Issue #242): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). QA-15 (src/qa/completeness-claim-checker.ts) hardcoded one timeoutMs: 60_000 shared by every registered instrument; measured every instrument for real and found oss-history-scan (~69s quiet), not the reported qa-mutation-shell (~23s quiet, 56.5s loaded), is this repo's own slowest instrument, already over the old cap. Fix: extracted to an exported INSTRUMENT_TIMEOUT_MS = 180_000 constant (global raise, no per-instrument override -- no instrument needs a short timeout to fail fast on a genuine hang). Two new regression tests (headroom pin, timeout-forwarding spy), both confirmed non-vacuous by both reviewers via independent mutation. Round 1 verdicts: code-reviewer SHIP (2 LOW issues: qa-reference-resolver's runtime is gh-call-bound and not a stable baseline, worth a follow-up measurement; a comment's instrument enumeration has a wording gap for the bare qa14-marker-corpus-probe key. 1 LOW suspicion: no discussion of a 3x-longer wait before a genuine hang reports failure). cross-domain-reviewer APPROVE (1 LOW: docs/STATE.md's #242 bullet is stale, fixed at this story's close-out). Manager correction: cross-domain-reviewer's report states KNOWN_INSTRUMENTS has 16 keys; the real count, verified directly against the file, is 14 (10 distinct underlying scripts) -- matches code-reviewer's own count; immaterial to either verdict, noted here rather than editing the immutable report. Branch fix/s1-242-qa15-timeout-headroom, commit 49a6ece. Plan folded into the build report (no separate Phase 1 doc; small STANDARD story, s1-135/s1-238 precedent).",
   "priorScope": {
-    "scope": "s1-237-nul-byte-scan",
+    "scope": "s1-229-qa14-red",
+    "tier": "CRITICAL",
+    "reviewRoundsSinceClean": 0,
+    "reviewRoundsTotal": 1,
+    "humanRulingRequired": false,
+    "councilHeld": false,
+    "councilVerdict": null,
+    "roundsSinceLastGo": 0,
+    "note_2026-09-21a": "s1-229-qa14-red (GitHub Issue 229): story-implementer PROPOSED CRITICAL, Manager RATIFIED unchanged (run-log tier-ratified). Reason: the change alters which text a P0 CI gate examines, and a scoping bug fails open. Manager rulings (human preapproved, ratification pending at PR): Q1 green means the diff-mode run CI performs; full-tree measured and disclosed. Q2 whole-file scan kept for living docs; added-text-only scan for append-only records (decisions.md, decisions-archive.md, REVIEW_LOG.md, CHANGELOG.md, docs/reviews) plus an adrCatalog mirror exclusion; no (path, token) exemption; the moved-line rule has multiset semantics. Q3 docs/reviews immutable, STATE.md and backlog.md reworded in place. D1-D4 accepted as the plan defaults. REQUIREMENTS.md QA-14 text amendment NOT applied here (would turn this PR red on 28 stale citations); flagged for the human. design-challenger pre-build SKIPPED by Manager ruling; three questions go to red-team. Reviewers: red-team, code-reviewer, cross-domain-reviewer. test-writer not dispatched (internal QA instrument). Plan: docs/plans/s1-229-qa14-red-phase1-2026-09-21.md. MERGED as PR #259, closed.",
+    "priorScope": {
+      "scope": "s1-237-nul-byte-scan",
     "tier": "CRITICAL",
     "reviewRoundsSinceClean": 0,
     "reviewRoundsTotal": 0,
@@ -2344,4 +2354,5 @@
   },
   "note_2026-09-21b": "s1-229-qa14-red review round 1: red-team go (2 MED, Issues 253 and 254), code-reviewer SHIP-AFTER-FIXES (1 MED, Issue 255), cross-domain-reviewer APPROVE-WITH-CONDITIONS (2 LOW docs items). Counted as one REWORK-class round (reviewRoundsSinceClean 1, reviewRoundsTotal 1). Manager triage: every finding fix-now inside the approved scope; JSON tokenizer swapped for a canonical-format parse (three reviewers preferred it, human prefers simplicity); hunk-count parser kept (red-team proved it against the header-spoof attack). Delta goes back to red-team for a re-confirm (CRITICAL, gate-logic change).",
   "note_2026-09-21c": "s1-229-qa14-red review round 2 (targeted re-confirm of the eae5451..997e69d delta): red-team go (Issues 253 and 254 re-attacked with the same payloads, both closed; one new LOW, a deep-nesting throw outside the try in the canonical mirror cut, exposure about 0%), code-reviewer SHIP (0 open findings, Issue 255 closed). Clean verdict: reviewRoundsSinceClean reset to 0, reviewRoundsTotal stays 1. The LOW is fixed in a small named-test commit without a third review round (exposure about 0%, exits 1 either way)."
+  }
 }
