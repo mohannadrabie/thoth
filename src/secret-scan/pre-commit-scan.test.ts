@@ -441,3 +441,42 @@ test("oss01-nul-byte-does-not-hide-a-secret (pre-commit CLI)", async (t) => {
     assert.equal(res.code, 0, `control: a NUL-bearing file with no key passes:\n${res.stdout}${res.stderr}`);
   });
 });
+
+// Issue 246: a UTF-16 text file (BOM, interleaved NUL bytes -- what a Windows PowerShell 5 redirect
+// writes) must not hide a secret from the pre-commit hook either; the proof-test named in the issue
+// requires both `scanHistory` (history-scan.test.ts) AND the pre-commit hook (here).
+function utf16LE(text: string): Buffer {
+  return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+}
+function utf16BE(text: string): Buffer {
+  const le = Buffer.from(text, "utf16le");
+  const be = Buffer.alloc(le.length);
+  for (let i = 0; i < le.length; i += 2) {
+    be[i] = le[i + 1] ?? 0;
+    be[i + 1] = le[i] ?? 0;
+  }
+  return Buffer.concat([Buffer.from([0xfe, 0xff]), be]);
+}
+
+test("oss01-utf16-text-file-does-not-hide-a-secret (pre-commit CLI)", async () => {
+  await withIsolatedGitRepo(async (repoDir) => {
+    const key = "AKIA" + "UTF".padEnd(16, "Q");
+    const line = `k = ${key}\n`;
+    await writeFile(join(repoDir, "utf16le.txt"), utf16LE(line));
+    await writeFile(join(repoDir, "utf16be.txt"), utf16BE(line));
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.notEqual(res.code, 0, "a UTF-16LE-with-BOM and a UTF-16BE-with-BOM file each holding a secret-shaped literal must refuse the commit");
+    assert.ok(res.stdout.includes("utf16le.txt"), "the UTF-16LE file must be named in the blocking output");
+    assert.ok(res.stdout.includes("utf16be.txt"), "the UTF-16BE file must be named in the blocking output");
+    assert.ok(!res.stdout.includes(key), "the raw literal is never printed");
+  });
+  // Control: the same two files with nothing secret-shaped in them pass.
+  await withIsolatedGitRepo(async (repoDir) => {
+    await writeFile(join(repoDir, "utf16le-clean.txt"), utf16LE("nothing secret-shaped here\n"));
+    await writeFile(join(repoDir, "utf16be-clean.txt"), utf16BE("nothing secret-shaped here\n"));
+    await gitOk(repoDir, "add", ".");
+    const res = await runScanCli(repoDir);
+    assert.equal(res.code, 0, `control: clean UTF-16 files pass:\n${res.stdout}${res.stderr}`);
+  });
+});

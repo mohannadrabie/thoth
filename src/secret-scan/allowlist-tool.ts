@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry } from "./history-scan.ts";
-import { clip, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
+import { clip, decodeBlobVariants, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
 import { SECRET_PATTERNS } from "./patterns.ts";
 
 export const ALLOWLIST_PATH = "docs/qa/secret-scan-allowlist.json";
@@ -334,7 +334,12 @@ async function runHash(argv: string[]): Promise<number> {
   const git = makeGitOps(realRunner, process.cwd());
   const sha = (await git.lsTree(commit)).get(path);
   if (sha === undefined) throw new Error(`${path} is not in ${commit}`);
-  const lines = [...new Set(hashLines((await git.catFileBlob(sha)).toString("latin1"), patternId))];
+  // Issue 246: decode every way the gate itself decodes (the latin1 reading, PLUS a BOM-triggered UTF-16
+  // reading when present) and union the hash lines, so this command prints the SAME hash(es) the gate
+  // computed — a raw `.toString("latin1")` here would silently miss a UTF-16-only match and the printed
+  // unlock would never actually unlock it.
+  const content = await git.catFileBlob(sha);
+  const lines = [...new Set(decodeBlobVariants(content).flatMap((text) => hashLines(text, patternId)))];
   if (lines.length === 0) {
     console.error(`[allowlist-tool hash] no ${patternId} match in that blob`);
     return 1;
