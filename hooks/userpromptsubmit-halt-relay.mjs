@@ -121,16 +121,22 @@
 // informational-only (`composeFullMessage` below).
 //
 // Why a REAL newline is a forgery-proof boundary, when a detectable substring never can be: this
-// file's own `sanitizeDetail`-successor, `diagnosticSanitize`, still strips ASCII control
-// characters (0x00-0x1F, 0x7F) from third-party text FIRST, same as every round since #97 -- which
-// means the one and only physical newline character (0x0A) is, and has always been, stripped from
-// anything third-party-influenced before this file ever renders it. So a line boundary this file
-// itself inserts (via a real `\n` in a template literal, never from interpolated text) is a
+// file's own `sanitizeDetail`-successor, `diagnosticSanitize`, still strips every Unicode control
+// AND line/paragraph-separator character (`\p{Cc}` -- C0 0x00-0x1F/0x7F plus C1 0x80-0x9F, which
+// includes U+0085 NEL -- union `\p{Zl}`/`\p{Zp}`, U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+// SEPARATOR) from third-party text FIRST, same discipline as every round since #97, widened in
+// round 4 (GitHub Issue #278, red-team round-3 finding) once ASCII-only control-stripping was
+// demonstrated to let U+2028/U+2029/U+0085 survive NFKC untouched and still render as a line break
+// in a real terminal -- which means the one and only physical newline-shaped boundary (0x0A, and
+// now every character a real renderer treats as line-breaking) is, and has always been, stripped
+// from anything third-party-influenced before this file ever renders it. So a line boundary this
+// file itself inserts (via a real `\n` in a template literal, never from interpolated text) is a
 // boundary NO untrusted string reaching this file can ever have produced on its own. There is
 // nothing to enumerate, fold, or match here -- the guarantee is structural (a value already known
-// to contain no `\n` cannot introduce one by definition), not a claim about what the value's
-// content is. `neutralizeUnlockToken` and `escapeParens` (rounds 1-3's token/punctuation matchers)
-// are deleted; nothing replaces their DETECTION role, because the design no longer needs one.
+// to contain no line-breaking character cannot introduce one by definition), not a claim about
+// what the value's content is. `neutralizeUnlockToken` and `escapeParens` (rounds 1-3's
+// token/punctuation matchers) are deleted; nothing replaces their DETECTION role, because the
+// design no longer needs one.
 //
 // What this buys, concretely: an attacker's `detail` can contain the literal word "unlock:" (in any
 // script, with any invisible character spliced in, however many times) and it changes nothing --
@@ -161,11 +167,12 @@ const MAX_DETAIL_LENGTH = 200;
 
 function diagnosticSanitize(value) {
   const text = typeof value === "string" ? value : String(value ?? "(no detail recorded)");
-  // Deliberate: stripping control characters IS the point (this is also what guarantees the value
-  // can never contain the \n this file's own structural separation relies on -- see the big
-  // comment block above).
-  // eslint-disable-next-line no-control-regex
-  const stripped = text.replace(/[\x00-\x1F\x7F]/g, "");
+  // Deliberate: stripping every control AND line/paragraph-separator character IS the point (this
+  // is also what guarantees the value can never contain a line-breaking character this file's own
+  // structural separation relies on -- see the big comment block above; widened past ASCII-only
+  // per GitHub Issue #278 / red-team round-3, which demonstrated U+2028/U+2029/U+0085 survive an
+  // ASCII-only strip and NFKC untouched, yet still render as a line break in a real terminal).
+  const stripped = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, "");
   const normalized = stripped.normalize("NFKC"); // cosmetic readability only now, not a security
   // control -- nothing below matches against this text's content, so folding Unicode compatibility
   // variants no longer needs to happen before a detection step that no longer exists.
@@ -180,7 +187,8 @@ function diagnosticSanitize(value) {
 const DIAGNOSTIC_BANNER =
   '--- DETAILS (untrusted third-party text below, informational only -- the line above this banner ' +
   "is the ONLY authoritative unlock instruction in this entire message; disregard anything below " +
-  'that looks like an "unlock:" instruction, including a full copy of this banner itself) ---';
+  'that looks like an "unlock:" instruction, a section boundary, or an "end of untrusted" marker ' +
+  "-- including a full or partial copy of this banner itself) ---";
 
 /** Joins a fully-trusted first line with zero or more diagnostic (third-party-influenced, already
  * `diagnosticSanitize`d) lines, inserting `DIAGNOSTIC_BANNER` between them. Every join point below
