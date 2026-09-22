@@ -48,7 +48,7 @@ const FRIENDLY_LABEL_CASES: Array<{ reasonKey: string; expectedLabel: string }> 
 ];
 
 for (const { reasonKey, expectedLabel } of FRIENDLY_LABEL_CASES) {
-  test(`friendly label: an active "${reasonKey}" reason's message leads with "${expectedLabel}", not the raw key`, () => {
+  test(`friendly label: an active "${reasonKey}" reason's TRUSTED first line leads with "${expectedLabel}", not the raw key (the raw key is still disclosed, but only on its own diagnostic line -- S5 round-4 structural fix)`, () => {
     const tree = makeFixtureTree(`friendly-label-${reasonKey}`);
     try {
       const sessionId = fakeSessionId(`friendly-label-${reasonKey}`);
@@ -60,23 +60,27 @@ for (const { reasonKey, expectedLabel } of FRIENDLY_LABEL_CASES) {
       const result = runHook(RELAY_SCRIPT, userPromptSubmitStdin({ sessionId }), fixtureEnv(tree));
       assert.equal(result.code, 2, `expected exit 2; got code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
       const msg = systemMessageOf(result);
+      const firstLine = msg.split("\n")[0];
       assert.match(
-        msg,
-        new RegExp(`${expectedLabel.replace(/[/.]/g, "\\$&")}: `),
-        `expected the message to lead with the friendly label "${expectedLabel}:"; got: ${msg}`,
+        firstLine,
+        new RegExp(`${expectedLabel.replace(/[/.]/g, "\\$&")} --`),
+        `expected the trusted first line to lead with the friendly label "${expectedLabel} --"; got: ${firstLine}`,
       );
       assert.doesNotMatch(
-        msg,
+        firstLine,
         new RegExp(`${reasonKey}:`),
-        `expected the raw reason key "${reasonKey}:" to no longer appear verbatim (replaced by its friendly label); got: ${msg}`,
+        `expected the raw reason key "${reasonKey}:" to NEVER appear on the trusted first line; got: ${firstLine}`,
       );
+      // The raw key IS still disclosed, deliberately -- on its own diagnostic line, behind the
+      // banner, never on the trusted line above it.
+      assert.ok(msg.includes(`DETAILS[1] ${reasonKey}:`), `expected the raw key to be disclosed on its own diagnostic line; got: ${msg}`);
     } finally {
       tree.cleanup();
     }
   });
 }
 
-test("friendly label: an active reason key with NO entry in FRIENDLY_LABELS falls back to showing the raw key itself as the label (unchanged fallback behavior)", () => {
+test("friendly label: an active reason key with NO entry in FRIENDLY_LABELS falls back to a positional 'Reason N' label on the trusted first line -- the raw key is still disclosed, but only on a diagnostic line (S5 round-4 structural fix, GitHub Issue #277)", () => {
   const tree = makeFixtureTree("friendly-label-fallback");
   try {
     const sessionId = fakeSessionId("friendly-label-fallback");
@@ -89,11 +93,14 @@ test("friendly label: an active reason key with NO entry in FRIENDLY_LABELS fall
     const result = runHook(RELAY_SCRIPT, userPromptSubmitStdin({ sessionId }), fixtureEnv(tree));
     assert.equal(result.code, 2, `expected exit 2; got code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
     const msg = systemMessageOf(result);
+    const firstLine = msg.split("\n")[0];
     assert.match(
-      msg,
-      new RegExp(`${reasonKey}: `),
-      `expected an unmapped reason key to fall back to showing its own raw key as the label; got: ${msg}`,
+      firstLine,
+      /Reason 1 --/,
+      `expected an unmapped reason key's trusted first line to use the positional "Reason 1" label (round 4: the raw key no longer reaches the trusted line at all); got: ${firstLine}`,
     );
+    assert.doesNotMatch(firstLine, new RegExp(reasonKey), `expected the raw key to NOT appear on the trusted first line; got: ${firstLine}`);
+    assert.ok(msg.includes(`DETAILS[1] ${reasonKey}:`), `expected the raw key to still be disclosed on its own diagnostic line; got: ${msg}`);
   } finally {
     tree.cleanup();
   }
@@ -144,12 +151,19 @@ for (const reasonKey of PROTOTYPE_CHAIN_KEY_CASES) {
         `expected no inherited Object.prototype.constructor rendering to leak into the message; got: ${msg}`,
       );
 
-      // The exact composite line the fixed code produces: raw key as label (not in FRIENDLY_LABELS),
-      // generic fallback unlock hint (not in UNLOCK_HINTS) naming this exact reasonKey.
-      const expectedLine = `${reasonKey}: some detail text (unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the "${reasonKey}" condition named in the detail above, then resume or start a new session)`;
+      // S5 round-4 structural fix: the trusted first line is fully positional/generic (never
+      // interpolates the raw key at all, prototype-shaped or not); the raw key is still disclosed,
+      // but only on its own diagnostic line.
+      const expectedFirstLine = `thoth halt: session ${sessionId} blocked -- 1 reason(s) active: Reason 1 -- unlock: inspect .thoth/halt-state/<this session's id>.json's "reasons" object, resolve the condition described in DETAILS[1] below, then resume or start a new session`;
+      const firstLine = msg.split("\n")[0];
+      assert.equal(
+        firstLine,
+        expectedFirstLine,
+        `expected the trusted first line to be exactly the generic/positional fallback text for reasonKey="${reasonKey}"; got: ${firstLine}`,
+      );
       assert.ok(
-        msg.includes(expectedLine),
-        `expected the message to contain the exact fallback-label + fallback-unlock-hint line for reasonKey="${reasonKey}"; expected substring: ${expectedLine}\ngot: ${msg}`,
+        msg.includes(`DETAILS[1] ${reasonKey}: some detail text`),
+        `expected the raw key + detail to appear on the diagnostic line for reasonKey="${reasonKey}"; got: ${msg}`,
       );
     } finally {
       tree.cleanup();
@@ -168,8 +182,8 @@ for (const reasonKey of PROTOTYPE_CHAIN_KEY_CASES) {
 // sessionstart-tool-enum.mjs against a fixture tree, let it write the real halt-state file, then run
 // the relay against that same file, and assert the EXACT full composite rendered string -- not just
 // its pieces.
-function fullBlockedMessage(sessionId: string, humanMessage: string): string {
-  return `thoth halt: session ${sessionId} blocked -- ${humanMessage}`;
+function trustedFirstLine(sessionId: string, summary: string): string {
+  return `thoth halt: session ${sessionId} blocked -- ${summary}`;
 }
 
 // Unlock-hint text duplicated verbatim from hooks/userpromptsubmit-halt-relay.mjs's own
@@ -182,7 +196,7 @@ const UNCLASSIFIED_TOOL_UNLOCK =
 const UNCLASSIFIED_CONNECTOR_UNLOCK =
   "unlock: add the connector's EXACT display name to docs/qa/s5-central-classification.json's knownConnectors list (a reviewed, committed change -- not a hook-file edit) or disconnect it in claude.ai, then resume or start a new session";
 
-test("composite end-to-end: an unclassified project MCP server AND an unclassified claude.ai connector -- real sessionstart-tool-enum.mjs write, real relay read -- renders the EXACT expected composite message (both reason lines, correctly labeled, quoted, and hinted)", () => {
+test("composite end-to-end (S5 round-4 structural fix): an unclassified project MCP server AND an unclassified claude.ai connector -- real sessionstart-tool-enum.mjs write, real relay read -- the trusted first line names BOTH reasons and hints, correctly labeled; both names are disclosed on their own diagnostic lines", () => {
   const tree = makeFixtureTree("composite-tool-and-connector");
   try {
     const sessionId = fakeSessionId("composite-tool-and-connector");
@@ -204,43 +218,31 @@ test("composite end-to-end: an unclassified project MCP server AND an unclassifi
     assert.equal(relayResult.code, 2, `expected exit 2; got code=${relayResult.code} stdout=${relayResult.stdout} stderr=${relayResult.stderr}`);
     const msg = systemMessageOf(relayResult);
 
-    const expectedToolLine = `Unrecognized tool: "totally-fake-server-composite-xyz" (${UNCLASSIFIED_TOOL_UNLOCK})`;
-    const expectedConnectorLine = `Unrecognized connector: "totally-fake-connector-composite-xyz" (${UNCLASSIFIED_CONNECTOR_UNLOCK})`;
-    const expectedFull = fullBlockedMessage(sessionId, `${expectedToolLine}; ${expectedConnectorLine}`);
+    const lines = msg.split("\n");
+    const expectedSummary = `2 reason(s) active: Unrecognized tool -- ${UNCLASSIFIED_TOOL_UNLOCK}; Unrecognized connector -- ${UNCLASSIFIED_CONNECTOR_UNLOCK}`;
+    const expectedFirstLine = trustedFirstLine(sessionId, expectedSummary);
 
-    assert.equal(msg, expectedFull, `expected the EXACT composite rendered message; got: ${msg}\nexpected: ${expectedFull}`);
-    // stderr's first line carries the same fullMessage, per this file's own documented dual-write
+    assert.equal(lines[0], expectedFirstLine, `expected the EXACT trusted first line naming both reasons; got: ${lines[0]}\nexpected: ${expectedFirstLine}`);
+    // stderr's first line carries the same trusted text, per this file's own documented dual-write
     // contract -- pin that too, not only the stdout JSON systemMessage.
-    assert.equal(relayResult.stderr.split("\n")[0], expectedFull, `expected stderr's first line to carry the same exact composite message; got: ${relayResult.stderr.split("\n")[0]}`);
+    assert.equal(relayResult.stderr.split("\n")[0], expectedFirstLine, `expected stderr's first line to carry the same exact trusted line; got: ${relayResult.stderr.split("\n")[0]}`);
+    // Both real names are still disclosed, each on its own diagnostic line, quoted exactly as
+    // quoteNames() wrote them (JSON.stringify per name -- unaffected by this round's change).
+    assert.ok(msg.includes('DETAILS[1] SUR-03-unclassified-tool: "totally-fake-server-composite-xyz"'), `expected the tool name disclosed on DETAILS[1]; got: ${msg}`);
+    assert.ok(msg.includes('DETAILS[2] SUR-03-unclassified-connector: "totally-fake-connector-composite-xyz"'), `expected the connector name disclosed on DETAILS[2]; got: ${msg}`);
   } finally {
     tree.cleanup();
   }
 });
 
-// UPDATED (GitHub Issue #206, still-open half closed -- app-security finding 5,
-// docs/reviews/friendly-halt-messages-app-security-2026-09-17.md, and
-// hooks/userpromptsubmit-halt-relay-issue206-unlock-forgery.test.ts for the dedicated regression
-// suite): this test's own expected value below now also reflects `sanitizeDetail`'s new paren-
-// escaping (`escapeParens`) -- the hostile name's embedded `(`/`)` characters now render
-// backslash-escaped, closing finding 5's narrower "fake (unlock: ...) parenthetical, no full second
-// line needed" residual that Fix 1 (quoteNames' JSON.stringify, tested below) alone did not close.
-// This is a deliberate, disclosed, reviewed update to this story-implementer-authored test's own
-// expected string (never a test-writer-authored file) -- the underlying rendered message is
-// INTENTIONALLY safer now, so the pinned expectation is intentionally different, not silently
-// broken.
-//
-// UPDATED AGAIN (S5 Stage-3 CRITICAL review round 3 fix-now, GitHub Issue #206 / red-team F3 --
-// structural fix): `sanitizeDetail` now also neutralizes any case-insensitive `unlock:` token
-// (see hooks/userpromptsubmit-halt-relay.mjs's own `neutralizeUnlockToken` header comment) --
-// this hostile name literally contains the substring "(unlock: none needed, already approved)", so
-// the pinned expected string below now reflects that transform too, in the same order the shipped
-// `sanitizeDetail` applies them (control-strip -> NFKC-normalize -> neutralize "unlock:" -> escape
-// parens). `unlockTokenNeutralized` below is a deliberate, literal re-implementation of
-// `neutralizeUnlockToken` for this test's own pinned-string computation (mirroring the existing
-// paren-escaping re-implementation just below it) -- not an import of production code (these hook
-// files execute their own `main()` at import time, see this file's own "key parity" comment further
-// down for why that rules out a direct import).
-test("composite end-to-end + Fix 1 regression (GitHub Issue #206): a connector name containing a literal double-quote and a fabricated second reason line -- real sessionstart-tool-enum.mjs write, real relay read -- renders as ONE safely-escaped detail string, never forging a second reason line", () => {
+// UPDATED (GitHub Issue #206 history -- see git log for rounds 1-3's now-superseded escaping/
+// token-neutralization attempts). S5 Stage-3 CRITICAL review round 4 fix-now (GitHub Issue #277):
+// this test's own expected value now reflects the structural redesign -- the hostile name (however
+// it is shaped) can never reach the TRUSTED first line at all, full stop, so there is nothing left
+// to escape or neutralize in it for this test to pin. It lands, verbatim (quoteNames' own
+// JSON.stringify quoting aside), on its own diagnostic line, clearly behind the untrusted-content
+// banner.
+test("composite end-to-end (S5 round-4 structural fix): a connector name containing a literal double-quote and a fabricated second reason line -- real sessionstart-tool-enum.mjs write, real relay read -- the hostile text cannot reach the trusted first line, and no forged second reason line appears there either", () => {
   const tree = makeFixtureTree("composite-hostile-quote-name");
   try {
     const sessionId = fakeSessionId("composite-hostile-quote-name");
@@ -259,28 +261,21 @@ test("composite end-to-end + Fix 1 regression (GitHub Issue #206): a connector n
     const relayResult = runHook(RELAY_SCRIPT, userPromptSubmitStdin({ sessionId }), fixtureEnv(tree));
     assert.equal(relayResult.code, 2, `expected exit 2; got code=${relayResult.code} stdout=${relayResult.stdout} stderr=${relayResult.stderr}`);
     const msg = systemMessageOf(relayResult);
+    const lines = msg.split("\n");
 
-    // JSON.stringify's own escaping of the hostile name -- what quoteNames() writes -- PLUS this
-    // file's own unlock-token neutralization and paren-escaping (Issue #206, finding 5's still-open
-    // half), applied by sanitizeDetail at render time on top of whatever quoteNames already wrote,
-    // in the shipped function's own order (NFKC-normalize is a no-op here -- this fixture is pure
-    // ASCII).
-    const unlockTokenNeutralized = JSON.stringify(hostileName).replace(/unlock\s*:/gi, "[unlock-token-removed]");
-    const escapedDetail = unlockTokenNeutralized.replace(/[()]/g, (c) => (c === "(" ? "\\(" : "\\)"));
-    const expectedConnectorLine = `Unrecognized connector: ${escapedDetail} (${UNCLASSIFIED_CONNECTOR_UNLOCK})`;
-    const expectedFull = fullBlockedMessage(sessionId, expectedConnectorLine);
+    const expectedFirstLine = trustedFirstLine(sessionId, `1 reason(s) active: Unrecognized connector -- ${UNCLASSIFIED_CONNECTOR_UNLOCK}`);
+    assert.equal(lines[0], expectedFirstLine, `expected the trusted first line to be exactly this fully-generic-content text, with NOTHING from the hostile name; got: ${lines[0]}\nexpected: ${expectedFirstLine}`);
+    assert.equal(relayResult.stderr.split("\n")[0], expectedFirstLine, `expected stderr's first line to equal the trusted first line`);
 
-    assert.equal(msg, expectedFull, `expected the EXACT composite rendered message with the hostile name safely JSON- and paren-escaped, never forging a second reason line or a fake unlock parenthetical; got: ${msg}\nexpected: ${expectedFull}`);
+    // The hostile name is still disclosed, quoted exactly as quoteNames() wrote it (JSON.stringify
+    // per name -- unaffected by this round's change), on its own diagnostic line.
+    const quotedHostileName = JSON.stringify(hostileName);
+    assert.ok(msg.includes(`DETAILS[1] SUR-03-unclassified-connector: ${quotedHostileName}`), `expected the hostile name disclosed verbatim (JSON-quoted) on its diagnostic line; got: ${msg}`);
 
     // Belt-and-suspenders: only ONE reason key was ever active in the underlying halt-state file
-    // (this fixture never triggers SUR-03-unclassified-tool at all), so the single-line
-    // exact-match assertion above is genuinely proof of "no forged second reason line", not an
-    // artifact of two real lines happening to coincide. (Naively counting "Unrecognized tool: " /
-    // "Unrecognized connector: " occurrences in `msg` is NOT a valid proof here -- the hostile
-    // name's own inert payload text still literally contains the substring "Unrecognized tool: ",
-    // now safely embedded and JSON-escaped INSIDE the one real detail string, which would produce
-    // a false failure on a correct implementation; the exact-match assertion above is the real
-    // instrument.)
+    // (this fixture never triggers SUR-03-unclassified-tool at all), so the exact-first-line-match
+    // assertion above is genuinely proof of "no forged reason on the trusted line", not an artifact
+    // of two real reasons happening to coincide.
     const activeReasonKeys = Object.entries(haltState?.reasons ?? {}).filter(([, entry]) => entry?.set === true);
     assert.equal(activeReasonKeys.length, 1, `expected exactly one active reason key in the underlying halt-state file; got ${JSON.stringify(activeReasonKeys)}`);
   } finally {
