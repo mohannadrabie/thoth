@@ -15,7 +15,7 @@
 // committed, so a new literal added in the same change blocks instead of being absorbed into the file.
 import { fileURLToPath } from "node:url";
 import { readFile, writeFile } from "node:fs/promises";
-import { makeGitOps } from "../lib/git.ts";
+import { decodeGitQuotedPath, makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry } from "./history-scan.ts";
 import { clip, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
@@ -326,13 +326,35 @@ async function runVerify(argv: string[]): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
+/**
+ * A tree entry whose decoded (plain, human) spelling equals `path`, tried only after a direct key
+ * lookup misses (Issue 238). `lsTree()`'s map is keyed by the exact spelling `git ls-tree` prints,
+ * which is git's own C-quoted form for a path holding non-ASCII bytes or a literal quote/backslash
+ * (e.g. `"caf\303\251.txt"` for `café.txt`) — a maintainer typing the plain filename they actually
+ * see gets "is not in <commit>" on that direct lookup alone. This widens what `hash` ACCEPTS as
+ * input only; it never changes a tree's own path keys, the allowlist's `path` field semantics
+ * (THOTH-ADR-0002), or what `unlockDetails` prints (#239's shell-safety gate there is untouched).
+ * Throws on an ambiguous decode (two raw entries decoding to the same plain spelling) rather than
+ * silently picking one — this repo's tools never guess.
+ */
+function resolveByDecodedPath(tree: Map<string, string>, path: string): string | undefined {
+  let found: string | undefined;
+  for (const [treePath, sha] of tree) {
+    if (decodeGitQuotedPath(treePath) !== path) continue;
+    if (found !== undefined) throw new Error(`${path} matches more than one tree entry once C-quoting is undone; pass the exact spelling git ls-tree prints instead`);
+    found = sha;
+  }
+  return found;
+}
+
 async function runHash(argv: string[]): Promise<number> {
   const [commit, path, patternId] = argv;
   if (commit === undefined || path === undefined || patternId === undefined) {
     throw new Error("hash needs <commit> <path> <patternId>");
   }
   const git = makeGitOps(realRunner, process.cwd());
-  const sha = (await git.lsTree(commit)).get(path);
+  const tree = await git.lsTree(commit);
+  const sha = tree.get(path) ?? resolveByDecodedPath(tree, path);
   if (sha === undefined) throw new Error(`${path} is not in ${commit}`);
   const lines = [...new Set(hashLines((await git.catFileBlob(sha)).toString("latin1"), patternId))];
   if (lines.length === 0) {
