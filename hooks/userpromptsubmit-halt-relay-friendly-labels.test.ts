@@ -217,6 +217,17 @@ test("composite end-to-end: an unclassified project MCP server AND an unclassifi
   }
 });
 
+// UPDATED (GitHub Issue #206, still-open half closed -- app-security finding 5,
+// docs/reviews/friendly-halt-messages-app-security-2026-09-17.md, and
+// hooks/userpromptsubmit-halt-relay-issue206-unlock-forgery.test.ts for the dedicated regression
+// suite): this test's own expected value below now also reflects `sanitizeDetail`'s new paren-
+// escaping (`escapeParens`) -- the hostile name's embedded `(`/`)` characters now render
+// backslash-escaped, closing finding 5's narrower "fake (unlock: ...) parenthetical, no full second
+// line needed" residual that Fix 1 (quoteNames' JSON.stringify, tested below) alone did not close.
+// This is a deliberate, disclosed, reviewed update to this story-implementer-authored test's own
+// expected string (never a test-writer-authored file) -- the underlying rendered message is
+// INTENTIONALLY safer now, so the pinned expectation is intentionally different, not silently
+// broken.
 test("composite end-to-end + Fix 1 regression (GitHub Issue #206): a connector name containing a literal double-quote and a fabricated second reason line -- real sessionstart-tool-enum.mjs write, real relay read -- renders as ONE safely-escaped detail string, never forging a second reason line", () => {
   const tree = makeFixtureTree("composite-hostile-quote-name");
   try {
@@ -237,12 +248,14 @@ test("composite end-to-end + Fix 1 regression (GitHub Issue #206): a connector n
     assert.equal(relayResult.code, 2, `expected exit 2; got code=${relayResult.code} stdout=${relayResult.stdout} stderr=${relayResult.stderr}`);
     const msg = systemMessageOf(relayResult);
 
-    // JSON.stringify's own escaping of the hostile name -- what quoteNames() now produces.
-    const escapedDetail = JSON.stringify(hostileName);
+    // JSON.stringify's own escaping of the hostile name -- what quoteNames() writes -- PLUS this
+    // file's own new paren-escaping (Issue #206, finding 5's still-open half), applied by
+    // sanitizeDetail at render time on top of whatever quoteNames already wrote.
+    const escapedDetail = JSON.stringify(hostileName).replace(/[()]/g, (c) => (c === "(" ? "\\(" : "\\)"));
     const expectedConnectorLine = `Unrecognized connector: ${escapedDetail} (${UNCLASSIFIED_CONNECTOR_UNLOCK})`;
     const expectedFull = fullBlockedMessage(sessionId, expectedConnectorLine);
 
-    assert.equal(msg, expectedFull, `expected the EXACT composite rendered message with the hostile name safely JSON-escaped, never forging a second reason line; got: ${msg}\nexpected: ${expectedFull}`);
+    assert.equal(msg, expectedFull, `expected the EXACT composite rendered message with the hostile name safely JSON- and paren-escaped, never forging a second reason line or a fake unlock parenthetical; got: ${msg}\nexpected: ${expectedFull}`);
 
     // Belt-and-suspenders: only ONE reason key was ever active in the underlying halt-state file
     // (this fixture never triggers SUR-03-unclassified-tool at all), so the single-line

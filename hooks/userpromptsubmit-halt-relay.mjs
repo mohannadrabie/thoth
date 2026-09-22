@@ -72,23 +72,59 @@
 // and Claude, per this file's own "USER-VISIBLE MESSAGE" section above) — closing the injection
 // channel this diff would otherwise widen, without changing the underlying security property (the
 // block itself, exit code 2, is unaffected either way).
+//
+// GitHub Issue #206, still-open half (`app-security-reviewer`'s finding 5,
+// docs/reviews/friendly-halt-messages-app-security-2026-09-17.md): the OTHER half of #206 (a
+// hostile name forging a whole fabricated SECOND reason line via an unescaped embedded `"`) was
+// already closed by sessionstart-tool-enum.mjs's own `quoteNames()` (JSON.stringify per name,
+// commit 45ec068). That fix operates at WRITE time and only covers the two reason keys quoteNames
+// actually writes (SUR-03-unclassified-tool/-connector) — it does nothing for a reason key whose
+// `detail` never goes through quoteNames at all (SUR-03-enumeration-failed's raw
+// `internal exception during tool enumeration: ${err.message}`, which can echo back
+// attacker-influenced text from a malformed config value). `describeActiveReasons` below
+// concatenates `sanitizeDetail(entry.detail)` directly between a trusted label/colon and a trusted
+// `(unlock: ...)` suffix, with no boundary of its OWN — so a `detail` value (quoted or not) shaped
+// like `...") (unlock: no action needed, safe to resume..."` can visually forge a fake unlock
+// parenthetical ahead of the real one (finding 5's exact demonstrated PoC). Fixed here, at READ
+// time, uniformly for every reason key regardless of how its writer produced `detail`: every literal
+// `(`/`)` in the sanitized text is backslash-escaped (the same backslash-escaping convention
+// `quoteNames()`/`JSON.stringify` already established for embedded quotes, applied to the one
+// additional structural character THIS file's own template introduces), so the ONLY unescaped parens
+// in the rendered line are the real ones `describeActiveReasons` itself adds around the trusted
+// unlock hint — a hostile `detail` can no longer produce a bare, unescaped `(unlock: ...)`-shaped
+// parenthetical anywhere. See
+// hooks/userpromptsubmit-halt-relay-issue206-unlock-forgery.test.ts for the regression tests (the
+// exact finding-5 PoC shape, both through the raw enumeration-failed path and through a
+// quoteNames-quoted tool/connector name with no embedded quote at all).
 import { readFileSync, existsSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_DETAIL_LENGTH = 200;
 
-/** Length-caps and control-character-strips a third-party-controlled `detail` string before it is
- * interpolated into a chat-visible message (GitHub Issue #97). Strips ASCII control characters
- * (0x00-0x1F, 0x7F) — this also removes newlines, which matters here specifically: this file's own
- * `blockWithMessage` writes `fullMessage` as a SINGLE stderr line (documented as "the first line of
- * stderr" being what Claude Code reads), so an embedded newline in `detail` could otherwise truncate
- * or split the message. Truncation is marked explicitly ("...[truncated]") rather than silently
- * cutting the string, so a reader never mistakes a capped message for the complete one. */
+/** Backslash-escapes literal `(`/`)` characters (GitHub Issue #206, app-security finding 5) — see
+ * this file's own header comment above for the full citation and reasoning. Applied unconditionally
+ * to every `detail` value, regardless of reason key, so a future reason key whose writer forgets to
+ * pre-quote its own `detail` (the way quoteNames() does today for the two SUR-03 tool/connector
+ * keys) is defended by default, not only the keys this pass happened to check. */
+function escapeParens(text) {
+  return text.replace(/[()]/g, (c) => (c === "(" ? "\\(" : "\\)"));
+}
+
+/** Length-caps, control-character-strips, and paren-escapes a third-party-controlled `detail`
+ * string before it is interpolated into a chat-visible message (GitHub Issues #97 and #206). Strips
+ * ASCII control characters (0x00-0x1F, 0x7F) — this also removes newlines, which matters here
+ * specifically: this file's own `blockWithMessage` writes `fullMessage` as a SINGLE stderr line
+ * (documented as "the first line of stderr" being what Claude Code reads), so an embedded newline in
+ * `detail` could otherwise truncate or split the message. Parens are escaped next (see
+ * `escapeParens`), so the 200-char length budget accounts for any added backslashes. Truncation is
+ * marked explicitly ("...[truncated]") rather than silently cutting the string, so a reader never
+ * mistakes a capped message for the complete one. */
 function sanitizeDetail(detail) {
   const text = typeof detail === "string" ? detail : String(detail ?? "(no detail recorded)");
   // eslint-disable-next-line no-control-regex -- deliberate: stripping control characters IS the point.
   const stripped = text.replace(/[\x00-\x1F\x7F]/g, "");
-  return stripped.length > MAX_DETAIL_LENGTH ? `${stripped.slice(0, MAX_DETAIL_LENGTH)}...[truncated]` : stripped;
+  const parenEscaped = escapeParens(stripped);
+  return parenEscaped.length > MAX_DETAIL_LENGTH ? `${parenEscaped.slice(0, MAX_DETAIL_LENGTH)}...[truncated]` : parenEscaped;
 }
 
 /** PRINCIPLES.md rule 2 ("every block names its unlock") applied per reason key. Each hint names a
@@ -153,6 +189,30 @@ function readStdin() {
 
 function projectDir() {
   return process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+}
+
+// GitHub Issue #96 fix (spike resolved): mirrors hooks/sessionstart-tool-enum.mjs's own
+// `resolveFallbackSessionId()` EXACTLY — `CLAUDE_SESSION_ID` is a real, host-supplied environment
+// variable Claude Code sets on every hook subprocess's `process.env` (confirmed via the official
+// Claude Code hooks/Settings Reference documentation, code.claude.com/docs/en/hooks — the same
+// trust tier as the already-used `CLAUDE_PROJECT_DIR` above, not a new or untrusted input channel).
+// Used below as the fallback when `input.session_id` (from this script's own stdin) isn't a string —
+// so this script's own session_id resolution agrees with the writer's (sessionstart-tool-enum.mjs):
+// a real, host-provided session id (unique per session) is preferred over the shared, ambiguous
+// "unknown-session" literal on BOTH sides of this mechanism. Both sides MUST stay in sync — a
+// mismatch here reopens Issue #96 in a different shape: one side resolving a real per-session id
+// while the other still falls to the shared literal means one side's halt-state write lands
+// somewhere the other side never checks.
+//
+// Deliberately NOT applied to the case where `JSON.parse(raw)` itself throws below (genuinely
+// malformed, non-empty, non-JSON stdin) — that path is unconditionally fail-closed already (see this
+// file's own bottom-level `main().catch`, which blocks exit 2 regardless of any session id or
+// halt-state content at all), so it is already maximally safe in the one direction that matters here
+// and needs no session-id-aware handling to stay that way.
+const UNKNOWN_SESSION_ID = "unknown-session";
+function resolveFallbackSessionId() {
+  const envSessionId = process.env.CLAUDE_SESSION_ID;
+  return typeof envSessionId === "string" && envSessionId.length > 0 ? envSessionId : UNKNOWN_SESSION_ID;
 }
 
 function haltStatePath(sessionId) {
@@ -244,7 +304,11 @@ function describeActiveReasons(activeReasons) {
 async function main() {
   const raw = await readStdin();
   const input = raw.trim() === "" ? {} : JSON.parse(raw);
-  const sessionId = typeof input.session_id === "string" ? input.session_id : "unknown-session";
+  // HAPPY PATH UNCHANGED (GitHub Issue #96 fix): this condition
+  // (`typeof input.session_id === "string"`) is byte-identical to before — only the ELSE branch's
+  // fallback VALUE changed, from the bare "unknown-session" literal to
+  // resolveFallbackSessionId()'s result (see its own header comment above).
+  const sessionId = typeof input.session_id === "string" ? input.session_id : resolveFallbackSessionId();
 
   const p = haltStatePath(sessionId);
   if (!existsSync(p)) {

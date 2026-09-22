@@ -84,17 +84,54 @@ const ENUMERATION_FAILED_REASON_KEY = "SUR-03-enumeration-failed";
 // red-team's F5 demonstrated: a resumed session whose tool became classified stayed permanently
 // blocked because nothing ever cleared its reason). main() below reconciles every one of them, every run.
 //
-// The literal fallback session id used whenever stdin's own `session_id` cannot be resolved to a
-// real, host-supplied string (GitHub Issue #96 — "should never happen per the documented contract",
-// deferred, spike-first, per docs/decisions.md's 2026-09-07 row). S5 Stage-3 CRITICAL review round 2
-// (`app-security-reviewer` finding 6 / `red-team`'s Stop Brief escalation) demonstrated that once
-// AC5's reconciliation could write set:false, two DIFFERENT failed-session_id-resolution
-// invocations sharing this one literal bucket meant one invocation's own resolved state could
-// silently clear a genuinely-still-active halt belonging to a different invocation — a fail-open
-// escalation of what was previously only a safe-direction (stuck-blocked) gap. `reconcileReason`
-// below is the fix: this bucket is additive-only (may still be set:true), never reconciled to
-// set:false, relocating Issue #96 back to its pre-round-2 safe direction.
+// The literal fallback session id used only as the LAST RESORT, when stdin's own `session_id`
+// cannot be resolved to a real, host-supplied string AND the process-environment fallback below
+// (`resolveFallbackSessionId`) is also unavailable (GitHub Issue #96's "double failure" case). S5
+// Stage-3 CRITICAL review round 2 (`app-security-reviewer` finding 6 / `red-team`'s Stop Brief
+// escalation) demonstrated that once AC5's reconciliation could write set:false, two DIFFERENT
+// failed-session_id-resolution invocations sharing this one literal bucket meant one invocation's
+// own resolved state could silently clear a genuinely-still-active halt belonging to a different
+// invocation — a fail-open escalation of what was previously only a safe-direction (stuck-blocked)
+// gap. `reconcileReason` below is the fix: this bucket is additive-only (may still be set:true),
+// never reconciled to set:false. That fix stays intact and unmodified by the #96 fix below: with a
+// real per-session fallback now available (see `resolveFallbackSessionId`), `sessionId` only ever
+// equals this literal exactly when BOTH stdin's own `session_id` AND
+// `process.env.CLAUDE_SESSION_ID` are unavailable — i.e. exactly the ambiguous, multi-invocation
+// case this guard exists to protect. A run that resolves a real per-session id (whether from stdin
+// or from the env fallback) never touches this bucket at all, so the guard's own meaning is
+// preserved unchanged, not just its code.
 const UNKNOWN_SESSION_ID = "unknown-session";
+
+// GitHub Issue #96 fix (spike resolved, docs/decisions.md's 2026-09-07 row superseded by this
+// build): `CLAUDE_SESSION_ID` is a real, host-supplied environment variable Claude Code sets on
+// every hook subprocess's `process.env` — confirmed via the official Claude Code hooks/Settings
+// Reference documentation (code.claude.com/docs/en/hooks), the SAME trust tier and source class
+// already relied on for `CLAUDE_PROJECT_DIR` (`projectDir()` above) — not a new or untrusted input
+// channel. When stdin itself fails to parse, or parses but its `session_id` field isn't a string,
+// this is now consulted BEFORE falling back to the shared `UNKNOWN_SESSION_ID` literal, so a
+// malformed-stdin invocation still resolves to the REAL, unique session id whenever the runtime
+// provides one, and this script's halt-state write lands where
+// hooks/userpromptsubmit-halt-relay.mjs's own real-session lookup will actually find it (previously
+// it landed in `unknown-session.json`, which the relay never reads for a real session — a fail-open
+// gap in what is supposed to be a fail-closed mechanism, criterion 17).
+//
+// Deliberately a FALLBACK OF LAST RESORT ONLY: main() below calls this to compute its own initial
+// `sessionId` default (covering the case where stdin fails to parse at all, before `input.session_id`
+// is ever read) and reuses the SAME resolved value as the `else` branch once stdin does parse — the
+// HAPPY PATH (stdin parses, `input.session_id` is a string) never calls or consults this function at
+// all, so ordinary behavior is byte-identical to before this fix.
+//
+// hooks/userpromptsubmit-halt-relay.mjs applies the IDENTICAL fallback (its own
+// `resolveFallbackSessionId`, kept in sync with this one by comment cross-reference, per this
+// script's own established convention of duplicating small helpers like `readStdin`/`projectDir`
+// across both standalone hook files rather than sharing a module) — so both sides of this mechanism
+// agree on how to recover a session id when stdin is degraded. If they resolved differently, the
+// mismatch would reopen Issue #96 in a different shape: one side landing on a real per-session id
+// while the other still falls to the shared "unknown-session" bucket.
+function resolveFallbackSessionId() {
+  const envSessionId = process.env.CLAUDE_SESSION_ID;
+  return typeof envSessionId === "string" && envSessionId.length > 0 ? envSessionId : UNKNOWN_SESSION_ID;
+}
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -393,15 +430,21 @@ async function main() {
   // as much an "internal exception during enumeration" as a malformed ~/.claude.json is, and both
   // must still result in a best-effort halt-state write, never a silent no-halt.
   //
-  // Known pre-existing gap (GitHub Issue #96, not fixed this pass — see docs/decisions.md's
-  // 2026-09-07 row and docs/backlog.md): when stdin ITSELF is what fails to parse, session_id is
-  // never resolved, and the catch below writes its reason to "unknown-session.json" rather than the
-  // real session's own file — the relay for the real session never sees it. Deferred, spike-first,
-  // per PRINCIPLES rule 18 (no fix built on an unmeasured fact — the two candidate fixes each rest
-  // on an unconfirmed assumption about this hook process's real environment). What IS fixed this
-  // pass (round 2's own escalation of this gap): `reconcileReason`'s set:false branch never applies
-  // to this fallback bucket — see UNKNOWN_SESSION_ID's own header comment above.
-  let sessionId = UNKNOWN_SESSION_ID;
+  // FIXED (GitHub Issue #96, spike resolved — docs/decisions.md's 2026-09-07 row superseded by this
+  // build): when stdin ITSELF fails to parse, session_id now falls back to
+  // `resolveFallbackSessionId()` (process.env.CLAUDE_SESSION_ID when available) rather than jumping
+  // straight to the shared `UNKNOWN_SESSION_ID` literal — computed ONCE here, before the try block,
+  // so it is both this run's initial default (covering "stdin never parsed at all") AND the exact
+  // value the `else` branch inside the try below reuses (covering "stdin parsed, but its own
+  // session_id field wasn't usable") — one resolution, two call sites, guaranteed consistent.
+  // Previously (round 2 and earlier) this fallback was unconditionally the shared literal, and the
+  // catch below wrote its reason to "unknown-session.json" rather than the real session's own file —
+  // the relay for the real session never saw it. `reconcileReason`'s set:false branch still never
+  // applies to the shared UNKNOWN_SESSION_ID bucket specifically — see UNKNOWN_SESSION_ID's own
+  // header comment above for why that guard's meaning is preserved, not just its code, now that a
+  // real per-session fallback exists.
+  const fallbackSessionId = resolveFallbackSessionId();
+  let sessionId = fallbackSessionId;
   // Resolved OUTSIDE (before) the try block, and independently of stdin/sessionId resolution, so it
   // is available to the catch handler below even when a LATER step throws -- S5 fix-now condition
   // ("record the resolved fixture path in halt-state, so a non-default load is never silent") must
@@ -422,7 +465,10 @@ async function main() {
   try {
     const raw = await readStdin();
     const input = raw.trim() === "" ? {} : JSON.parse(raw);
-    sessionId = typeof input.session_id === "string" ? input.session_id : UNKNOWN_SESSION_ID;
+    // HAPPY PATH UNCHANGED: this condition (`typeof input.session_id === "string"`) is byte-identical
+    // to before the #96 fix — only the ELSE branch's fallback VALUE changed, from the bare
+    // UNKNOWN_SESSION_ID literal to fallbackSessionId (already resolved above, before this try block).
+    sessionId = typeof input.session_id === "string" ? input.session_id : fallbackSessionId;
 
     // Snapshot ONCE, before any of this run's own writes -- see wasReasonActive/reconcileReason's
     // own header comments for why this matters (deciding whether a currently-inactive reason has
