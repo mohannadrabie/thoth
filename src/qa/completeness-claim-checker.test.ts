@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_FILES,
+  INSTRUMENT_TIMEOUT_MS,
   KNOWN_INSTRUMENTS,
   checkCompleteness,
   findBareClaims,
@@ -276,4 +277,37 @@ test("QA-15 (Issue #167, false-positive guard): the real, already-shipped qa1415
 test("QA-15 (Issue #167, false-positive guard): an ordinary 'every remaining X' sentence with no enumeration in parens is NOT flagged", () => {
   assert.equal(findBareClaims("Every remaining question was answered directly by the human.").length, 0);
   assert.equal(findBareClaims("All remaining work is tracked in the backlog, not gold-plated here.").length, 0);
+});
+
+// GitHub Issue #242: the shared per-instrument timeout sat close enough to `qa-mutation-shell`'s
+// own real runtime (39s quiet / 56.5s loaded, two reviewers' round-2 reports) that a loaded CI
+// runner produced a false red. These pin real headroom over every instrument this repo measured
+// as slow (see completeness-claim-checker.ts's own comment above INSTRUMENT_TIMEOUT_MS for the
+// measured numbers this test reasons about — real subprocess timings, not guessed).
+test("QA-15 (Issue #242): INSTRUMENT_TIMEOUT_MS carries real headroom over every measured slow instrument, not just the one that was reported", () => {
+  // oss-history-scan measured ~69s quiet on this project's own machine — the slowest of the three
+  // subprocess-heavy instruments, not qa-mutation-shell. A fix scoped only to qa-mutation-shell
+  // would have papered over this one.
+  const slowestMeasuredQuietRunSeconds = 69;
+  // qa-mutation-shell's own reported LOADED runtime (the exact figure that went false-red).
+  const reportedLoadedRunSeconds = 56.5;
+  assert.ok(
+    INSTRUMENT_TIMEOUT_MS >= slowestMeasuredQuietRunSeconds * 1000 * 2,
+    "must be at least 2x the slowest measured quiet instrument runtime (oss-history-scan)",
+  );
+  assert.ok(
+    INSTRUMENT_TIMEOUT_MS >= reportedLoadedRunSeconds * 1000 * 2,
+    "must be at least 2x qa-mutation-shell's own reported LOADED runtime, not just its quiet one",
+  );
+});
+
+test("QA-15 (Issue #242, regression): verifyMarkerClaim passes INSTRUMENT_TIMEOUT_MS through to the runner, not a smaller hardcoded value", async () => {
+  const seen: (number | undefined)[] = [];
+  const spyRunner: Runner = (_cmd, _args, opts) => {
+    seen.push(opts?.timeoutMs);
+    return Promise.resolve({ stdout: "35", stderr: "", code: 0 });
+  };
+  await verifyMarkerClaim({ raw: "x", cmd: "adr-cache-ensure", expect: 35 }, spyRunner);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], INSTRUMENT_TIMEOUT_MS, "the runner must be given the real configured timeout, not a stale/hardcoded 60_000");
 });

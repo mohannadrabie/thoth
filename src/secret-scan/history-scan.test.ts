@@ -10,7 +10,15 @@ import { createHash } from "node:crypto";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry, HistoryMatch } from "./history-scan.ts";
-import { isValidAllowlistEntry, loadAllowlist, partitionAllowlisted, scanHistory, summarizeMatches } from "./history-scan.ts";
+import {
+  isValidAllowlistEntry,
+  loadAllowlist,
+  partitionAllowlisted,
+  scanHistory,
+  SCAN_TIMEOUT_MS,
+  SCAN_TIMEOUT_PATTERN_ID,
+  summarizeMatches,
+} from "./history-scan.ts";
 import { redact, SECRET_PATTERNS } from "./patterns.ts";
 import { readFile } from "node:fs/promises";
 
@@ -1697,6 +1705,70 @@ test("oss01-no-8000-byte-window-nul-at-7999-and-8000-are-both-scanned", async ()
   });
 });
 
+// Issue 246: a blob starting with a UTF-16 byte-order-mark must not hide a secret from the scanner. Named
+// per the issue: oss01-utf16-text-file-does-not-hide-a-secret. Both a UTF-16LE-with-BOM and a
+// UTF-16BE-with-BOM file, each holding a runtime-built key literal, must yield at least one match through
+// `scanHistory` (the pre-commit-hook half of the same proof-test is in pre-commit-scan.test.ts).
+function utf16LEBytes(text: string): Buffer {
+  return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+}
+function utf16BEBytes(text: string): Buffer {
+  const le = Buffer.from(text, "utf16le");
+  const be = Buffer.alloc(le.length);
+  for (let i = 0; i < le.length; i += 2) {
+    be[i] = le[i + 1] ?? 0;
+    be[i + 1] = le[i] ?? 0;
+  }
+  return Buffer.concat([Buffer.from([0xfe, 0xff]), be]);
+}
+
+test("oss01-utf16-text-file-does-not-hide-a-secret", async () => {
+  const lit = novel("aws-access-key-id", 900);
+  const line = `${lit.text}\n`;
+  const files = { "utf16le.txt": utf16LEBytes(line), "utf16be.txt": utf16BEBytes(line) };
+  await withPlumbingRepo(files, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    for (const path of Object.keys(files)) {
+      const mine = matches.filter((m) => m.path === path && m.patternId === "aws-access-key-id");
+      assert.equal(mine.length, 1, `${path}: expected exactly one match, got ${mine.length}`);
+      assert.equal(
+        mine[0]?.valueSha256,
+        sha256(lit.match),
+        `${path}: the UTF-16 match hashes IDENTICALLY to the same literal written as plain ASCII -- one ` +
+          "allowlist entry covers both forms (Manager ruling, s1-oss01-detection-residuals plan)",
+      );
+    }
+  });
+});
+
+// Issue 246 residual, disclosed: BOM presence is the only detection signal, deliberately not a heuristic
+// guess at BOM-less UTF-16 -- so a UTF-16 file with no BOM stays exactly as invisible as before this fix.
+test("oss01-utf16-without-a-bom-stays-a-disclosed-residual", async () => {
+  const lit = novel("aws-access-key-id", 901);
+  const noBom = Buffer.from(`${lit.text}\n`, "utf16le"); // no BOM prefix
+  await withPlumbingRepo({ "utf16-no-bom.txt": noBom }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    assert.deepEqual(matches, [], "control: documents the disclosed residual rather than silently widening detection past the ADR's own BOM-only rule");
+  });
+});
+
+// Issue 246 x Issue 237 interaction: a blob that merely STARTS with the UTF-16LE BOM bytes for reasons
+// that have nothing to do with UTF-16 (this file's own `high-bytes.bin` fixture below,
+// `oss01-no-blob-is-skipped-whatever-its-bytes`) must still be scanned as latin1 too -- the UTF-16 reading
+// is additive, never a replacement, so this stays green rather than reopening Issue 237.
+test("oss01-utf16-bom-sniff-does-not-hide-a-latin1-secret-in-a-non-utf16-blob", async () => {
+  const lit = novel("aws-access-key-id", 902);
+  // FF FE (a real UTF-16LE BOM) followed by ordinary latin1 bytes that are NOT UTF-16 -- exactly the
+  // `high-bytes.bin` shape, isolated here so this interaction has its own named, focused proof.
+  const blob = Buffer.concat([Buffer.from([0xff, 0xfe, 0x80, 0x81]), Buffer.from(`${lit.text}\n`, "latin1")]);
+  await withPlumbingRepo({ "bom-prefixed-binary.bin": blob }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const mine = matches.filter((m) => m.path === "bom-prefixed-binary.bin" && m.patternId === "aws-access-key-id");
+    assert.equal(mine.length, 1, "the latin1 reading still finds the literal even though the blob starts with a UTF-16LE BOM");
+    assert.equal(mine[0]?.valueSha256, sha256(lit.match));
+  });
+});
+
 // Issue 203 (red-team round 5, F3): a docs/reviews report grant was excluded from the baseline guard on
 // the theory that a dated report is immutable. It is not (an addendum or a new report can carry an
 // unreviewed live value on its first commit), so report grants are pinned like every other file.
@@ -1872,4 +1944,285 @@ test("oss01-utf8-character-ending-in-0xa0-does-not-hide-a-password", async (t) =
       });
     });
   }
+});
+
+// ================================================================================================
+// Issue 250 (red-team, s1-237-nul-byte-scan, attack 3): a byte-identical blob living at two paths was
+// scanned once, at whichever (commit, path) the tree walk reached first, so an allowlist grant scoped to
+// that path silently exempted the identical blob at every other path too -- contradicting THOTH-ADR-0002's
+// own "path, patternId AND value hash must all agree" rule. Named per the issue:
+// oss01-a-grant-at-one-path-does-not-exempt-the-same-blob-at-another.
+// ================================================================================================
+
+test("oss01-a-grant-at-one-path-does-not-exempt-the-same-blob-at-another", async () => {
+  const lit = novel("aws-access-key-id", 950);
+  const body = `${lit.text}\n`;
+  // Path names deliberately mirror red-team's own repro ("aaa" sorts/walks before "zzz"): the granted path
+  // is the one a naive tree walk visits FIRST, which is the worst case for a dedupe-by-sha bug -- the
+  // OTHER path is the one that would have been silently dropped.
+  const files = { "aaa-granted.dat": body, "zzz-not-granted.dat": body };
+  const entries = [
+    { path: "aaa-granted.dat", patternId: "aws-access-key-id", valueSha256: [sha256(lit.match)], reason: "synthetic fixture, path-scoped grant" },
+  ];
+  await withPlumbingRepo(files, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(entries));
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const byPath = new Map(matches.map((m) => [m.path, m]));
+    assert.equal(matches.length, 2, "the byte-identical blob is reported at BOTH paths, not just the first one the tree walk reaches");
+    assert.ok(byPath.has("aaa-granted.dat") && byPath.has("zzz-not-granted.dat"), "both paths are present in the report");
+    assert.equal(byPath.get("zzz-not-granted.dat")?.valueSha256, sha256(lit.match), "the replayed match carries the identical value hash, not a placeholder");
+
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, allowlist);
+    assert.deepEqual(allowlisted.map((m) => m.path), ["aaa-granted.dat"], "the grant exempts only the path it names");
+    assert.deepEqual(
+      blocking.map((m) => m.path),
+      ["zzz-not-granted.dat"],
+      "the identical blob at the UNGRANTED path still blocks -- THOTH-ADR-0002's path-agreement rule holds even under blob dedupe",
+    );
+
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(cli.code, 0, "and through the real CI entry point");
+    assert.ok(cli.stdout.includes("zzz-not-granted.dat"), "the ungranted path is named in the blocking output");
+  });
+  // Control: with the SAME grant present at BOTH paths (two entries, each scoped to its own path), the
+  // blob is reported at both and blocks neither -- dedupe-with-replay does not over-grant either.
+  const entriesBoth = [
+    { path: "aaa-granted.dat", patternId: "aws-access-key-id", valueSha256: [sha256(lit.match)], reason: "fixture" },
+    { path: "zzz-not-granted.dat", patternId: "aws-access-key-id", valueSha256: [sha256(lit.match)], reason: "fixture" },
+  ];
+  await withPlumbingRepo(files, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(entriesBoth));
+    const result = summarizeMatches(await scanHistory(makeGitOps(realRunner, dir)), await loadAllowlist(join(dir, ALLOWLIST_PATH)));
+    assert.equal(result.ok, true, "control: a grant at EVERY path the blob lives at passes cleanly");
+    assert.equal(result.details.filter((d) => d.startsWith("ALLOWLISTED")).length, 2, "and both paths are reported");
+  });
+});
+
+// ================================================================================================
+// Issue 247 (red-team, s1-237-nul-byte-scan, attack 1): internal-hostname, email-address and
+// private-key-block all backtrack super-linearly on an adversarial shape with no closing anchor -- a
+// crafted blob invisible in a PR diff (git shows "Binary files ... differ") could stall CI and the
+// pre-commit hook for minutes. Named per the issue: oss01-scan-time-is-bounded-on-a-hostile-blob.
+// ================================================================================================
+
+test("oss01-scan-time-is-bounded-on-a-hostile-blob", async (t) => {
+  // Generous ceiling shared by every cell below: SCAN_TIMEOUT_MS per (blob, pattern) pair, times every
+  // pattern in the catalog (worst case every single one times out), plus slack for process/spawn
+  // overhead -- still a small fraction of the ~180s (single pattern, single blob) red-team measured
+  // unbounded on a similarly sized hostile blob.
+  const CEILING_MS = SCAN_TIMEOUT_MS * SECRET_PATTERNS.length + 15_000;
+
+  await t.test("a long hyphen-joined run (internal-hostname / email-address) is bounded, not left to run", async () => {
+    // Measured directly (not assumed): this exact 200 KB shape takes ~33s (internal-hostname) / ~27s
+    // (email-address) UNBOUNDED on this machine -- comfortably over SCAN_TIMEOUT_MS, so this cell
+    // actually exercises the timeout path rather than completing comfortably inside the budget.
+    const hostile = "a-".repeat(100_000);
+    await withPlumbingRepo({ "hostile-hyphen-run.bin": hostile }, async (dir) => {
+      const start = Date.now();
+      const matches = await scanHistory(makeGitOps(realRunner, dir));
+      const ms = Date.now() - start;
+      assert.ok(ms < CEILING_MS, `scan took ${ms}ms, expected under ${CEILING_MS}ms (unbounded: ~180000ms for a similar 200KB blob per pattern)`);
+      const timeouts = matches.filter((m) => m.patternId === SCAN_TIMEOUT_PATTERN_ID);
+      assert.ok(timeouts.length > 0, "at least one pattern could not finish in time and is reported as a blocking scan-timeout finding, not silently skipped");
+      assert.equal(summarizeMatches(matches, []).ok, false, "a scan-timeout finding fails the gate closed by default (never a silent pass)");
+    });
+  });
+
+  await t.test("a repeated BEGIN marker with no END (private-key-block) is bounded too", async () => {
+    // Measured directly (not assumed): this pattern scales quadratically on repeated, never-closed BEGIN
+    // markers (10ms at 1000 reps, 8295ms at 32000 reps); 20000 reps (~560 KB) takes several seconds
+    // unbounded, comfortably over SCAN_TIMEOUT_MS, so this cell actually exercises the timeout path.
+    const hostile = "-----BEGIN PRIVATE KEY-----\n".repeat(20_000);
+    await withPlumbingRepo({ "hostile-pem.bin": hostile }, async (dir) => {
+      const start = Date.now();
+      const matches = await scanHistory(makeGitOps(realRunner, dir));
+      const ms = Date.now() - start;
+      assert.ok(ms < CEILING_MS, `scan took ${ms}ms, expected under ${CEILING_MS}ms`);
+      const timeouts = matches.filter((m) => m.patternId === SCAN_TIMEOUT_PATTERN_ID && m.description.includes("private-key-block"));
+      assert.ok(timeouts.length > 0, "private-key-block is bounded on a repeated-BEGIN-marker blob the same way the other two patterns are");
+    });
+  });
+
+  await t.test("control: ordinary content under the budget still matches exactly as before, nothing bounded", async () => {
+    const lit = novel("aws-access-key-id", 960);
+    await withPlumbingRepo({ "clean.txt": `${lit.text}\n` }, async (dir) => {
+      const matches = await scanHistory(makeGitOps(realRunner, dir));
+      assert.deepEqual(matches.map((m) => m.patternId), ["aws-access-key-id"]);
+      assert.equal(matches[0]?.valueSha256, sha256(lit.match));
+    });
+  });
+
+  // Through the real CI entry point too: a hostile blob still fails the gate (a scan-timeout finding
+  // blocks by default), and it does so within the bounded ceiling, not the unbounded one.
+  await t.test("through the real CI entry point: bounded, and still blocking", async () => {
+    const hostile = "a-".repeat(100_000);
+    await withPlumbingRepo({ "hostile-hyphen-run.bin": hostile }, async (dir) => {
+      const start = Date.now();
+      const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+      const ms = Date.now() - start;
+      assert.ok(ms < CEILING_MS + 10_000, `CLI took ${ms}ms, expected under ${CEILING_MS + 10_000}ms`);
+      assert.notEqual(cli.code, 0, "a scan-timeout finding blocks the real CLI, fail closed");
+    });
+  });
+});
+
+// ================================================================================================
+// Issue 264 (red-team + app-security-reviewer, fix-now round, HIGH): the oss01-scan-timeout finding's
+// valueSha256 was a function of (patternId, text.length) only -- no blob content at all -- so any two
+// blobs of the SAME decoded length that both time out on the same pattern at the same path produced the
+// IDENTICAL hash. A maintainer granting one legitimate oversized asset silently exempted any later,
+// attacker-controlled blob of the same length at that path, forever, with zero allowlist.json diff.
+// Named per red-team's own suggested test:
+// oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-path.
+// ================================================================================================
+
+test("oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-path", async () => {
+  const PATH = "hostile-timeout.bin";
+  // Same shape, same length (200,000 chars), as the proven-hostile fixture above -- only the fill
+  // character differs, so blobA and blobB have totally different bytes but identical decoded length.
+  const blobA = "a-".repeat(100_000); // the "genuine oversized asset" a maintainer reviews and grants
+  const blobB = "x-".repeat(100_000); // same length, different content -- the attacker's blob
+
+  // Round 1: scan blobA alone and build the allowlist grant a maintainer would actually add for its own
+  // scan-timeout finding(s) -- one entry per (path, patternId) that timed out, each carrying blobA's OWN
+  // valueSha256 (never typed by hand: this is exactly what a real grant is built from).
+  let grantEntries: AllowlistEntry[] = [];
+  await withPlumbingRepo({ [PATH]: blobA }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const timeouts = matches.filter((m) => m.patternId === SCAN_TIMEOUT_PATTERN_ID);
+    assert.ok(timeouts.length > 0, "control: blobA actually times out on at least one pattern");
+    grantEntries = timeouts.map((m) => ({
+      path: m.path,
+      patternId: m.patternId,
+      valueSha256: [m.valueSha256],
+      reason: "synthetic fixture: a maintainer reviewed this oversized asset and granted its scan-timeout",
+    }));
+    const result = summarizeMatches(matches, grantEntries);
+    assert.equal(result.ok, true, "control: the grant, computed from blobA's own findings, passes blobA cleanly");
+  });
+
+  // Round 2: the SAME path now holds blobB -- same length, an attacker's blob, with the round-1 grant
+  // (scoped to blobA's own content hash) already in the allowlist.
+  await withPlumbingRepo({ [PATH]: blobB }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(grantEntries));
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const timeouts = matches.filter((m) => m.patternId === SCAN_TIMEOUT_PATTERN_ID);
+    assert.ok(timeouts.length > 0, "control: blobB (same length, different content) also times out on the same pattern(s)");
+
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, allowlist);
+    assert.deepEqual(allowlisted, [], "the round-1 grant, hashed from blobA's content, must not exempt blobB's own scan-timeout finding");
+    assert.ok(blocking.length > 0, "blobB's scan-timeout finding(s) must still block -- different content, different blob, never silently exempted");
+
+    const result = summarizeMatches(matches, allowlist);
+    assert.equal(result.ok, false, "the gate must not pass a different, unreviewed blob merely because it shares a granted blob's length");
+
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(cli.code, 0, "and through the real CI entry point");
+  });
+
+  // Control: the EXACT granted blob, at the same path, with the same grant, still passes -- the fix scopes
+  // the grant correctly to the content actually reviewed, it does not simply break every grant.
+  await withPlumbingRepo({ [PATH]: blobA }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(grantEntries));
+    const result = summarizeMatches(await scanHistory(makeGitOps(realRunner, dir)), await loadAllowlist(join(dir, ALLOWLIST_PATH)));
+    assert.equal(result.ok, true, "control: the exact granted blob still passes at the same path");
+  });
+});
+
+// ================================================================================================
+// Issue 267 (red-team, fix-now round, MED): the HASH-COMMAND the gate prints for a scan-timeout block
+// named a pattern id (`oss01-scan-timeout`) that is not in SECRET_PATTERNS, so the printed unlock threw
+// "unknown pattern id oss01-scan-timeout" before reading a single byte -- exit 2, always, for every path
+// and commit. Fixed together with Issue 264 above (never alone: an easy-to-run unlock for a content-blind
+// grant would have been worse). Named per red-team's own suggested test:
+// oss01-every-blocking-pattern-id-has-a-runnable-unlock-command.
+// ================================================================================================
+
+const ALLOWLIST_TOOL_SCRIPT = fileURLToPath(new URL("./allowlist-tool.ts", import.meta.url));
+
+test("oss01-every-blocking-pattern-id-has-a-runnable-unlock-command", async () => {
+  const hostile = "a-".repeat(100_000);
+  await withPlumbingRepo({ "hostile-unlock.bin": hostile }, async (dir) => {
+    const blocked = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(blocked.code, 0, `a scan-timeout finding must block the gate:\n${blocked.stdout}`);
+    const printed = blocked.stdout.split(/\r?\n/).map((l) => l.replace(/^ {2}- /, ""));
+    const hashCommandLine = printed.find((l) => l.startsWith("HASH-COMMAND for ") && l.includes(`[${SCAN_TIMEOUT_PATTERN_ID}]`));
+    assert.ok(hashCommandLine !== undefined, `the block output must print a runnable HASH-COMMAND for a ${SCAN_TIMEOUT_PATTERN_ID} block:\n${blocked.stdout}`);
+
+    const m = /^HASH-COMMAND for (\S+) \[([a-z0-9-]+)\]: node \S+ hash ([0-9a-f]{12}) "([^"]+)" ([a-z0-9-]+)$/.exec(hashCommandLine ?? "");
+    assert.ok(m, `HASH-COMMAND line must have the documented shape: ${hashCommandLine}`);
+    const [, , , commit, path, patternId] = m as unknown as [string, string, string, string, string, string];
+    assert.equal(patternId, SCAN_TIMEOUT_PATTERN_ID);
+
+    // Run the printed command for real -- against the actual tool script, targeting the same fixture
+    // repo the block was reported against (a maintainer would run this from their own project checkout,
+    // which this fixture repo does not have a copy of; the script itself is resolved to its real absolute
+    // path here so this proves the COMMAND, not a filesystem coincidence).
+    const unlock = await realRunner("node", [ALLOWLIST_TOOL_SCRIPT, "hash", commit, path, patternId], {
+      cwd: dir,
+      encoding: "utf8",
+      timeoutMs: 120_000,
+    });
+    assert.equal(unlock.code, 0, `the printed unlock command must actually run and succeed, not throw "unknown pattern id":\n${unlock.stdout}\n${unlock.stderr}`);
+    assert.doesNotMatch(unlock.stderr, /unknown pattern id/, "the old failure mode is gone");
+    assert.match(unlock.stdout, /^[0-9a-f]{64} {2}/m, "the unlock command prints a real hash line for the scan-timeout finding");
+  });
+});
+
+// ================================================================================================
+// Issue 266 (app-security-reviewer, fix-now round, MED): hashMatchedBytes() reinterpreted a UTF-16-decoded
+// match as latin1, which truncates any JS string code point above 0xFF to its low byte. A disguised match
+// built from high-code-point characters -- visually nothing like the reviewed literal -- truncated to the
+// exact same low-byte sequence as an already-reviewed plain-ASCII value, so the two collided on
+// valueSha256: a grant of the plain-ASCII value silently also exempted the disguised one. Reproduces
+// app-security-reviewer's own demonstrated shape: characters shifted into the Armenian codepoint range,
+// which collide byte-for-byte under a lossy latin1 reinterpretation with an unrelated ASCII password.
+// ================================================================================================
+
+test("oss01-utf16-disguised-match-does-not-collide-with-a-reviewed-ascii-value", async () => {
+  const passwordName = ["pass", "word"].join("");
+  const reviewedValue = pad(tag(266), 14, "v"); // ASCII only, clearly synthetic
+  const reviewedMatch = `${passwordName} = "${reviewedValue}"`;
+  // Every character of the SAME value, shifted into the Armenian codepoint range (0x0500+) -- a UTF-16
+  // decode of this is visually nothing like the reviewed literal, but truncates to the exact same
+  // low-byte sequence under the old lossy latin1 reinterpretation.
+  const disguisedValue = [...reviewedValue].map((ch) => String.fromCharCode(0x0500 + ch.charCodeAt(0))).join("");
+  const disguisedMatch = `${passwordName} = "${disguisedValue}"`;
+  const reviewedHash = sha256(reviewedMatch);
+
+  await withPlumbingRepo({ "ascii-password.txt": `${reviewedMatch}\n` }, async (dir) => {
+    const matches = (await scanHistory(makeGitOps(realRunner, dir))).filter((m) => m.patternId === "generic-password-assignment");
+    assert.equal(matches.length, 1, "control: the plain-ASCII value is matched");
+    assert.equal(matches[0]?.valueSha256, reviewedHash, "control: its hash is the independent hash of the matched text");
+  });
+
+  const grant = [
+    {
+      path: "utf16-password.txt",
+      patternId: "generic-password-assignment",
+      valueSha256: [reviewedHash],
+      reason: "synthetic fixture: grants only the plain-ASCII value's own hash, never the disguised one",
+    },
+  ];
+  await withPlumbingRepo({ "utf16-password.txt": utf16LEBytes(`${disguisedMatch}\n`) }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(grant));
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const found = matches.filter((m) => m.patternId === "generic-password-assignment");
+    assert.equal(found.length, 1, "the disguised UTF-16 value is still matched and reported, never silently dropped");
+    assert.notEqual(
+      found[0]?.valueSha256,
+      reviewedHash,
+      "the disguised value must NOT hash identically to the plain-ASCII value it was built to collide with",
+    );
+
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, allowlist);
+    assert.deepEqual(allowlisted, [], "a grant of the plain-ASCII value's hash must not exempt the disguised UTF-16 value");
+    assert.equal(blocking.length, 1, "the disguised value still blocks -- nobody reviewed it");
+
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.notEqual(cli.code, 0, "and through the real CI entry point");
+  });
 });

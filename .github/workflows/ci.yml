@@ -30,6 +30,15 @@ jobs:
     name: Lint, typecheck, test, QA/OSS instruments
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Issue 247 (red-team, s1-237-nul-byte-scan, 2026-09-20): before this, the job had no
+    # `timeout-minutes` and GitHub's 360-minute default applied. Full-history secret scanning
+    # (OSS-01, the last step below) is now bounded per (blob, pattern) call by
+    # `src/secret-scan/history-scan.ts`'s own `SCAN_TIMEOUT_MS`, but that in-process bound is a
+    # second, independent backstop, not a substitute for one at the job level: 30 minutes is
+    # generous against this job's own real duration (typecheck + lint + full `npm test` + every
+    # QA/OSS instrument, measured in the low single-digit minutes on this repo today) while
+    # keeping an adversarial run's worst case in minutes, not the default six hours.
+    timeout-minutes: 30
     # Issue #120 (QA-14 real gh-backed issue lookup): widens this JOB's own permissions, on top of
     # the file-level `contents: read` above, to add `issues: read` — read-only GitHub Issue data
     # for THIS repo only, via the default GITHUB_TOKEN (never a new PAT/secret; unlike
