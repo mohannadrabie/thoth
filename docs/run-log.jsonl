@@ -78,5 +78,7 @@
 {"at":"2026-09-21T23:53:48.712Z","event":"receipt-reopened","scope":"s1-229-qa14-red","agent":"red-team","trigger":"2 SUSPICION + 1 LOW ISSUE, full read done","report":"docs/reviews/s1-229-qa14-red-red-team-round2-2026-09-21.md"}
 {"at":"2026-09-21T23:53:48.785Z","event":"receipt-reopened","scope":"s1-229-qa14-red","agent":"code-reviewer","trigger":"round 2 SHIP, clean, read in full","report":"docs/reviews/s1-229-qa14-red-code-round2-2026-09-21.md"}
 {"at":"2026-09-21T23:59:25.859Z","event":"story-shipped","scope":"s1-229-qa14-red","rounds":"1","reports":"5","findings":"17","adrTokensSaved":"164700","councilFired":"false"}
+{"at":"2026-09-22T01:37:55.414Z","event":"tier-ratified","scope":"s1-238-unlock-command-cquote","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"print-formatting/CLI-input fix, sensitive-area file but no detection-logic change"}
+{"at":"2026-09-22T02:07:37.139Z","event":"story-shipped","scope":"s1-238-unlock-command-cquote","rounds":"1","reports":"2","findings":"3","adrTokensSaved":"18300","councilFired":"false"}
 {"at":"2026-09-22T03:48:40.370Z","event":"tier-ratified","scope":"s1-oss01-detection-residuals","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"detection-logic and CI-gate changes in the secret-scanning sensitive area, not a print-formatting fix"}
 {"at":"2026-09-22T11:03:29.345Z","event":"story-shipped","scope":"s1-oss01-detection-residuals","rounds":"2","reports":"5","findings":"28","adrTokensSaved":"91500","councilFired":"false"}

@@ -241,6 +241,9 @@ async function withToolRepo(files: Record<string, string>, fn: (dir: string, scr
     await run("config", "user.email", ["ci", "example.org"].join("@"));
     await run("config", "user.name", "Test");
     await run("config", "commit.gpgsign", "false");
+    // Pinned regardless of the machine's global git config: this is what `hash` must handle for a
+    // non-ASCII fixture path (Issue 238), and quoting is git's own default anyway.
+    await run("config", "core.quotepath", "true");
     for (const [p, content] of Object.entries(files)) {
       const abs = join(dir, ...p.split("/"));
       await mkdir(join(abs, ".."), { recursive: true });
@@ -382,6 +385,35 @@ test("sb2-hash-command-prints-one-line-per-match-in-a-blob", async () => {
     const hashes = res.stdout.split(/\r?\n/).map((l) => /^([0-9a-f]{64}) {2}/.exec(l)?.[1]).filter((x): x is string => x !== undefined);
     assert.deepEqual([...hashes].sort(), [h(one), h(two)].sort(), "one line per distinct match in the blob, each with its hash; the repeat is printed once");
     assert.ok(!res.stdout.includes(one) && !res.stdout.includes(two), "only the redacted form is printed beside each hash");
+  });
+});
+
+// Issue 238: git C-quotes a tree path holding a non-ASCII byte (e.g. `café.txt` prints from a real
+// `git ls-tree` as `"caf\303\251.txt"`), and `lsTree()`'s Map is keyed by that exact raw spelling.
+// Before this fix, `hash` matched ONLY that raw key, so a maintainer typing the plain filename they
+// actually see got "is not in <commit>" and had to fall back to computing the hash by hand — the
+// tool accepts either spelling now. This is a real `git ls-tree` C-quoted path, not a hand-typed
+// escape sequence: the positive control below proves the raw spelling really is quoted on this
+// platform, so the fixed behavior is demonstrated, not assumed.
+test("oss01-238-hash-command-accepts-the-plain-decoded-spelling-of-a-C-quoted-path", async () => {
+  const secret = "AKIA" + "W".repeat(16);
+  const realName = "café.txt";
+  await withToolRepo({ [realName]: `a ${secret}\n` }, async (dir) => {
+    const spelled = await realRunner("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: dir, encoding: "utf8" });
+    const rawSpelling = spelled.stdout.trim();
+    assert.notEqual(rawSpelling, realName, "positive control: git must really have C-quoted this non-ASCII filename, or this test proves nothing");
+    assert.ok(rawSpelling.startsWith('"') && rawSpelling.endsWith('"'), `expected a C-quoted spelling, got: ${rawSpelling}`);
+
+    // The fix: the plain, decoded filename a maintainer actually sees now resolves.
+    const plain = await realRunner("node", [TOOL_SCRIPT, "hash", "HEAD", realName, AWS], { cwd: dir, encoding: "utf8" });
+    assert.equal(plain.code, 0, `hash with the plain decoded path must succeed:\n${plain.stdout}\n${plain.stderr}`);
+    assert.match(plain.stdout, /^[0-9a-f]{64} {2}/, "prints the hash line");
+    assert.ok(!plain.stdout.includes(secret), "only the redacted form is printed beside the hash");
+
+    // Unchanged (regression): the exact raw spelling git itself prints still resolves too.
+    const raw = await realRunner("node", [TOOL_SCRIPT, "hash", "HEAD", rawSpelling, AWS], { cwd: dir, encoding: "utf8" });
+    assert.equal(raw.code, 0, `hash with git's own raw C-quoted spelling must still succeed:\n${raw.stdout}\n${raw.stderr}`);
+    assert.equal(raw.stdout, plain.stdout, "both spellings resolve to the exact same blob and print the exact same hash line");
   });
 });
 
