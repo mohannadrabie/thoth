@@ -9,7 +9,7 @@
 // SUR-03's real half (criterion 4): "every tool in the session's real, config-derived tool universe
 // is classified at session start; any unclassified tool halts the session at the next
 // UserPromptSubmit." No live tool-enumeration API exists on this runtime (S5 plan Named Finding 1,
-// re-confirmed: anthropics/claude-code#6574 is an open upstream feature request) — this script
+// re-confirmed: anthropics/claude-code issue 6574 is an open upstream feature request) — this script
 // therefore APPROXIMATES the session's tool universe as:
 //   Claude Code's own vendored built-in tool names (src/policy/tools/builtin-tool-inventory.ts)
 //   UNION every statically-declared MCP server name from every locally-readable scope (project
@@ -441,7 +441,7 @@ function computeSessionTools(fixtureLocation) {
   // per `architecture-reviewer`'s council-seat ruling / `red-team`'s N1: a prior draft of this line
   // read a dedicated `THOTH_S5_CENTRAL_CLASSIFICATION_FIXTURE_PATH` env var, unconditionally, with no
   // DI boundary and no recorded trace of what loaded -- an ambient, session-reachable signal
-  // (deliverable via a gitignored `.claude/settings.local.json` `env` block invisible to `git
+  // (deliverable via a gitignored .claude/settings.local.json `env` block invisible to `git
   // status`/`qa:gate-manifest`) deciding which policy source a fail-closed gate trusts, violating
   // REQUIREMENTS.md:70 section 0.4 property 2 by construction, independent of exploitability).
   //
