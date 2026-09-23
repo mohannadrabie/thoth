@@ -82,3 +82,5 @@
 {"at":"2026-09-22T02:07:37.139Z","event":"story-shipped","scope":"s1-238-unlock-command-cquote","rounds":"1","reports":"2","findings":"3","adrTokensSaved":"18300","councilFired":"false"}
 {"at":"2026-09-22T02:18:01.272Z","event":"tier-ratified","scope":"s1-242-qa15-timeout-headroom","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"CI-gate timeout tuning, boring one-directional failure mode (more lenient, not less strict)"}
 {"at":"2026-09-22T02:38:25.791Z","event":"story-shipped","scope":"s1-242-qa15-timeout-headroom","rounds":"1","reports":"2","findings":"4","adrTokensSaved":"18300","councilFired":"false"}
+{"at":"2026-09-22T03:48:40.370Z","event":"tier-ratified","scope":"s1-oss01-detection-residuals","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"detection-logic and CI-gate changes in the secret-scanning sensitive area, not a print-formatting fix"}
+{"at":"2026-09-22T11:03:29.345Z","event":"story-shipped","scope":"s1-oss01-detection-residuals","rounds":"2","reports":"5","findings":"28","adrTokensSaved":"91500","councilFired":"false"}

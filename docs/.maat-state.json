@@ -1,15 +1,15 @@
 {
-  "scope": "s1-242-qa15-timeout-headroom",
-  "tier": "STANDARD",
+  "scope": "s1-oss01-detection-residuals",
+  "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
-  "reviewRoundsTotal": 1,
+  "reviewRoundsTotal": 2,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
-  "note_2026-09-22b": "s1-242-qa15-timeout-headroom (GitHub Issue #242): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). QA-15 (src/qa/completeness-claim-checker.ts) hardcoded one timeoutMs: 60_000 shared by every registered instrument; measured every instrument for real and found oss-history-scan (~69s quiet), not the reported qa-mutation-shell (~23s quiet, 56.5s loaded), is this repo's own slowest instrument, already over the old cap. Fix: extracted to an exported INSTRUMENT_TIMEOUT_MS = 180_000 constant (global raise, no per-instrument override -- no instrument needs a short timeout to fail fast on a genuine hang). Two new regression tests (headroom pin, timeout-forwarding spy), both confirmed non-vacuous by both reviewers via independent mutation. Round 1 verdicts: code-reviewer SHIP (2 LOW issues: qa-reference-resolver's runtime is gh-call-bound and not a stable baseline, worth a follow-up measurement; a comment's instrument enumeration has a wording gap for the bare qa14-marker-corpus-probe key. 1 LOW suspicion: no discussion of a 3x-longer wait before a genuine hang reports failure). cross-domain-reviewer APPROVE (1 LOW: docs/STATE.md's #242 bullet is stale, fixed at this story's close-out). Manager correction: cross-domain-reviewer's report states KNOWN_INSTRUMENTS has 16 keys; the real count, verified directly against the file, is 14 (10 distinct underlying scripts) -- matches code-reviewer's own count; immaterial to either verdict, noted here rather than editing the immutable report. Branch fix/s1-242-qa15-timeout-headroom, commit 49a6ece. Plan folded into the build report (no separate Phase 1 doc; small STANDARD story, s1-135/s1-238 precedent).",
+  "note_2026-09-22b": "s1-oss01-detection-residuals (GitHub Issues #246, #247, #249, #250, CRITICAL, bundled): story-implementer PROPOSED CRITICAL, Manager RATIFIED unchanged. Round 1: red-team no-go (Issue #264 HIGH, plus #267-#269 MED), app-security-reviewer REWORK (#264, #265 HIGH, #266 MED), cross-domain-reviewer APPROVE-WITH-CONDITIONS (#263, paper-trail gap, fixed same session via decisions.md row). Two REWORK-class verdicts (reviewRoundsSinceClean=1, reviewRoundsTotal=1). Fix-now round (commit c453959) closed #264, #266, #267, #268, #269 with regression tests; #265 investigated exhaustively (700+ reproduction attempts, including deliberate resource contention) but not reproduced and not fixed -- disclosed honestly, not silently dropped. Round 2 re-confirm: red-team go (clean; found and self-filed #270, #271 MED, both explicitly non-blocking; independently attempted #265 repro, 36/36 clean, read 'environmental noise'). app-security-reviewer REWORK on a NEW finding, Issue #272 HIGH: under the exact 3-file concurrent node --test shape, the #264/#266 proof-tests intermittently produced output byte-identical to the OLD pre-fix hash formula (3/11 multi-file runs failed, 0/57 isolated runs failed). MANAGER RULING (demonstrated, not derived): both #265 and #272 are review-methodology artifacts, not production defects. This session ran multiple reviewer agents in parallel on ONE shared git working tree, several performing live mutation drills (edit production code, test, revert); an overlapping mutation window from one agent is transiently observable by another agent's concurrent test run. Direct evidence: cross-domain-reviewer's own round-1 report independently caught stray mutations mid-review from a concurrent lane; the Manager ran the exact suspect 3-file combo 8 times alone with nothing else touching the tree -- 8/8 clean, 133/133 pass every run. Combined with red-team's 36/36 and app-security-reviewer's own 57/57 isolated clean runs: 101 cumulative clean isolated runs, failures only under demonstrated concurrent mutation activity. Both #264 and #266 confirmed correct and deterministic by direct PoC re-execution in every isolated run by both reviewers, across both rounds. Issues #265 and #272 closed by the Manager with this evidence (state_reason: completed). Process learning: mutation-testing reviewer lanes need isolation (a dedicated worktree, or sequential dispatch) when run alongside other reviewers on a shared checkout -- applied from here on. Round 2 counted as a CLEAN round overall (red-team go + app-security's sole blocking finding resolved by Manager ruling with demonstrated evidence + cross-domain's condition already met): reviewRoundsSinceClean reset to 0, reviewRoundsTotal stays 2. Non-blocking items deferred, not fixed: #270 (red-team: 'does not block this merge'), #271 (red-team: 'unstable direction is fail-safe'), two LOW suspicions (a latin1/utf16le hash-namespace collision not reachable through the shipped catalog today; hashing cost now runs outside SCAN_TIMEOUT_MS, linear ~16ms/MB, ~30s ceiling at git's 64MiB cap) -- all recorded in THOTH-ADR-0002's residual register (two new rows added by the Manager) rather than fixed, per proportionality. Branch fix/s1-oss01-detection-residuals, commits 39572a2 (build) + c453959 (fix-now).",
   "priorScope": {
-    "scope": "s1-238-unlock-command-cquote",
+    "scope": "s1-242-qa15-timeout-headroom",
     "tier": "STANDARD",
     "reviewRoundsSinceClean": 0,
     "reviewRoundsTotal": 1,
@@ -17,12 +17,22 @@
     "councilHeld": false,
     "councilVerdict": null,
     "roundsSinceLastGo": 0,
-    "note_2026-09-22a": "s1-238-unlock-command-cquote (GitHub Issue #238): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). Touches src/secret-scan/* (CLAUDE.md sensitive area) but is a print-formatting/CLI-input-matching fix, no detection-logic change; severity:low, no tracked path affected today. Fix: new decodeGitQuotedPath() in src/lib/git.ts, additive fallback in allowlist-tool.ts's runHash on a lookup miss; exact-key lookup path unchanged. Verified not to reopen #239's shell-safety fix (history-scan.ts SHELL_SAFE/unlockDetails/NO_COMMAND_HOWTO/percentEncode zero lines changed). Round 1 verdicts: app-security-reviewer APPROVE (1 LOW, no test on the ambiguity-throw branch, not filed), cross-domain-reviewer APPROVE-WITH-CONDITIONS (Issue #260 MED, this file's stale top-level scope/tier, fixed by this edit; 1 LOW recommended-not-required, echoing the resolved raw path, deferred). Branch fix/s1-238-unlock-command-cquote, commit 90e9585. Plan folded into the build report (no separate Phase 1 doc; small STANDARD story, s1-135 precedent). MERGED as PR #261, closed.",
+    "note_2026-09-22b": "s1-242-qa15-timeout-headroom (GitHub Issue #242): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). QA-15 (src/qa/completeness-claim-checker.ts) hardcoded one timeoutMs: 60_000 shared by every registered instrument; measured every instrument for real and found oss-history-scan (~69s quiet), not the reported qa-mutation-shell (~23s quiet, 56.5s loaded), is this repo's own slowest instrument, already over the old cap. Fix: extracted to an exported INSTRUMENT_TIMEOUT_MS = 180_000 constant (global raise, no per-instrument override -- no instrument needs a short timeout to fail fast on a genuine hang). Two new regression tests (headroom pin, timeout-forwarding spy), both confirmed non-vacuous by both reviewers via independent mutation. Round 1 verdicts: code-reviewer SHIP (2 LOW issues: qa-reference-resolver's runtime is gh-call-bound and not a stable baseline, worth a follow-up measurement; a comment's instrument enumeration has a wording gap for the bare qa14-marker-corpus-probe key. 1 LOW suspicion: no discussion of a 3x-longer wait before a genuine hang reports failure). cross-domain-reviewer APPROVE (1 LOW: docs/STATE.md's #242 bullet is stale, fixed at this story's close-out). Manager correction: cross-domain-reviewer's report states KNOWN_INSTRUMENTS has 16 keys; the real count, verified directly against the file, is 14 (10 distinct underlying scripts) -- matches code-reviewer's own count; immaterial to either verdict, noted here rather than editing the immutable report. Branch fix/s1-242-qa15-timeout-headroom, commit 49a6ece. Plan folded into the build report (no separate Phase 1 doc; small STANDARD story, s1-135/s1-238 precedent). MERGED as PR #262, closed.",
     "priorScope": {
-      "scope": "s1-229-qa14-red",
-      "tier": "CRITICAL",
+      "scope": "s1-238-unlock-command-cquote",
+      "tier": "STANDARD",
       "reviewRoundsSinceClean": 0,
       "reviewRoundsTotal": 1,
+      "humanRulingRequired": false,
+      "councilHeld": false,
+      "councilVerdict": null,
+      "roundsSinceLastGo": 0,
+      "note_2026-09-22a": "s1-238-unlock-command-cquote (GitHub Issue #238): story-implementer PROPOSED STANDARD, Manager RATIFIED unchanged (run-log tier-ratified). Touches src/secret-scan/* (CLAUDE.md sensitive area) but is a print-formatting/CLI-input-matching fix, no detection-logic change; severity:low, no tracked path affected today. Fix: new decodeGitQuotedPath() in src/lib/git.ts, additive fallback in allowlist-tool.ts's runHash on a lookup miss; exact-key lookup path unchanged. Verified not to reopen #239's shell-safety fix (history-scan.ts SHELL_SAFE/unlockDetails/NO_COMMAND_HOWTO/percentEncode zero lines changed). Round 1 verdicts: app-security-reviewer APPROVE (1 LOW, no test on the ambiguity-throw branch, not filed), cross-domain-reviewer APPROVE-WITH-CONDITIONS (Issue #260 MED, this file's stale top-level scope/tier, fixed by this edit; 1 LOW recommended-not-required, echoing the resolved raw path, deferred). Branch fix/s1-238-unlock-command-cquote, commit 90e9585. Plan folded into the build report (no separate Phase 1 doc; small STANDARD story, s1-135 precedent). MERGED as PR #261, closed.",
+      "priorScope": {
+        "scope": "s1-229-qa14-red",
+        "tier": "CRITICAL",
+        "reviewRoundsSinceClean": 0,
+        "reviewRoundsTotal": 1,
     "humanRulingRequired": false,
     "councilHeld": false,
     "councilVerdict": null,
@@ -1640,7 +1650,7 @@
     }
   },
   "adrCatalog": {
-    "version": "b588a484ecaf2388a1051e4819430b90ba3a9e6e",
+    "version": "854c4b97470f2a565819b91b364bc5f14bb5e558",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
@@ -2364,6 +2374,7 @@
   },
   "note_2026-09-21b": "s1-229-qa14-red review round 1: red-team go (2 MED, Issues 253 and 254), code-reviewer SHIP-AFTER-FIXES (1 MED, Issue 255), cross-domain-reviewer APPROVE-WITH-CONDITIONS (2 LOW docs items). Counted as one REWORK-class round (reviewRoundsSinceClean 1, reviewRoundsTotal 1). Manager triage: every finding fix-now inside the approved scope; JSON tokenizer swapped for a canonical-format parse (three reviewers preferred it, human prefers simplicity); hunk-count parser kept (red-team proved it against the header-spoof attack). Delta goes back to red-team for a re-confirm (CRITICAL, gate-logic change).",
   "note_2026-09-21c": "s1-229-qa14-red review round 2 (targeted re-confirm of the eae5451..997e69d delta): red-team go (Issues 253 and 254 re-attacked with the same payloads, both closed; one new LOW, a deep-nesting throw outside the try in the canonical mirror cut, exposure about 0%), code-reviewer SHIP (0 open findings, Issue 255 closed). Clean verdict: reviewRoundsSinceClean reset to 0, reviewRoundsTotal stays 1. The LOW is fixed in a small named-test commit without a third review round (exposure about 0%, exits 1 either way)."
+  }
   }
   }
 }

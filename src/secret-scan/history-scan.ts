@@ -10,15 +10,49 @@
 // disclosed design choice, not an assumption (PRINCIPLES.md rule 18).
 //
 // Every blob is scanned. A NUL byte is an ordinary byte here: an earlier rule skipped a whole blob when
-// a NUL sat in its first 8000 bytes, which hid any secret in such a file (Issue 237). A blob is decoded
-// as latin1 and matched against every pattern; a legitimate binary that produces a match is handled by
-// the value-scoped allowlist below, the one exemption this gate has. UTF-16 text (a byte order mark and
-// interleaved NUL bytes) still matches nothing, because latin1 decoding leaves a NUL between every
-// character; that is a stated residual, Issue 246.
+// a NUL sat in its first 8000 bytes, which hid any secret in such a file (Issue 237). A blob's text is
+// decoded by `decodeBlobVariants` below and each decoding is matched against every pattern; a legitimate
+// binary that produces a match is handled by the value-scoped allowlist below, the one exemption this
+// gate has.
+//
+// UTF-16 (Issue 246): a blob starting with a UTF-16 byte-order-mark (LE `FF FE` or BE `FE FF`) is ALSO
+// decoded to real text and matched, on top of the always-on latin1 byte-for-byte reading that otherwise
+// leaves a NUL between every character and hides every pattern — additive, never a replacement, because a
+// byte-order-mark can open a non-text binary blob for reasons that have nothing to do with UTF-16 (this
+// module's own `high-bytes.bin` test fixture). BOM presence is the sole detection signal for the extra
+// reading — deliberately not a heuristic guess at BOM-less UTF-16 (interleaved NULs can equally be an
+// ASCII file with NUL separators, Issue 237's own fixture shape), so a UTF-16 file with no BOM is a
+// disclosed, narrower residual. Every `SECRET_PATTERNS` regex matches ASCII-only text, so a decoded match
+// is byte-identical, in the latin1 sense `hashMatchedBytes` already uses, to the same value written as
+// plain ASCII — the same literal secret therefore hashes the same whether it lives in a plain-text file or
+// a UTF-16 one, which is what lets one allowlist entry cover both forms (Manager ruling,
+// s1-oss01-detection-residuals plan).
+//
+// Scan-time bound (Issue 247): `internal-hostname`, `email-address` and `private-key-block` all
+// backtrack super-linearly on an adversarial shape with no closing anchor, which is invisible in a PR
+// diff when the blob is binary-looking. Every pattern's match against every blob runs under a hard
+// wall-clock ceiling (`SCAN_TIMEOUT_MS`, `matchAllBounded` below); a pattern that cannot finish in time is
+// recorded as a blocking finding under the reserved `oss01-scan-timeout` pattern id rather than silently
+// skipped, so the gate fails closed instead of passing a blob nobody actually scanned. That finding is a
+// plain `HistoryMatch` like any other, reviewable and grantable through the SAME value-scoped allowlist —
+// THOTH-ADR-0002 forbids a NEW exemption shape, not reuse of the existing one for a new kind of finding —
+// and, since Issue 264 (fix-now round), its `valueSha256` is a hash of this variant's own scanned text
+// (not `text.length`), so the property that makes the existing shape safe to reuse — content addressing —
+// actually holds for this finding kind too, not just its field names.
+//
+// Blob dedupe and path scoping (Issue 250): a blob's own content is scanned once per distinct sha
+// (matching is pure over the blob's own bytes, so re-scanning an identical blob would only reproduce the
+// same matches) and its result is cached and replayed under every distinct PATH that blob sha is found
+// at — not just the first path seen — so an allowlist grant scoped to one path no longer silently exempts
+// an identical blob living at a second path (`THOTH-ADR-0002`'s path-agreement rule). Deliberately scoped
+// to PATH, not to (commit, path): a file that never changes across history still gets a fresh tree entry
+// at every commit that includes it, and reporting it again at every one of those would inflate matches
+// without adding any real information the ADR's own path-scoped rule needs.
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import vm from "node:vm";
 import type { GitOps } from "../lib/git.ts";
 import { makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
@@ -44,15 +78,107 @@ export interface ScanOptions {
   patterns?: SecretPattern[];
 }
 
-/** sha256 over the bytes of a match. The scanner decodes a blob as latin1, so the latin1 round trip
- * recovers the blob's own bytes exactly; the result equals the hash of the same bytes read from the
- * file, which is the idiom this repo's reviewed-baseline tests already use. */
+/** sha256 over the bytes of a match. The scanner decodes a blob as latin1 (or, for a UTF-16 blob with a
+ * BOM, to real text — see `decodeBlobVariants`), so for every pattern in this catalog (ASCII-only match
+ * shapes) the latin1 round trip recovers the same bytes whichever path the text came from; the result
+ * equals the hash of the same literal read from a plain-ASCII file, which is the idiom this repo's
+ * reviewed-baseline tests already use.
+ *
+ * Issue 266 (app-security-reviewer, fix-now round): `Buffer.from(str, "latin1")` truncates any JS string
+ * code point above 0xFF to its low byte. The latin1-decoded variant's own `toString("latin1")` never
+ * produces one of those (every byte maps 1:1 into 0x00-0xFF), so this branch is unreachable for that
+ * variant — but the UTF-16 variant (Issue 246) can. For the two patterns whose value class is open or
+ * negated (`generic-password-assignment`, `private-key-block`), a UTF-16-decoded match built from
+ * high-code-point characters (visually nothing like a reviewed ASCII literal) truncated to the exact same
+ * low-byte sequence as an already-reviewed plain-ASCII value, colliding on `valueSha256` — demonstrated:
+ * Armenian-range glyphs shifted to the same low bytes as `"SuperSecretPW1"` hashed identically to it.
+ * Rather than reject the match outright (which would silently stop reporting a genuine secret that merely
+ * contains a non-latin1 character, the worse failure mode for a security gate), a match containing a code
+ * point above 0xFF is hashed over its own UTF-16LE code units instead — lossless, so two distinct matched
+ * strings never collide — while every match that stays inside 0x00-0xFF (every latin1-variant match, and
+ * every UTF-16-variant match of genuinely ASCII-or-latin1-range text, which is the common, intended case)
+ * keeps the existing latin1 hash unchanged, so the "one entry covers both forms" equivalence this module's
+ * header comment describes still holds for the case it was designed for. */
 function hashMatchedBytes(matched: string): string {
-  return createHash("sha256").update(Buffer.from(matched, "latin1")).digest("hex");
+  const hasHighCodePoint = [...matched].some((ch) => (ch.codePointAt(0) ?? 0) > 0xff);
+  const bytes = Buffer.from(matched, hasHighCodePoint ? "utf16le" : "latin1");
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Pure: scans one blob's already-decoded text against every pattern. Exported so the allowlist tool
- * (`allowlist-tool.ts`) reuses this exact matching and hashing instead of reimplementing it. */
+/** Every way one blob's raw bytes are decoded and matched (Issue 246). ALWAYS includes the latin1
+ * byte-for-byte reading first — this is not an either/or choice: a byte-order-mark can legitimately open a
+ * non-text binary blob for reasons that have nothing to do with UTF-16 (this module's own test fixture
+ * `high-bytes.bin` starts `FF FE 80 81 ...`, four arbitrary high bytes, not text), so replacing the latin1
+ * reading with a BOM-triggered UTF-16 one would silently re-hide whatever that blob's latin1 reading would
+ * have caught — trading Issue 246 for a regression on Issue 237's own "no blob is skipped whatever its
+ * bytes" guarantee. Instead, a byte-order-mark ADDS a second reading on top of the first, so this change
+ * keeps the same "can only add matches, never remove one" property the gate has held since Issue 237.
+ * BOM presence is the only detection signal for the second reading — deliberately not a heuristic guess at
+ * BOM-less UTF-16, which cannot be told apart from an ordinary NUL-separated-ASCII fixture without a real
+ * risk of misreading binary content as text. */
+export function decodeBlobVariants(content: Buffer): string[] {
+  const variants = [content.toString("latin1")];
+  if (content.length >= 2 && content[0] === 0xff && content[1] === 0xfe) {
+    variants.push(content.subarray(2).toString("utf16le"));
+  } else if (content.length >= 2 && content[0] === 0xfe && content[1] === 0xff) {
+    // Node has no native "utf16be" decoder; byte-swap each pair, then decode as utf16le. A trailing lone
+    // byte (an odd-length body) is dropped rather than guessed at — the same "don't guess" posture as the
+    // BOM-only detection above.
+    const body = content.subarray(2);
+    const evenLen = body.length - (body.length % 2);
+    const swapped = Buffer.alloc(evenLen);
+    for (let i = 0; i < evenLen; i += 2) {
+      swapped.writeUInt8(body.readUInt8(i + 1), i);
+      swapped.writeUInt8(body.readUInt8(i), i + 1);
+    }
+    variants.push(swapped.toString("utf16le"));
+  }
+  return variants;
+}
+
+// Issue 247: a hard wall-clock ceiling on every single pattern-against-blob match, so a catastrophically
+// backtracking shape (internal-hostname, email-address, private-key-block all measured quadratic-or-worse
+// on an adversarial input) cannot stall the gate. Measured, not assumed (PRINCIPLES.md rule 18): this
+// repo's own largest real blob (CHANGELOG.md, ~330 KB) never took more than ~5ms against any one pattern;
+// 500ms is roughly 100x that, so no real content observed in this repo is expected to trip it, while a
+// hostile blob is stopped in well under a second per pattern instead of running for minutes.
+export const SCAN_TIMEOUT_MS = 500;
+
+// A single, reused V8 context and pre-compiled script for the bounded match below (Issue 247). Reusing
+// both across every (blob, pattern) call — measured over 8000 calls — cuts the per-call cost to a small
+// fraction of a millisecond; creating a fresh context per call would dominate the scan's own runtime on a
+// history of this repo's size. Sequential use only: `scanHistory`'s own loop below awaits one blob's scan
+// to finish before starting the next, so nothing else may write `timeoutSandbox` concurrently.
+const timeoutSandbox: { text: string | undefined; regex: RegExp | undefined } = { text: undefined, regex: undefined };
+vm.createContext(timeoutSandbox);
+const matchAllScript = new vm.Script("[...text.matchAll(regex)]");
+
+/** Runs `text.matchAll(regex)` under `SCAN_TIMEOUT_MS`, returning `null` on timeout instead of throwing or
+ * hanging. Measured directly (not assumed): `vm.Script#runInContext`'s own `timeout` option interrupts an
+ * in-progress, catastrophically-backtracking `RegExp` match in this Node version — a crafted blob that
+ * free-runs for over ten seconds is cut off at the configured ceiling. */
+function matchAllBounded(text: string, regex: RegExp): RegExpMatchArray[] | null {
+  timeoutSandbox.text = text;
+  timeoutSandbox.regex = regex;
+  try {
+    return matchAllScript.runInContext(timeoutSandbox, { timeout: SCAN_TIMEOUT_MS }) as RegExpMatchArray[];
+  } catch {
+    return null;
+  } finally {
+    timeoutSandbox.text = undefined;
+    timeoutSandbox.regex = undefined;
+  }
+}
+
+/** Reserved pattern id for a scan that could not complete within `SCAN_TIMEOUT_MS` (Issue 247). Never a
+ * real `SECRET_PATTERNS` id, so it can never collide with one; a blocking finding under this id names a
+ * scan failure, not a secret. Reviewable and grantable through the same value-scoped allowlist as any
+ * other match — THOTH-ADR-0002 forbids a NEW exemption shape, not reuse of the existing one. */
+export const SCAN_TIMEOUT_PATTERN_ID = "oss01-scan-timeout";
+
+/** Pure: scans one blob's already-decoded text against every pattern, each under the scan-time bound
+ * above. Exported so the allowlist tool (`allowlist-tool.ts`) reuses this exact matching and hashing
+ * instead of reimplementing it. */
 export function scanBlobText(
   text: string,
   patterns: SecretPattern[],
@@ -60,7 +186,34 @@ export function scanBlobText(
   const found: Array<Pick<HistoryMatch, "patternId" | "description" | "redacted" | "valueSha256">> = [];
   for (const pattern of patterns) {
     pattern.regex.lastIndex = 0;
-    for (const m of text.matchAll(pattern.regex)) {
+    const raw = matchAllBounded(text, pattern.regex);
+    if (raw === null) {
+      // Fail closed (Issue 247): a pattern that could not finish against this blob within the scan-time
+      // budget is reported as a blocking finding, never silently skipped — a timeout is not the same
+      // thing as "no match", and treating it that way would reopen exactly the class of blind spot
+      // Issue 237 closed.
+      //
+      // Issue 264 (red-team + app-security-reviewer, fix-now round, HIGH): the hash below MUST be a
+      // function of this variant's own decoded text, not of `text.length` alone. A length-only hash
+      // meant two blobs of the same decoded length that both time out on the same pattern at the same
+      // path produced the IDENTICAL valueSha256 — demonstrated: a 200,000-byte padding blob and a
+      // 200,000-byte blob carrying a real hostname and email hashed identically, so granting the first
+      // (a legitimate, reviewed oversized asset) silently exempted the second (an attacker's blob of the
+      // same length) forever, with zero allowlist.json diff and zero reviewer visibility — THOTH-ADR-0002's
+      // "hash over the matched bytes" rule, applied to a finding that has no matched bytes of its own, so
+      // it is hashed over the blob's own scanned text instead. This keeps the finding content-addressed
+      // like every other one: two different blobs (even the same length) never share a hash, so one grant
+      // covers exactly the one blob it was reviewed against, and a novel blob at the same path — however
+      // similar in size — still blocks and still names its own unlock.
+      found.push({
+        patternId: SCAN_TIMEOUT_PATTERN_ID,
+        description: `scan of this blob against pattern '${pattern.id}' did not finish within ${SCAN_TIMEOUT_MS}ms and was stopped; this is a scan that could not complete, not a secret match`,
+        redacted: `…[SCAN-TIMEOUT pattern=${pattern.id} bytes=${text.length}]`,
+        valueSha256: hashMatchedBytes(`${SCAN_TIMEOUT_PATTERN_ID}:${pattern.id}:${text}`),
+      });
+      continue;
+    }
+    for (const m of raw) {
       found.push({
         patternId: pattern.id,
         description: pattern.description,
@@ -72,31 +225,64 @@ export function scanBlobText(
   return found;
 }
 
-async function scanUnseenBlob(
+/** Scans one blob's raw bytes (every decoding in `decodeBlobVariants`, then match) exactly once — the
+ * cache below replays the result for every path the blob is found at, so this function's own cost is paid
+ * once per distinct blob sha. Deliberately does NOT deduplicate matches across (or within) a variant: a
+ * value repeated many times in one blob (this repo's own CHANGELOG.md, measured — the same hostname
+ * mentioned across many changelog entries) has always been reported once per occurrence, and a dedup keyed
+ * on (patternId, valueSha256) would collapse every one of those repeats into a single finding, silently
+ * changing what "a match" means for every blob in real history, not just a UTF-16 one. Caught by
+ * measuring this fix's effect on this repo's own real scan (2031 to 923 allowlisted matches) before this
+ * function shipped — the fix here is to not dedupe at all, letting each variant's own matches (each
+ * variant's own occurrences included) all flow through unchanged. */
+async function scanBlob(
   git: GitOps,
-  seenBlobs: Set<string>,
   sha: string,
-): Promise<string | null> {
-  if (seenBlobs.has(sha)) return null; // dedupe: same blob content already scanned elsewhere
-  seenBlobs.add(sha);
+  patterns: SecretPattern[],
+): Promise<Array<Pick<HistoryMatch, "patternId" | "description" | "redacted" | "valueSha256">>> {
   const content = await git.catFileBlob(sha);
-  return content.toString("latin1");
+  const found: Array<Pick<HistoryMatch, "patternId" | "description" | "redacted" | "valueSha256">> = [];
+  for (const text of decodeBlobVariants(content)) {
+    found.push(...scanBlobText(text, patterns));
+  }
+  return found;
 }
 
 export async function scanHistory(git: GitOps, opts: ScanOptions = {}): Promise<HistoryMatch[]> {
   const patterns = opts.patterns ?? SECRET_PATTERNS;
   const commits = await git.revList(opts.ref ?? "HEAD", opts.allRefs !== undefined ? { allRefs: opts.allRefs } : {});
 
-  const seenBlobs = new Set<string>();
+  // Issue 250, corrected for a real-history blow-up caught measuring this fix: the dedupe key is
+  // (path, sha), NOT sha alone (the pre-fix bug: the SAME shared blob at a different path was silently
+  // dropped) and NOT (commit, path) either (a first cut of this fix tried that and inflated this repo's
+  // own allowlisted-match count over 12x — 2031 to 25021 — because a file that simply never changes still
+  // gets a fresh tree entry at every commit that includes it; reporting it again at every one of those
+  // commits is not what Issue 250 asked for and is not what THOTH-ADR-0002 scopes an entry by, which is
+  // PATH, not commit).
+  //
+  // So: for a given PATH, its content is scanned+reported once per DISTINCT blob sha that path ever holds
+  // across history (exactly the granularity a "full history scan" needs — an older, since-changed version
+  // of a file can hold a different secret than its current one, and must still be caught) — but a blob
+  // sha's OWN scan cost and match set is computed once, in `blobMatchCache`, no matter how many paths or
+  // commits share it, and simply replayed under every (path, sha) pair that is new.
+  const blobMatchCache = new Map<string, Array<Pick<HistoryMatch, "patternId" | "description" | "redacted" | "valueSha256">>>();
+  const reportedPathSha = new Set<string>();
   const matches: HistoryMatch[] = [];
 
   for (const commit of commits) {
     const tree = await git.lsTree(commit);
     for (const [path, sha] of tree) {
-      const text = await scanUnseenBlob(git, seenBlobs, sha);
-      if (text === null) continue;
-      for (const found of scanBlobText(text, patterns)) {
-        matches.push({ commit, path, ...found });
+      const pathShaKey = `${path}\0${sha}`;
+      if (reportedPathSha.has(pathShaKey)) continue; // this exact (path, content) pairing already reported
+      reportedPathSha.add(pathShaKey);
+
+      let found = blobMatchCache.get(sha);
+      if (found === undefined) {
+        found = await scanBlob(git, sha, patterns);
+        blobMatchCache.set(sha, found);
+      }
+      for (const f of found) {
+        matches.push({ commit, path, ...f });
       }
     }
   }
