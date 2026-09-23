@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `qa14-ci-red-citation-wording` (PR 281): three comment wording defects that kept master's QA-14 gate red
+
+CRITICAL tier (sensitive area: the two SUR-03 hook files, comment-only diff). Master's QA-14 (`reference-resolver.ts`) gate had been failing since this session's four earlier merges landed — ten citations it could not resolve. Three were plain wording defects in live hook comments, not review-report content, so fixable without touching an immutable report (PRINCIPLES.md rule 11):
+
+- `hooks/sessionstart-tool-enum.mjs` named an upstream anthropics/claude-code feature-request issue in a shape the resolver's cross-repo-issue detector always treats as blocking; reworded to name the same issue without that shape.
+- The same file quoted the gitignored per-user Claude settings path inside backticks, which the resolver's path-citation detector then tried, and failed, to resolve against this repository's own tree; the backticks around that one fragment were dropped.
+- `hooks/userpromptsubmit-halt-relay.mjs` quoted a slash-joined shorthand for the two Node stream-write methods inside backticks, tripping the same path-citation detector; split into two separately backtick-quoted, individually valid method names — a documentation-precision improvement in its own right, independently confirmed by every reviewer.
+
+Zero behavior change — comment text only, independently verified byte-for-byte identical outside the three edited lines. The remaining seven citations that kept (and keep) the gate red live entirely inside this session's own already-committed, immutable dated review reports and a `docs/REVIEW_LOG.md` row; they cannot be edited and are tracked as a dedicated follow-up issue rather than patched here.
+
+- **Reviews.** CRITICAL tier: `red-team` go (two MED findings, neither gating — a maintainability note about undocumented style choices in these same comments, and a caution that any future close-out writing about this exact fix must avoid reproducing the three flagged shapes verbatim, or it re-reds the gate it just fixed), `app-security-reviewer` APPROVE (zero findings — confirmed the SUR-03 hardening landed in the prior story is byte-for-byte untouched), `cross-domain-reviewer` APPROVE-WITH-CONDITIONS (one HIGH finding entirely outside this diff's own files, surfaced while verifying it: the repository's default branch currently has no branch-protection rule, so a required CI check failing at merge time has not actually blocked any of this session's four prior merges — filed as its own issue and routed to the human as a repository-settings decision, explicitly not a condition on this change).
+- **Checks.** `npm run typecheck`, `npm run lint`, `npm test` (1090 passed, 0 failed, 0 skipped) and `npm run oss:secret-scan` (0 blocking) all pass.
+
 ### Fixed — `s1-238-unlock-command-cquote` (issue 238): the `hash` unlock command now resolves a path git C-quotes
 
 STANDARD tier (proposed by the implementer, ratified by the Manager; scope `s1-238-unlock-command-cquote`). Secret-scanning sensitive area, but a print-formatting/CLI-input fix with no change to match or detection logic. No `test-writer` dispatch: an internal CLI hint string, no UI flow or API surface.
