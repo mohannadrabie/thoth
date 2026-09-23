@@ -80,3 +80,5 @@
 {"at":"2026-09-21T23:59:25.859Z","event":"story-shipped","scope":"s1-229-qa14-red","rounds":"1","reports":"5","findings":"17","adrTokensSaved":"164700","councilFired":"false"}
 {"at":"2026-09-22T01:37:55.414Z","event":"tier-ratified","scope":"s1-238-unlock-command-cquote","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"print-formatting/CLI-input fix, sensitive-area file but no detection-logic change"}
 {"at":"2026-09-22T02:07:37.139Z","event":"story-shipped","scope":"s1-238-unlock-command-cquote","rounds":"1","reports":"2","findings":"3","adrTokensSaved":"18300","councilFired":"false"}
+{"at":"2026-09-22T02:18:01.272Z","event":"tier-ratified","scope":"s1-242-qa15-timeout-headroom","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"CI-gate timeout tuning, boring one-directional failure mode (more lenient, not less strict)"}
+{"at":"2026-09-22T02:38:25.791Z","event":"story-shipped","scope":"s1-242-qa15-timeout-headroom","rounds":"1","reports":"2","findings":"4","adrTokensSaved":"18300","councilFired":"false"}
