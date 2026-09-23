@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Runner } from "./exec.ts";
-import { isZeroSha, makeGitOps, resolveChangedFiles } from "./git.ts";
+import { realRunner } from "./exec.ts";
+import { decodeGitQuotedPath, isZeroSha, makeGitOps, resolveChangedFiles } from "./git.ts";
 
 function fakeRunner(stdout: string): Runner {
   return () => Promise.resolve({ stdout, stderr: "", code: 0 });
@@ -139,4 +143,70 @@ test("lsFilesWorkingTree: an empty working tree yields an empty list, not [\"\"]
   const git = makeGitOps(runner, ".");
   const files = await git.lsFilesWorkingTree();
   assert.deepEqual(files, []);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Issue 238: `lsTree()` keys its Map by whatever spelling `git ls-tree` prints, which is git's own
+// "C-quoted" form for a path holding a byte >= 0x80, a literal backslash or double quote, or a C0
+// control character. `decodeGitQuotedPath` undoes that quoting for a caller that needs to compare
+// against the plain, human spelling — it never changes what `lsTree()` itself returns.
+// ---------------------------------------------------------------------------------------------
+
+function removeDir(dir: string): Promise<void> {
+  return rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+test("decodeGitQuotedPath: a plain path git never quoted is returned unchanged", () => {
+  for (const p of ["src/foo.ts", "docs/reviews/x-2026-09-19.md", "a_b-c.d", "-leading-dash.txt"]) {
+    assert.equal(decodeGitQuotedPath(p), p);
+  }
+});
+
+test("decodeGitQuotedPath: undoes octal-byte escapes for non-ASCII bytes (git's own quoting of café.txt)", () => {
+  // The exact 17-character string a real `git ls-tree` prints for a file named café.txt with
+  // core.quotepath at its default (true): the two UTF-8 bytes of é (0xC3, 0xA9) as \303\251.
+  assert.equal(decodeGitQuotedPath('"caf\\303\\251.txt"'), "café.txt");
+});
+
+test("decodeGitQuotedPath: undoes the named C-escapes (backslash, double quote, tab) git also uses", () => {
+  assert.equal(decodeGitQuotedPath('"a\\\\b.txt"'), "a\\b.txt", "\\\\ -> a literal backslash");
+  assert.equal(decodeGitQuotedPath('"a\\"b.txt"'), 'a"b.txt', '\\" -> a literal double quote');
+  assert.equal(decodeGitQuotedPath('"a\\tb.txt"'), "a\tb.txt", "\\t -> a literal tab byte");
+});
+
+test("decodeGitQuotedPath: never guesses — an unrecognized escape or an unterminated quote is handed back raw", () => {
+  assert.equal(decodeGitQuotedPath('"a\\qb.txt"'), '"a\\qb.txt"', "\\q is not a git C-escape");
+  assert.equal(decodeGitQuotedPath('"a\\'), '"a\\', "a trailing, unterminated backslash");
+  assert.equal(decodeGitQuotedPath('"unterminated'), '"unterminated', "no closing quote at all");
+});
+
+test("decodeGitQuotedPath: round-trips against a REAL git ls-tree line for a non-ASCII filename (not a hand-derived escape sequence)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "git-cquote-"));
+  try {
+    const run = async (...args: string[]): Promise<string> => {
+      const res = await realRunner("git", args, { cwd: dir, encoding: "utf8" });
+      assert.equal(res.code, 0, `git ${args.join(" ")} failed: ${res.stderr}`);
+      return res.stdout;
+    };
+    await run("init", "-q", "-b", "main");
+    await run("config", "core.quotepath", "true"); // pin the behavior under test regardless of the machine's global git config
+    await run("config", "user.email", ["ci", "example.org"].join("@"));
+    await run("config", "user.name", "Test");
+    await run("config", "commit.gpgsign", "false");
+    const realName = "café.txt";
+    await writeFile(join(dir, realName), "hello");
+    await run("add", ".");
+    await run("commit", "-q", "-m", "fixture");
+
+    const git = makeGitOps(realRunner, dir);
+    const tree = await git.lsTree("HEAD");
+    const keys = [...tree.keys()];
+    assert.equal(keys.length, 1);
+    const rawSpelling = keys[0]!;
+    assert.notEqual(rawSpelling, realName, "git really did C-quote this non-ASCII filename, or this test proves nothing");
+    assert.ok(rawSpelling.startsWith('"') && rawSpelling.endsWith('"'), `expected a C-quoted spelling, got: ${rawSpelling}`);
+    assert.equal(decodeGitQuotedPath(rawSpelling), realName, "decoding the raw ls-tree spelling recovers the real filename");
+  } finally {
+    await removeDir(dir);
+  }
 });

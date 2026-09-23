@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s1-238-unlock-command-cquote` (issue 238): the `hash` unlock command now resolves a path git C-quotes
+
+STANDARD tier (proposed by the implementer, ratified by the Manager; scope `s1-238-unlock-command-cquote`). Secret-scanning sensitive area, but a print-formatting/CLI-input fix with no change to match or detection logic. No `test-writer` dispatch: an internal CLI hint string, no UI flow or API surface.
+
+- **Before.** `git ls-tree` C-quotes a tracked path holding a non-ASCII byte or a literal quote/backslash (e.g. `café.txt` prints as `"caf\303\251.txt"`), and `src/lib/git.ts`'s `lsTree()` keys its Map by that exact raw spelling. `allowlist-tool.ts hash <commit> <path> <patternId>` matched ONLY that raw key, so typing the plain filename a maintainer actually sees exited non-zero (`<path> is not in <commit>`), forcing a hand-computed hash.
+- **After.** A new `decodeGitQuotedPath` (`src/lib/git.ts`) undoes git's own C-quoting; `hash`'s lookup now falls back to matching a tree entry by its decoded spelling when the direct key misses, so either the plain filename or git's own raw quoted form resolves to the same blob. `lsTree()`'s own keys, the allowlist's `path` field semantics (THOTH-ADR-0002) and everything `unlockDetails` prints are unchanged — verified: the raw C-quoted form always contains a backslash, which `history-scan.ts`'s `SHELL_SAFE` set already excludes, so no C-quoted path has ever produced (or now produces) a runnable `HASH-COMMAND` line; the #239 shell-safety gate and its full test suite (`history-scan.test.ts`, 77 tests) pass unmodified.
+- **Tests, real git.** `src/lib/git.test.ts` adds unit coverage for `decodeGitQuotedPath` (plain passthrough, octal-byte escapes, named C-escapes, "never guess" on an unrecognized escape) plus a round-trip test against a real `git ls-tree` line for a `café.txt` fixture. `src/secret-scan/allowlist-tool.test.ts` adds an end-to-end regression against a real git-plumbed non-ASCII fixture, with a positive control proving the raw spelling really is C-quoted on this platform, and asserting the plain and raw spellings both resolve and print the identical hash line.
+- **Checks.** `npm run typecheck`, `npm run lint`, `npm test` (1049 passed, 0 failed, 0 skipped) and `npm run oss:secret-scan` (0 blocking, 2031 allowlisted) all pass.
+
 ### Fixed — `s1-242-qa15-timeout-headroom` (issue 242): QA-15's per-instrument timeout no longer sits close enough to a real instrument's runtime to false-red under load
 
 STANDARD tier (proposed by the implementer, ratified by the Manager; scope `s1-242-qa15-timeout-headroom`). Touches a required CI gate's pass/fail logic (`src/qa/completeness-claim-checker.ts`), not one of CLAUDE.md's named sensitive areas — a timeout-value tuning fix whose failure mode is the gate becoming MORE lenient about false negatives, never less strict about a real defect. No `test-writer` dispatch: an internal gate with no UI flow or API surface.
