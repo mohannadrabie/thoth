@@ -207,6 +207,27 @@ function lastInteger(text: string): number | null {
   return last ? Number(last[0]) : null;
 }
 
+// GitHub Issue #242: this ONE cap is shared, unconfigured, by every instrument in
+// `KNOWN_INSTRUMENTS` — there is no per-instrument override. It was 60_000, close enough to
+// `qa-mutation-shell`'s own real runtime (39s quiet / 56.5s under load, per two reviewers'
+// `docs/reviews/s1-136-value-scoped-allowlist-*-round2-2026-09-19.md` reports) that a loaded CI
+// runner produced a false red ("produced no parseable number") on a real, passing instrument.
+// Measured directly on this machine (PRINCIPLES.md rule 18 — not guessed) before choosing the new
+// value, across every registered instrument, quiet:
+//   qa-fixture-coverage ~0.2s, qa-diff-fixture ~0.2s, qa-fixture-isolation ~0.2s,
+//   qa-recurring-findings ~0.3s, qa14-marker-corpus-probe-* ~0.6s,
+//   qa14-continuation-residual-probe-* ~0.5s, adr-cache-ensure ~0.2s (all sub-second — a global
+//   raise costs them nothing, it only matters when something is genuinely slow or hung),
+//   qa-mutation-shell ~23s, qa-reference-resolver ~47s, oss-history-scan ~69s (already OVER the
+//   old 60s cap on a quiet run here, though not currently wired to any live blocking marker).
+// `oss-history-scan`, not `qa-mutation-shell`, is this repo's own slowest known instrument today —
+// a single global raise is the simpler fix (no instrument here needs a SHORT timeout to fail fast
+// on a real hang, so a per-instrument budget mechanism would add complexity with no matching
+// benefit) as long as it gives real headroom over the slowest one, not just the one that happened
+// to be reported. 180_000ms is ~2.6x oss-history-scan's own quiet 69s, ~3.2x qa-mutation-shell's
+// own reported LOADED 56.5s, and ~3.8x qa-reference-resolver's quiet 47s.
+export const INSTRUMENT_TIMEOUT_MS = 180_000;
+
 export async function verifyMarkerClaim(claim: MarkerClaim, runner: Runner): Promise<InstrumentResult> {
   const instrument = KNOWN_INSTRUMENTS[claim.cmd];
   if (!instrument) {
@@ -217,7 +238,7 @@ export async function verifyMarkerClaim(claim: MarkerClaim, runner: Runner): Pro
       details: [claim.raw, `known names: ${Object.keys(KNOWN_INSTRUMENTS).join(", ")}`],
     };
   }
-  const res = await runner(instrument.cmd, instrument.args, { timeoutMs: 60_000 });
+  const res = await runner(instrument.cmd, instrument.args, { timeoutMs: INSTRUMENT_TIMEOUT_MS });
   const actual = lastInteger(res.stdout);
   if (actual === null) {
     return {
