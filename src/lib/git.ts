@@ -79,6 +79,55 @@ export async function resolveChangedFiles(git: GitOps, base: string, head: strin
   }
 }
 
+// One code point -> one C-escape sequence, per git's own quote.c. Anything not listed here (including
+// a literal `\` or `"`, handled separately below) falls back to a three-digit octal byte escape.
+const C_ESCAPES: Readonly<Record<string, number>> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, "\\": 92, '"': 34 };
+const OCTAL_ESCAPE = /^[0-7]{3}$/;
+
+/**
+ * Undoes git's own "C-quoting" of a tree path (`quote.c`'s `quote_c_style`), which `ls-tree` (and
+ * every other porcelain-adjacent plumbing command this module runs) applies by default to any path
+ * holding a byte >= 0x80, a literal backslash or double quote, or a C0 control character — e.g. a
+ * file named `café.txt` prints as the literal 15-character string `"caf\303\251.txt"` (Issue 238).
+ * `lsTree()` above does not undo this: its Map is keyed by that exact raw spelling, unchanged since
+ * before Issue 238, so nothing that already reads its keys (history-scan's match paths, the
+ * value-scoped allowlist's own `path` field, THOTH-ADR-0002) shifts under it. This function exists
+ * only for a caller that needs to compare a tree entry against a path spelled the ordinary, human
+ * way (e.g. a maintainer typing the filename they actually see) — never to change what a path KEY
+ * is inside this codebase.
+ *
+ * Returns `raw` unchanged whenever it is not wrapped in a matching pair of double quotes (the
+ * common case: git never quoted it) or the escape sequence inside it cannot be parsed — a
+ * conservative "give up, don't guess" fallback, not a best-effort decode.
+ */
+export function decodeGitQuotedPath(raw: string): string {
+  if (raw.length < 2 || raw[0] !== '"' || raw[raw.length - 1] !== '"') return raw;
+  const inner = raw.slice(1, -1);
+  const bytes: number[] = [];
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === undefined) break; // unreachable given the loop bound, satisfies noUncheckedIndexedAccess
+    if (ch !== "\\") {
+      for (const b of Buffer.from(ch, "utf8")) bytes.push(b);
+      continue;
+    }
+    const next = inner[i + 1];
+    if (next !== undefined && next in C_ESCAPES) {
+      bytes.push(C_ESCAPES[next]!);
+      i += 1;
+      continue;
+    }
+    const octal = inner.slice(i + 1, i + 4);
+    if (OCTAL_ESCAPE.test(octal)) {
+      bytes.push(parseInt(octal, 8));
+      i += 3;
+      continue;
+    }
+    return raw; // an escape this decoder doesn't recognize: never guess, hand back the raw spelling
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 export function makeGitOps(runner: Runner, cwd: string): GitOps {
   async function run(args: string[]): Promise<string> {
     const res = await runner("git", args, { cwd, encoding: "utf8" });
