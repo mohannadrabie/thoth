@@ -22,7 +22,7 @@ No ADR collision, no blocking seam. One MED suspicion (how #112 gets closed) and
 | ADR | Verdict | Evidence |
 |---|---|---|
 | SE ADR-0021 (POL-11 kernel purity) | COMPLIANT | New `import type { VerdictOutcome } from "./verdict.ts"` in `src/policy/kernel/rule-types.ts`. The structural test is the enforcement the ADR names. `node src/qa/kernel-purity-check.ts` -> `PASS: 4 production .ts file(s) under src/policy/kernel/, zero import or forbidden-global violations.` `node --test src/qa/kernel-purity-check.test.ts` 53/53. `kernel.ts` unchanged (POL-05 still precedes any posture). |
-| SE ADR-0002 (layering) | COMPLIANT | grep for imports from `../config` in non-test `src/policy/rule/*.ts` -> empty: `rule/` never imports `config/`. The `"bootstrap"` fallback lives in `config/loader.ts`, as `precedence.ts` says. |
+| SE ADR-0002 (layering) | COMPLIANT | grep for imports from `../config` in non-test `src/policy/rule/*.ts` -> empty: `rule/` never imports `config/`. The `"bootstrap"` fallback lives in `src/policy/config/loader.ts`, as `precedence.ts` says. |
 | SE ADR-0003 (SOLID/YAGNI) | COMPLIANT (advisory) | The YAGNI line is SHOULD-level and targets speculative interfaces. The key is not speculative: it is the ask of an open MED Issue (#112) and POL-01, and its non-consumption is disclosed (D3, #288). No new interface; one 16-line function reusing `TRUST_RANK`. |
 | SE ADR-0005 (testing) | COMPLIANT | Tests written first, red at HEAD (32 red plus 7 green-by-construction per the test-writer report), green after. No user-facing flow and no mutating op (pure function), so no Playwright or idempotency obligation. |
 | SE ADR-0010 (quality) | COMPLIANT | `npx tsc --noEmit -p tsconfig.json` exit 0, no output; `npx eslint src/policy/kernel src/policy/rule src/policy/config` exit 0, no output; no lint ignore, no `.skip`; the `printer.test.ts` amendment tightens a wildcard (the deleted lines are the wildcard), it deletes no test. |
@@ -75,7 +75,7 @@ Executable form: none (procedural); settled when `merge-tree` reports no conflic
 
 - No reviewer lane owns "does an enforcement path exist for a central posture". Intentional (unwired hook, #288), not a review gap; the red-today test named in finding 1 is its future form.
 - `docs/STATE.md` and `docs/.maat-state.json` are outside every lane and unchanged: `STATE.md:459` still lists #112 as an open POL-01 code literal, and `.maat-state.json` `scope` is still `qa14-ci-red-citation-wording` (the new tier is recorded only in `docs/run-log.jsonl`). Manager ship-close items (DoD: STATE updated); low risk.
-- Fresh dated review reports: the sensitive-area hard rule needs them in `docs/reviews/` of the PR branch. They currently sit on three separate `review/*` branches (red-team, app-security, this one), not on `feat/s6-policy-centralization`. Bring them onto the PR branch, resolving the `REVIEW_LOG.md` append conflict (finding 2).
+- Fresh dated review reports: the sensitive-area hard rule needs them in `docs/reviews/` of the PR branch. They currently sit on three separate `review/*` branches (red-team, app-security, this one), not on `feat/s6-policy-centralization`. Bring them onto the PR branch, resolving the `docs/REVIEW_LOG.md` append conflict (finding 2).
 - `docs/run-log.jsonl` one-line append and the CHANGELOG/backlog prose: intentionally low-risk, no lane needed.
 
 ## Editorial (verdict-neutral, plain edits)
@@ -97,7 +97,7 @@ Manager: before opening the PR, (a) decide `Closes #112` vs `Refs #112` per find
 RECEIPT: verdict=APPROVE-WITH-CONDITIONS
 findings:
 1. [SUSPICION][MED][code-traced] hooks/pretooluse-kernel-gate.mjs:118-119 + src/policy/config/printer.ts:108: loader resolves a central deny but no enforcement path calls it (only the diagnostic CLI), so "Closes #112" overstates "admin cannot mandate deny-by-default"; fix = comment on #112 pointing to #288/#292, or use Refs #112
-2. [ISSUE][LOW][demonstrated] CHANGELOG.md, docs/decisions.md, docs/run-log.jsonl: merge-tree vs fix/s1-oss01-residuals-270-271 gives 3 single-hunk append conflicts (plus REVIEW_LOG.md across review branches); fix = keep both sides
+2. [ISSUE][LOW][demonstrated] CHANGELOG.md, docs/decisions.md, docs/run-log.jsonl: merge-tree vs fix/s1-oss01-residuals-270-271 gives 3 single-hunk append conflicts (plus docs/REVIEW_LOG.md across review branches); fix = keep both sides
 3. [CLEAN][demonstrated] ADR sweep over all 37: SE-0021 kernel purity (qa:kernel-purity PASS, 4 files), SE-0002 layering (rule/ imports no config/), 0003/0005/0010/0016-0020, THOTH-0001/0002, devops 0004/0008/0009: no collision
 4. [CLEAN][demonstrated] DoD: diff 51bcefd..8e65a2b over all test files is empty; test-writer tests unmodified
 5. [CLEAN][demonstrated] Node 22.18.0 (CI) settles red-team #10: printer.test.ts 13/13, full suite 1130/1130 on rerun (one earlier unidentified transient 1129/1)

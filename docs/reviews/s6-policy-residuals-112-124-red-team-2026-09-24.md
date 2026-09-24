@@ -31,7 +31,7 @@ Read from `adrCatalog.adrs` in `docs/.maat-state.json` on a `[CACHE=HIT]`. Slice
 
 | ADR | Rule attacked | Result |
 |---|---|---|
-| SE ADR-0021 (POL-11 kernel purity) | "The policy kernel MUST be pure: no filesystem, network, or process access" | PASS. `rule-types.ts` gains a type-only import of `./verdict.ts`, a sibling inside the scanned root. `qa:kernel-purity` PASS, 4 production files, zero import or forbidden-global violations |
+| SE ADR-0021 (POL-11 kernel purity) | "The policy kernel MUST be pure: no filesystem, network, or process access" | PASS. `rule-types.ts` gains a type-only import of `src/policy/kernel/verdict.ts`, a sibling inside the scanned root. `qa:kernel-purity` PASS, 4 production files, zero import or forbidden-global violations |
 | SE ADR-0021 (POL-05) | "MUST deny a mutating action whose Action record has source opaque or a non-empty unresolved array" | PASS, untouched. `kernel.ts` is byte-unchanged; POL-05 still fires before `defaultOutcome` is reached |
 | SE ADR-0002 (layering) | `src/policy/rule/*` must not import `src/policy/config/*` | PASS. `resolveDefaultOutcome` returns `undefined` when nothing is declared; the bootstrap fallback is applied in `loader.ts` |
 | SE ADR-0005 / ADR-0010 (testing, quality) | "MUST NOT delete or weaken a failing test" | PASS. The #124 amendment removes a wildcard; no test deleted. Finding 1 is that the replacement is narrower than the alternative form offered, not that anything was weakened relative to HEAD |
@@ -230,7 +230,7 @@ $ npm run qa:kernel-purity
 [QA kernel-purity-check] PASS: 4 production .ts file(s) under src/policy/kernel/, zero import or forbidden-global violations.
 ```
 
-`rule-types.ts` imports `type { VerdictOutcome } from "./verdict.ts"` — a relative specifier that resolves inside `src/policy/kernel/`, which is exactly what the check permits (a non-relative specifier, or a relative one resolving out of the root, is what it forbids). `kernel.ts` is byte-unchanged and still reads only `WorldFacts.defaultOutcome`, so POL-05's unconditional deny still runs ahead of any posture.
+`rule-types.ts` imports `type { VerdictOutcome }` from its sibling module `src/policy/kernel/verdict.ts` — a relative specifier that resolves inside `src/policy/kernel/`, which is exactly what the check permits (a non-relative specifier, or a relative one resolving out of the root, is what it forbids). `kernel.ts` is byte-unchanged and still reads only `WorldFacts.defaultOutcome`, so POL-05's unconditional deny still runs ahead of any posture.
 
 **Verdict: SURVIVES.**
 
