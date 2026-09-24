@@ -32,7 +32,7 @@ The CHANGELOG's own `1095 passed, 0 failed, 0 skipped` claim is independently co
 
 ### Scenario
 
-A maintainer grants the `oss01-scan-timeout` finding for an oversized vendor bundle at `vendor/big.min.js` — a normal, reviewed act this gate explicitly supports. That blob also contains a real internal hostname. The pattern that would have found the hostname is itself one of the patterns that times out, so the hostname is never reported at all; the only finding is the timeout, and the grant covers it.
+A maintainer grants the `oss01-scan-timeout` finding for an oversized vendored JavaScript bundle (an illustrative path, not a file in this repository) — a normal, reviewed act this gate explicitly supports. That blob also contains a real internal hostname. The pattern that would have found the hostname is itself one of the patterns that times out, so the hostname is never reported at all; the only finding is the timeout, and the grant covers it.
 
 ### Demonstration (real shipped code, no mutation)
 
