@@ -2094,7 +2094,8 @@ test("oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-pa
 
   // Round 1: scan blobA alone and build the allowlist grant a maintainer would actually add for its own
   // scan-timeout finding(s) -- one entry per (path, patternId) that timed out, each carrying blobA's OWN
-  // valueSha256 (never typed by hand: this is exactly what a real grant is built from).
+  // valueSha256, which is one hash per blob whichever pattern tripped (never typed by hand: this is
+  // exactly what a real grant is built from).
   let grantEntries: AllowlistEntry[] = [];
   await withPlumbingRepo({ [PATH]: blobA }, async (dir) => {
     const matches = await scanHistory(makeGitOps(realRunner, dir));
