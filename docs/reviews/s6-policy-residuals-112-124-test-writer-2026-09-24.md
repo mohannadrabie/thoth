@@ -192,3 +192,65 @@ tests="0/0/34/5" (negative = the five tests asserting a schema-level rejection: 
 red-run: checks="32/39 failed (7 green-at-HEAD by construction: B3, B4, B5, B5b, B7 none-declared, B8 voided-alone, Part E self-check); 0 pre-existing tests broken (112/112 pass); full suite 33 failing = 32 new + 1 unrelated environmental (stale agent worktrees)"
 adr=HIT(37)
 report=docs/reviews/s6-policy-residuals-112-124-test-writer-2026-09-24.md
+
+---
+
+## ADDENDUM 2026-09-24 (append-only) — Issue #291: bound the rejection echo below whole-file
+
+Cause: app-security and red-team independently showed that Job 1's `raw-bytes-absent` bound (`!actual.includes(<whole trimmed file>)`) only fires on a complete echo. A mutant appending all-but-one character, or the first 80 bytes, of the offending policy at a loader rejection site passed the suite. Job 1's own drills only tried whole-file mutants, so the gap was mine. Branch `feat/s6-policy-centralization`, HEAD at start `8e65a2b`; the #112 implementation had landed, so the six policy files run 152/152 green.
+
+### Change (`src/policy/config/printer.test.ts` only; zero production diff)
+
+- The bound is now exact equality of the rejection tail against `REJECTED: <layer> policy load failed (<reasonKind>): <message>`, with `<message>` computed in the test from the offending source by the same engine that produced it in the loader:
+  - parse failures: `<origin>: <JSON.parse's own error message for that exact text>`;
+  - schema failures: `<origin>: <field>: <message>; ...` from `validateRuleSet` (new import of `../rule/schema.ts` into the test);
+  - central read-error: the thrown message (unchanged).
+- `RejectionBound` is now `{ message: string; raw?: string }` (still a required parameter; a seventh call site omitting it, or passing `/./`, still fails `tsc`, re-verified: TS2554 and TS2345).
+- `ISSUE-123(b)` kept: whole-echo check on `raw`, skipped only where the honest message itself already contains the whole source. New `ISSUE-123(c)` (red-team's name): exact equality at all six sites. Both share one `rejectionSites()` list. File: 14 tests (13 before plus `ISSUE-123(c)`), all pass.
+- Header gained INTERPRETATION CHOICE 9 with the reasoning below.
+
+### Why equality, not a "no run of N source characters" rule, and not the terminator regex
+
+Measured on Node 24.15.0 (longest contiguous run of source characters that the honest `JSON.parse` message itself contains):
+
+```text
+printer-project-bom-malformed.json         trimmed=337  msgLen=55  longestEchoedRun=11
+printer-shipped-defaults-malformed.json    trimmed=126  msgLen=82  longestEchoedRun=3
+printer-project-bom-pretty-malformed.json  trimmed=594  msgLen=55  longestEchoedRun=10
+```
+
+A run-length rule must catch a 20 to 30 byte prefix (the dispatch asked for it) yet stay above the honest echo of about 11, and V8's snippet keeps up to roughly 10 characters either side of the error position, so the margin would be thin (about 1.5x to 2x) and would depend on V8's snippet format. The terminator regex (`/is not valid JSON$/`) depends on that format too, and does not exist for the shipped-defaults fixture (its honest message is the position form, `Expected ':' after property name in JSON at position N`, no such suffix), nor for schema errors. Equality has no threshold and assumes no message format: the expected text is computed by the engine under test's own runtime, so it is identical on Node 22.18.0 by construction. Margin: not applicable (no threshold); the only residual Node dependency is `ISSUE-123(b)`'s skip condition, which fails safe (skipped, never falsely failed). Red-team's measured whole-echo threshold (17 to 21 characters against a 126-byte smallest fixture) is now irrelevant to correctness. Node 22.18.0 remains not installed here; CI's run of the PR is the confirmation.
+
+### Mutation drills (real mutants, each applied, run, reverted; script and raw output kept in the session scratchpad)
+
+Sites (current lines): read-error central `:167`, parse/schema central `:183`, parse shipped-defaults `:214`, parse project `:232`. Variants appended to the message: whole file, all-but-one-char, first 80 bytes, first 25 bytes, a 30-byte window from the middle, and a one-character suffix (24 leak mutants), plus P1.
+
+```text
+Amended suite (14 tests): honest baseline 14/14 pass. 24 of 24 leak mutants fail the suite; P1 fails 4
+  (ISSUE-108(a)(b)(c) and ISSUE-123(c)). Whole-file mutants fail ISSUE-123(b) and (c) plus the site test;
+  every partial, prefix, window and one-char mutant fails ISSUE-123(c) plus the site test.
+  Examples: :232 all-but-one-char   fail=3 (ISSUE-108(a), ISSUE-108(c), ISSUE-123(c))
+            :232 first-80-bytes     fail=3 (same)
+            :232 first-25-bytes     fail=3 (same)
+            :183 first-25-bytes     fail=3 (AC5b x2, ISSUE-123(c))
+            :167 one-char-suffix    fail=2 (AC5c, ISSUE-123(c))
+Control (the committed pre-fix file, same mutants): 13 of 24 SURVIVE 13/13 green
+  (:183 all-but-one, 25-byte, window, one-char; :214 first-80, first-25, window, one-char;
+   :232 all-but-one, first-80, first-25, window, one-char). Whole-file mutants and :167 were already caught.
+```
+
+After each revert `git status` and `git diff --stat -- src/policy/config/loader.ts src/policy/config/printer.ts` were empty; the control copy of the old test file was created and deleted, never committed.
+
+### Gates
+
+`tsc --noEmit` clean; `eslint printer.test.ts` clean; policy suite (pin, loader, printer, schema, precedence, conformance) 152 tests, 152 pass, 0 fail, 0 skipped; `qa:reference-resolver` 0; `qa:completeness-claims` 0; `node src/secret-scan/history-scan.ts` 0.
+
+Site-count instrument: `grep -c "buildExpectedRejectionStdout(.*(parseFailureBound|schemaFailureBound|fileParseFailureBound|{ message:)"` gives 6; wildcard calls give 0. Not covered by any printer test (out of this issue's scope, noted only): the shipped-defaults and project file read-error return sites in `loader.ts`; `loader.test.ts` covers their message and layer.
+
+RECEIPT: verdict=GREEN-AT-HEAD by design; MUTANT-RED-CONFIRMED
+scope=API
+discovery: ui-framework=n/a api-framework=found: node:test
+tests="0/0/0/1" (new ISSUE-123(c), negative; six site tests now carry an exact-message bound) mapped to 6/6 rejection sites (grep-counted; tsc rejects a seventh)
+red-run: checks="0/14 fail at HEAD by design; 24/24 partial and whole leak mutants plus P1 kill the suite; 13/24 of the same mutants survive the pre-fix file"
+adr=HIT(37)
+report=docs/reviews/s6-policy-residuals-112-124-test-writer-2026-09-24.md

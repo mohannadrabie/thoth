@@ -260,23 +260,32 @@
 //    site passed the wildcard `/./`, so a mutant appending the offending policy file to the message
 //    (loader.ts's parse-failure return sites) survived the suite while the pre-relaxation contract
 //    caught it. `buildExpectedRejectionStdout` now takes a REQUIRED `bound: RejectionBound` in place
-//    of the `messagePattern` wildcard: `raw-bytes-absent` (the trimmed offending bytes must not
-//    appear in stdout) at every site that has a policy text, `exact-message` at the one site that
-//    has none (`centralSource.read()` threw). The proof-test is `ISSUE-123(b)` below; the drills
-//    that show it bites (mutants P1/P2, applied and reverted) are in
-//    docs/reviews/s6-policy-residuals-112-124-test-writer-2026-09-24.md. `printer.ts` and
-//    `loader.ts` are UNCHANGED by this amendment (zero production diff).
+//    of the `messagePattern` wildcard, and `ISSUE-123(b)` (the trimmed offending bytes must not
+//    appear whole in stdout) is its proof-test; the drills that show it bites (mutants P1/P2,
+//    applied and reverted) are in docs/reviews/s6-policy-residuals-112-124-test-writer-2026-09-24.md.
+//    `printer.ts` and `loader.ts` are UNCHANGED by this amendment (zero production diff).
 //
-//    Node-version note: the raw-bytes form relies on V8's `JSON.parse` error text NOT echoing a
-//    whole source of this length. Measured on Node 24.15.0 only; CI pins 22.18.0 and was not
-//    measured here. If a site false-fails on that version, replace that ONE site's bound with a
-//    terminator regex (e.g. /is not valid JSON$/), per the red-team report's alternative form.
+// 9. AMENDMENT, 2026-09-24 (Issue #291 [MED], app-security + red-team, superseding the "whole echo
+//    only" limit of CHOICE 8 -- test-writer). `ISSUE-123(b)`'s `includes(whole text)` is all-or-
+//    nothing: a mutant appending all-but-one character, or the first 80 bytes, of the offending
+//    policy to the message survived the suite. The bound is now EXACT EQUALITY of the rejection
+//    tail against `REJECTED: <layer> policy load failed (<reasonKind>): <message>`, with
+//    `<message>` computed in-test from the offending source by the same engine that produced it in
+//    the loader (JSON.parse's own error, or validateRuleSet's errors, prefixed by the origin; the
+//    thrown message at the read-error site). Proof-test: `ISSUE-123(c)` below. Why not a
+//    "no run of N source characters" rule: the honest JSON.parse message legitimately echoes up to
+//    roughly a dozen contiguous source characters (measured longest run: 3, 10 and 11 on the three
+//    file fixtures, Node 24.15.0), so any N that also catches a 20 to 30 byte prefix leaves a thin
+//    margin and depends on V8's snippet format. Equality has no threshold and assumes no snippet
+//    format, so it is identical on CI's Node 22.18.0 by construction; ISSUE-123(b)'s whole-echo
+//    check is skipped only where the honest message itself already contains the whole source.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { printEffectivePolicy, type PrinterInput, type PrinterResult } from "./printer.ts";
+import { validateRuleSet } from "../rule/schema.ts";
 import type { CentralPolicySource, CentralPolicyResult } from "./central-source.ts";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -347,8 +356,25 @@ const CENTRAL_CHANNEL = "test-fixture:central-channel";
 
 // Issue #124 bounds: the offending bytes each rejection site must NOT echo (trimmed, so a leading
 // BOM does not hide a leak of the remainder), and the message the read-error site's source throws.
-const rawBound = (raw: string): RejectionBound => ({ kind: "raw-bytes-absent", raw: raw.trim() });
-const fixtureBound = (fixturePath: string): RejectionBound => rawBound(readFileSync(fixturePath, "utf8"));
+// Issue #291: the expected message is COMPUTED from the offending source, never hand-typed and never
+// a threshold. The loader formats parse failures as `${origin}: ${JSON.parse's own message}` and schema
+// failures as `${origin}: ${field}: ${message}; ...` (loader.ts's parseLayerText).
+function parseFailureBound(origin: string, text: string): RejectionBound {
+  let reason = "";
+  try {
+    JSON.parse(text);
+  } catch (err) {
+    reason = (err as Error).message;
+  }
+  assert.ok(reason.length > 0, "fixture-integrity: expected this text to FAIL JSON.parse (a fixture that parses proves nothing here)");
+  return { message: `${origin}: ${reason}`, raw: text.trim() };
+}
+function schemaFailureBound(origin: string, text: string): RejectionBound {
+  const errors = validateRuleSet(JSON.parse(text) as unknown, text);
+  assert.ok(errors.length > 0, "fixture-integrity: expected this text to FAIL schema validation");
+  return { message: `${origin}: ${errors.map((e) => `${e.field}: ${e.message}`).join("; ")}`, raw: text.trim() };
+}
+const fileParseFailureBound = (fixturePath: string): RejectionBound => parseFailureBound(fixturePath, readFileSync(fixturePath, "utf8"));
 const CENTRAL_READ_ERROR_MESSAGE = "simulated: reg query exited with code 1 (subprocess failure fixture)";
 
 function centralSourceReturning(result: CentralPolicyResult): CentralPolicySource {
@@ -404,29 +430,48 @@ function buildExpectedSuccessStdout(centralStatusLine: string, rules: ExpectedRu
 // the REQUIRED, non-defaulted `bound: RejectionBound`, so (a) a call site that omits it is a
 // `tsc` error (tests are in tsconfig's include -- the instrument for "every site is bounded"),
 // and (b) no site can pass a match-anything wildcard, because the type is not a RegExp.
-type RejectionBound =
-  // The offending policy text (already trimmed) must not appear anywhere in stdout: bounds the
-  // message by CONTENT, catching a "helpful diagnostics" mutant that appends the raw layer bytes.
-  | { kind: "raw-bytes-absent"; raw: string }
-  // No policy file exists at this site (the source itself threw), so the whole rejection tail is
-  // bounded by exact equality against the thrown message instead.
-  | { kind: "exact-message"; message: string };
+//
+// AMENDED again 2026-09-24 (Issue #291, app-security + red-team: the whole-file `includes` check
+// above only fires when the offending text is echoed complete, so a PARTIAL leak -- all but one
+// character, or the first 80 bytes -- passed 13/13). The bound is now the EXPECTED MESSAGE itself:
+// the rejection tail must equal `REJECTED: <layer> policy load failed (<reasonKind>): <message>`
+// exactly, with `<message>` computed in-test from the offending source by the SAME engine that
+// produced it in the loader (`JSON.parse`'s own error for parse failures; `validateRuleSet`'s errors
+// for schema failures; the thrown message for the read-error site). No V8 snippet FORMAT is assumed
+// and no length threshold is chosen: any appended, prepended or windowed content, of any length,
+// breaks equality. `raw` (the trimmed offending text) additionally feeds ISSUE-123(b)'s independent
+// whole-echo check, skipped only where the honest message itself already contains it.
+interface RejectionBound {
+  /** The honest `<message>` after the "(<reasonKind>): " prefix, exactly. */
+  message: string;
+  /** The trimmed offending policy text, when the site has one (absent for the read-error site). */
+  raw?: string;
+}
 
-function assertRejectionBound(actual: string, layer: string, reasonKind: string, bound: RejectionBound): void {
-  if (bound.kind === "raw-bytes-absent") {
-    assert.ok(bound.raw.length > 0, "expected a non-empty offending-bytes string (an empty one would make the absence check vacuous)");
-    assert.ok(
-      !actual.includes(bound.raw),
-      `ISSUE-123(b): expected the rejection stdout to NOT carry the offending ${layer} policy bytes (raw layer content must never ride along in a fail-closed rejection's message); got:\n${actual}`,
-    );
-    return;
-  }
+/** ISSUE-123(b): the offending text must not ride along whole. Independent of the exact-message check. */
+function assertNoRawEcho(actual: string, layer: string, bound: RejectionBound): void {
+  if (bound.raw === undefined) return;
+  assert.ok(bound.raw.length > 0, "expected a non-empty offending-bytes string (an empty one would make the absence check vacuous)");
+  if (bound.message.includes(bound.raw)) return; // the honest message itself is that short; equality below still bounds it
+  assert.ok(
+    !actual.includes(bound.raw),
+    `ISSUE-123(b): expected the rejection stdout to NOT carry the offending ${layer} policy bytes (raw layer content must never ride along in a fail-closed rejection's message); got:\n${actual}`,
+  );
+}
+
+/** ISSUE-123(c): nothing may be appended to, or mixed into, the underlying parser/validator message. */
+function assertExactMessage(actual: string, layer: string, reasonKind: string, bound: RejectionBound): void {
   const rejectionTail = actual.split("\n").slice(1).join("\n");
   assert.equal(
     rejectionTail,
     `REJECTED: ${layer} policy load failed (${reasonKind}): ${bound.message}`,
-    "ISSUE-123(b): expected the rejection tail to equal the prefix plus exactly the thrown message, nothing appended",
+    "ISSUE-123(c): expected the rejection tail to equal the prefix plus exactly the underlying message -- no partial, prefix or windowed policy content may ride along",
   );
+}
+
+function assertRejectionBound(actual: string, layer: string, reasonKind: string, bound: RejectionBound): void {
+  assertNoRawEcho(actual, layer, bound);
+  assertExactMessage(actual, layer, reasonKind, bound);
 }
 
 function buildExpectedRejectionStdout(centralStatusLine: string, layer: "central" | "shipped-defaults" | "project", reasonKind: string, bound: RejectionBound): (actual: string) => void {
@@ -504,7 +549,7 @@ test("AC5b: central channel PRESENT but syntactically invalid JSON -- whole load
     baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL })),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 for malformed-JSON central content (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "json-parse-error", rawBound(CENTRAL_MALFORMED_JSON_RAW))(result.stdout);
+  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "json-parse-error", parseFailureBound(CENTRAL_CHANNEL, CENTRAL_MALFORMED_JSON_RAW))(result.stdout);
 });
 
 test("AC5b: central channel PRESENT, syntactically valid JSON, but fails schema validation (effect=\"MAYBE\", per src/policy/rule/schema.ts's real validateRuleSet) -- whole load rejected, exit code 1 (SAME exit code as the JSON-parse-error case above -- 'structurally identical in kind'), distinct schema-invalid reason", () => {
@@ -512,7 +557,7 @@ test("AC5b: central channel PRESENT, syntactically valid JSON, but fails schema 
     baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_SCHEMA_INVALID_RAW, channel: CENTRAL_CHANNEL })),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 for schema-invalid central content (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "schema-invalid", rawBound(CENTRAL_SCHEMA_INVALID_RAW))(result.stdout);
+  buildExpectedRejectionStdout(`central-channel status=present channel=${CENTRAL_CHANNEL}`, "central", "schema-invalid", schemaFailureBound(CENTRAL_CHANNEL, CENTRAL_SCHEMA_INVALID_RAW))(result.stdout);
 });
 
 // --- AC5c: CentralPolicySource.read() itself throws (simulated subprocess/timeout failure) ---
@@ -522,7 +567,7 @@ test("AC5c: centralSource.read() itself THROWS (simulated reg-query subprocess f
     baseInput(centralSourceThrowing(CENTRAL_READ_ERROR_MESSAGE)),
   );
   assert.equal(result.exitCode, 1, `expected exit code 1 when the injected CentralPolicySource itself throws (fail-closed, never silently absent); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout("central-channel status=read-error", "central", "read-error", { kind: "exact-message", message: CENTRAL_READ_ERROR_MESSAGE })(result.stdout);
+  buildExpectedRejectionStdout("central-channel status=read-error", "central", "read-error", { message: CENTRAL_READ_ERROR_MESSAGE })(result.stdout);
 });
 
 // --- Issue #108 [MED] amendment (2026-09-08, red-team round 4): a rejection caused by a NON- ---
@@ -536,7 +581,7 @@ test("ISSUE-108(a): central channel ABSENT and wholly uninvolved, but the PROJEC
     centralSource: centralSourceReturning({ status: "absent" }),
   });
   assert.equal(result.exitCode, 1, `expected exit code 1 for a PROJECT-layer parse failure (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", fixtureBound(PROJECT_BOM_MALFORMED_PATH))(result.stdout);
+  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", fileParseFailureBound(PROJECT_BOM_MALFORMED_PATH))(result.stdout);
   assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the PROJECT layer is the true offender; got:\n${result.stdout}`);
 });
 
@@ -547,7 +592,7 @@ test("ISSUE-108(b): central channel ABSENT and wholly uninvolved, but the SHIPPE
     centralSource: centralSourceReturning({ status: "absent" }),
   });
   assert.equal(result.exitCode, 1, `expected exit code 1 for a SHIPPED-DEFAULTS-layer parse failure (fail-closed); stdout=${result.stdout}`);
-  buildExpectedRejectionStdout("central-channel status=absent", "shipped-defaults", "json-parse-error", fixtureBound(SHIPPED_DEFAULTS_MALFORMED_PATH))(result.stdout);
+  buildExpectedRejectionStdout("central-channel status=absent", "shipped-defaults", "json-parse-error", fileParseFailureBound(SHIPPED_DEFAULTS_MALFORMED_PATH))(result.stdout);
   assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the SHIPPED-DEFAULTS layer is the true offender; got:\n${result.stdout}`);
 });
 
@@ -571,7 +616,7 @@ test("ISSUE-108(c): a UTF-8 BOM on a PRETTY-PRINTED (multi-line) project file st
   // on implicitly, so this test would itself have failed loudly (a wrong `=== 2`) rather than
   // silently passing had the relaxation in INTERPRETATION CHOICE 7 not been made.
   assert.ok(result.stdout.split("\n").length > 2, `expected this PRETTY-PRINTED BOM fixture's rejection to span MORE than 2 lines (proving it exercises the shape the old exact-2-lines contract could not tolerate); got:\n${result.stdout}`);
-  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", fixtureBound(PROJECT_BOM_PRETTY_MALFORMED_PATH))(result.stdout);
+  buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", fileParseFailureBound(PROJECT_BOM_PRETTY_MALFORMED_PATH))(result.stdout);
   assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the PROJECT layer is the true offender; got:\n${result.stdout}`);
 });
 
@@ -579,60 +624,81 @@ test("ISSUE-108(c): a UTF-8 BOM on a PRETTY-PRINTED (multi-line) project file st
 // CONTENT is bounded at every fail-closed site, not only its prefix. Same six sites the helper's
 // required `bound` parameter covers, driven from one table so a failure names the site. -----------
 
-test("ISSUE-123(b): a fail-closed rejection's stdout contains the status line and the REJECTED message and NOTHING ELSE -- no raw layer bytes may ride along in the message (the offending policy text is absent at every parse/schema site; the read-error site's tail equals the thrown message exactly)", () => {
-  const sites: { label: string; input: PrinterInput; layer: "central" | "shipped-defaults" | "project"; reasonKind: string; bound: RejectionBound }[] = [
+interface RejectionSite {
+  label: string;
+  input: PrinterInput;
+  layer: "central" | "shipped-defaults" | "project";
+  reasonKind: string;
+  bound: RejectionBound;
+}
+
+function rejectionSites(): RejectionSite[] {
+  return [
     {
       label: "central json-parse-error",
       input: baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL })),
       layer: "central",
       reasonKind: "json-parse-error",
-      bound: rawBound(CENTRAL_MALFORMED_JSON_RAW),
+      bound: parseFailureBound(CENTRAL_CHANNEL, CENTRAL_MALFORMED_JSON_RAW),
     },
     {
       label: "central schema-invalid",
       input: baseInput(centralSourceReturning({ status: "present", raw: CENTRAL_SCHEMA_INVALID_RAW, channel: CENTRAL_CHANNEL })),
       layer: "central",
       reasonKind: "schema-invalid",
-      bound: rawBound(CENTRAL_SCHEMA_INVALID_RAW),
+      bound: schemaFailureBound(CENTRAL_CHANNEL, CENTRAL_SCHEMA_INVALID_RAW),
     },
     {
       label: "central read-error",
       input: baseInput(centralSourceThrowing(CENTRAL_READ_ERROR_MESSAGE)),
       layer: "central",
       reasonKind: "read-error",
-      bound: { kind: "exact-message", message: CENTRAL_READ_ERROR_MESSAGE },
+      bound: { message: CENTRAL_READ_ERROR_MESSAGE },
     },
     {
       label: "project BOM (minified)",
       input: { shippedDefaultsPath: SHIPPED_DEFAULTS_PATH, projectPolicyPath: PROJECT_BOM_MALFORMED_PATH, centralSource: centralSourceReturning({ status: "absent" }) },
       layer: "project",
       reasonKind: "json-parse-error",
-      bound: fixtureBound(PROJECT_BOM_MALFORMED_PATH),
+      bound: fileParseFailureBound(PROJECT_BOM_MALFORMED_PATH),
     },
     {
       label: "shipped-defaults malformed",
       input: { shippedDefaultsPath: SHIPPED_DEFAULTS_MALFORMED_PATH, projectPolicyPath: PROJECT_POLICY_PATH, centralSource: centralSourceReturning({ status: "absent" }) },
       layer: "shipped-defaults",
       reasonKind: "json-parse-error",
-      bound: fixtureBound(SHIPPED_DEFAULTS_MALFORMED_PATH),
+      bound: fileParseFailureBound(SHIPPED_DEFAULTS_MALFORMED_PATH),
     },
     {
       label: "project BOM (pretty)",
       input: { shippedDefaultsPath: SHIPPED_DEFAULTS_PATH, projectPolicyPath: PROJECT_BOM_PRETTY_MALFORMED_PATH, centralSource: centralSourceReturning({ status: "absent" }) },
       layer: "project",
       reasonKind: "json-parse-error",
-      bound: fixtureBound(PROJECT_BOM_PRETTY_MALFORMED_PATH),
+      bound: fileParseFailureBound(PROJECT_BOM_PRETTY_MALFORMED_PATH),
     },
   ];
-  for (const site of sites) {
+}
+
+function runSites(check: (result: PrinterResult, site: RejectionSite) => void): void {
+  for (const site of rejectionSites()) {
     const result = printEffectivePolicy(site.input);
     assert.equal(result.exitCode, 1, `site "${site.label}": expected exit code 1 (fail-closed); stdout=${result.stdout}`);
     try {
-      assertRejectionBound(result.stdout, site.layer, site.reasonKind, site.bound);
+      check(result, site);
     } catch (err) {
       throw new Error(`site "${site.label}": ${(err as Error).message}`);
     }
   }
+}
+
+test("ISSUE-123(b): a fail-closed rejection's stdout contains the status line and the REJECTED message and NOTHING ELSE -- no raw layer bytes may ride along in the message (the offending policy text is absent at every parse/schema site; the read-error site's tail equals the thrown message exactly)", () => {
+  runSites((result, site) => assertNoRawEcho(result.stdout, site.layer, site.bound));
+});
+
+// ISSUE-123(c) (Issue #291, red-team's name): the message is bounded by EXACT EQUALITY, so a partial,
+// prefix or windowed echo of the offending policy (which `includes(whole text)` cannot see) fails.
+test("ISSUE-123(c): a fail-closed rejection's tail ENDS with the underlying parser or validator message, nothing may be appended after it -- and nothing mixed in before it either (exact equality, computed from the offending source, at every site)", () => {
+  runSites((result, site) => assertExactMessage(result.stdout, site.layer, site.reasonKind, site.bound));
 });
 
 // --- AC5a/AC5b/AC5c table test: every state pairwise distinguishable, none collapses into the --
