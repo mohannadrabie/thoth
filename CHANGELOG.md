@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — `s6-policy-residuals-112-124` (issues 112, 124): a policy layer can declare its baseline posture, and the printer test bounds rejection messages
+
+CRITICAL tier (sensitive area: policy delivery/config surface). Issue #107 is recorded as a ratified residual (no code); Issues #112 and #124 are addressed.
+
+- **#112, `defaultOutcome` in the policy format.** A rule set may carry an optional top-level `defaultOutcome` (allow or deny). A bad value is rejected with the field's own enum error. It resolves through the existing trust rank (`src/policy/rule/precedence.ts`): a central-declared posture cannot be relaxed by shipped-defaults or project; a lower-trust layer may only tighten toward deny; equal-or-higher trust overrides; a layer voided by a mandatory-id collision contributes nothing. The loader (`src/policy/config/loader.ts`) exposes the result as `LoadSuccess.defaultOutcome` (`outcome` plus `source`), falling back to the bootstrap allow when no layer declares one. Result field only: printer stdout, the kernel-gate hook, the bootstrap ruleset, the kernel and the pin are unchanged.
+- **#124, test-only.** `printer.test.ts`'s rejection helper takes a required per-site bound instead of a wildcard, so a "helpful diagnostics" change that dumps the offending policy file into a fail-closed message is caught again. Zero production diff.
+- **Tests.** Written first by test-writer and confirmed red at HEAD (32 red, 112 pre-existing green) before the build; green after it. Seven mutants (relax allowed, tighten disabled, voided layers counted, fallback flipped, key unregistered, layer posture dropped, no enum check) each turn a non-empty set of those tests red and are restored.
+- **Rulings.** Implicit lock by trust rank rather than an explicit mandatory flag (a deviation from red-team's proof-test wording, recorded in `docs/decisions.md`); Issue #288 carries the deferred follow-ups.
+
 ### Fixed — `qa14-ci-red-citation-wording` (PR 281): three comment wording defects that kept master's QA-14 gate red
 
 CRITICAL tier (sensitive area: the two SUR-03 hook files, comment-only diff). Master's QA-14 (`reference-resolver.ts`) gate had been failing since this session's four earlier merges landed — ten citations it could not resolve. Three were plain wording defects in live hook comments, not review-report content, so fixable without touching an immutable report (PRINCIPLES.md rule 11):

@@ -59,7 +59,7 @@ Let a policy layer declare an optional `defaultOutcome`, resolved through the ex
 | A5 | `ISSUE-123(b) shipped-defaults malformed: !actual.includes(trimmed SHIPPED_DEFAULTS_MALFORMED_PATH bytes)` | test, raw-bytes form |
 | A6 | `ISSUE-123(b) project BOM (pretty): !actual.includes(trimmed PROJECT_BOM_PRETTY_MALFORMED_PATH bytes)` | test, raw-bytes form |
 | A7 | Every call of `buildExpectedRejectionStdout` must supply the bound: the wildcard `messagePattern: RegExp` parameter is replaced by a REQUIRED parameter, so a 7th call site that omits it fails `npm run typecheck` (tests are in `tsconfig` `include`). This is the completeness instrument for "all six sites"; the count of six above is from `grep`, not hand-typed [D] | typecheck |
-| A8 | Mutant P2 (append raw file dump to the message at `loader.ts:211`) turns A4 and A6 red; same shape at :193 turns A5 red; at :162 turns A1 and A2 red; append at :146 turns A3 red. Each mutant applied, run, reverted, raw output saved | mutation drill, in test-writer's report |
+| A8 | Mutant P2 (append raw file dump to the message at `src/policy/config/loader.ts:211`) turns A4 and A6 red; same shape at :193 turns A5 red; at :162 turns A1 and A2 red; append at :146 turns A3 red. Each mutant applied, run, reverted, raw output saved | mutation drill, in test-writer's report |
 | A9 | Mutant P1 (`printer.ts` re-hardcodes `"central"`) still fails `ISSUE-108(a)`, `(b)`, `(c)` (3 of 3, as round 6 measured) | mutation drill |
 | A10 | HEAD unchanged in count and green: `printer.test.ts` stays 12 `test(` cases, all pass; the six files stay 111/111 (amendment adds assertions, not tests) | command |
 | A11 | Zero production diff: `git diff --stat -- src/policy/config/printer.ts src/policy/config/loader.ts` empty for #124's commit | command |
@@ -156,7 +156,7 @@ Phase 2 (build) does not start until both receipts exist (`RED-CONFIRMED` for #1
 | `src/policy/rule/schema.test.ts` | B1–B5 appended | test-writer |
 | `src/policy/rule/mandatory-lock-conformance.test.ts` | B6–B8 appended as Parts E, F | test-writer |
 | `src/policy/config/loader.test.ts` | B9–B15 appended | test-writer |
-| `src/policy/kernel/rule-types.ts` | `RuleSet` gains `defaultOutcome?: VerdictOutcome` (type-only import from `./verdict.ts`); doc comment naming POL-01 | implementer |
+| `src/policy/kernel/rule-types.ts` | `RuleSet` gains `defaultOutcome?: VerdictOutcome` (type-only import from `src/policy/kernel/verdict.ts`); doc comment naming POL-01 | implementer |
 | `src/policy/rule/schema.ts` | `RULE_SET_KEYS` gains `"defaultOutcome"` LAST; enum validation in `validateRuleSet`; file header note | implementer |
 | `src/policy/rule/precedence.ts` | `NamedRuleLayer.defaultOutcome?`; small `resolveDefaultOutcome` over ACCEPTED layers using `TRUST_RANK`; `MandatoryLockResult.defaultOutcome?: { outcome; source: LayerName }` (undefined when none declared); `mergeLayers` untouched | implementer |
 | `src/policy/config/loader.ts` | thread each layer's `defaultOutcome` into `namedLayers` (conditional spread); map undefined to `{ outcome: BOOTSTRAP_DEFAULT_OUTCOME, source: "bootstrap" }`; `LoadSuccess.defaultOutcome`; header comment | implementer |
@@ -201,7 +201,7 @@ Content to draft in Phase 2 from section 4 and section 6: defaultOutcome lives i
 | R2 | Central absent or unsupported means no central posture, so a hosted "deny" silently disappears and bootstrap "allow" applies. Inherent to AC5a (absent contributes nothing) | Named in the decisions row; live impact none today (unwired); relevant to the rewiring story's Phase 1 |
 | R3 | A lower-trust layer may tighten to deny: an availability lever for anyone who can edit the project file | Accepted by ruling (fail-closed direction) |
 | R4 | `rule-types.ts` is inside the kernel purity boundary | Type-only import from a sibling kernel file; `npm run qa:kernel-purity` must stay PASS (B18) |
-| R5 | `schema.test.ts:91` regex order trap | Append the new key last (section 0, trap 1) |
+| R5 | `src/policy/rule/schema.test.ts:91` regex order trap | Append the new key last (section 0, trap 1) |
 | R6 | New field consumed by nothing until hook rewiring, so it could rot | B15 asserts its shape on every success; backlog line names the consumer story |
 | R7 | The raw-bytes assertion is measured on Node 24.15.0 only; CI runs 22.18.0. Assumption: sources are long enough that neither Node version echoes them whole in the parse error | Measure by the CI run of the PR (rule 18 says the number is measured, this is the measurement); if it false-fails on 22, fall back to red-team's alternative terminator form for that site only |
 | R8 | test-writer appends to files the implementer owns (`schema.test.ts`, `loader.test.ts`, conformance) | Appended hunks are delimited and dated; implementer does not edit them; existing tests unchanged |
