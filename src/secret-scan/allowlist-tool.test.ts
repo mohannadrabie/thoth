@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { realRunner } from "../lib/exec.ts";
 import { classificationLines, hashLines, migrateAllowlist, serializeAllowlist, verifyMigration } from "./allowlist-tool.ts";
 import type { ScopedMatch } from "./allowlist-tool.ts";
+import { scanBlobText } from "./history-scan.ts";
+import { SECRET_PATTERNS } from "./patterns.ts";
 
 // Issues 136 and 203 (story S-B2): the one-shot migration generator and its verify mode. Every value
 // here is a placeholder word hashed at runtime; no email, hostname or key-shaped literal is written
@@ -225,8 +227,32 @@ test("sb2-hash-lines-computes-the-scan-timeout-pattern-id-without-throwing", () 
   for (const line of lines) {
     assert.match(line, /^[0-9a-f]{64} {2}.*SCAN-TIMEOUT/, "each line pairs a real hash with the scan-timeout redacted form");
   }
-  // Control: ordinary text has nothing to report for this pattern id -- no false positive from the new path.
-  assert.deepEqual(hashLines("nothing hostile here\n", "oss01-scan-timeout"), []);
+  // Issue 271 (replaces the earlier control, which expected [] for ordinary text): the unlock for this pattern
+  // id no longer re-runs the wall-clock scan, so it prints the content hash for ANY text. Ordinary text now
+  // yields exactly one line; the independent test below proves it is the hash the gate would report.
+  assert.equal(hashLines("nothing hostile here\n", "oss01-scan-timeout").length, 1);
+});
+
+// Issue 271 (red-team, s1-oss01-detection-residuals round 2, MED): the unlock re-ran the scan, so a machine
+// where nothing timed out printed no hash (exit 1) while CI, where the blob did time out, blocked. The hash
+// is a function of the text alone, so the unlock computes it directly. `h` is the independent oracle.
+test("oss01-scan-timeout-unlock-hash-does-not-depend-on-this-machines-speed", () => {
+  // Ordinary text: nothing times out on any machine, yet the unlock prints the hash a slow machine's gate
+  // would report for this text (no wall clock is involved in this branch).
+  const ordinary = "nothing hostile here\n";
+  const lines = hashLines(ordinary, "oss01-scan-timeout");
+  assert.equal(lines.length, 1, "one hash per decoded text, whether or not this machine's clock trips");
+  assert.match(lines[0] ?? "", new RegExp(`^${h(`oss01-scan-timeout:${ordinary}`)} {2}.*SCAN-TIMEOUT`));
+
+  // Hostile text: the gate's own timeout finding(s) and the unlock print the same hash.
+  const hostile = "a-".repeat(100_000);
+  const gate = scanBlobText(hostile, SECRET_PATTERNS)
+    .filter((f) => f.patternId === "oss01-scan-timeout")
+    .map((f) => f.valueSha256);
+  assert.ok(gate.length > 0, "control: the hostile blob really times out");
+  const unlock = hashLines(hostile, "oss01-scan-timeout").map((l) => l.slice(0, 64));
+  assert.deepEqual([...new Set(gate)], unlock, "the printed unlock hash is exactly the hash the gate reported");
+  assert.equal(unlock[0], h(`oss01-scan-timeout:${hostile}`));
 });
 
 async function withToolRepo(files: Record<string, string>, fn: (dir: string, scratch: string) => Promise<void>): Promise<void> {

@@ -176,6 +176,12 @@ function matchAllBounded(text: string, regex: RegExp): RegExpMatchArray[] | null
  * other match — THOTH-ADR-0002 forbids a NEW exemption shape, not reuse of the existing one. */
 export const SCAN_TIMEOUT_PATTERN_ID = "oss01-scan-timeout";
 
+/** The grant hash of an `oss01-scan-timeout` finding for one decoded blob text (Issues 264, 271): a pure
+ * function of the text, independent of which pattern was slow and of this machine's clock. */
+export function scanTimeoutHash(text: string): string {
+  return hashMatchedBytes(`${SCAN_TIMEOUT_PATTERN_ID}:${text}`);
+}
+
 /** Pure: scans one blob's already-decoded text against every pattern, each under the scan-time bound
  * above. Exported so the allowlist tool (`allowlist-tool.ts`) reuses this exact matching and hashing
  * instead of reimplementing it. */
@@ -205,11 +211,18 @@ export function scanBlobText(
       // like every other one: two different blobs (even the same length) never share a hash, so one grant
       // covers exactly the one blob it was reviewed against, and a novel blob at the same path — however
       // similar in size — still blocks and still names its own unlock.
+      //
+      // Issue 271 (red-team, MED): the hash must ALSO not depend on which pattern was slow. Which pattern
+      // times out on a blob near the budget is a wall-clock race (one machine gave "none" and
+      // "internal-hostname" on identical input), so a pattern-keyed hash made the grant a developer
+      // computed differ from the one CI needed. The pattern id is display-only (in `redacted` and
+      // `description`); identity is the scanned text alone (`scanTimeoutHash`, shared with the
+      // allowlist tool's unlock so the two cannot drift).
       found.push({
         patternId: SCAN_TIMEOUT_PATTERN_ID,
         description: `scan of this blob against pattern '${pattern.id}' did not finish within ${SCAN_TIMEOUT_MS}ms and was stopped; this is a scan that could not complete, not a secret match`,
         redacted: `…[SCAN-TIMEOUT pattern=${pattern.id} bytes=${text.length}]`,
-        valueSha256: hashMatchedBytes(`${SCAN_TIMEOUT_PATTERN_ID}:${pattern.id}:${text}`),
+        valueSha256: scanTimeoutHash(text),
       });
       continue;
     }
