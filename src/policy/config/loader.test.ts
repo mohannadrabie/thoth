@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadEffectivePolicy } from "./loader.ts";
 import { computePin } from "./pin.ts";
+import { BOOTSTRAP_DEFAULT_OUTCOME } from "./bootstrap-ruleset.ts";
 import type { CentralPolicySource, CentralPolicyResult } from "./central-source.ts";
 
 function withTempDir(fn: (root: string) => void): void {
@@ -628,4 +629,181 @@ test("Issue #122: neither ADJACENT frame boundary (shipped|central, central|proj
     const centralProjectA = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "c", shippedRaw: "", projectRaw: "ab" }).digest;
     const centralProjectB = computePin({ centralStatus: "present", centralChannel: "chan", centralRaw: "cab", shippedRaw: "", projectRaw: "" }).digest;
     assert.notEqual(centralProjectA, centralProjectB, "labeled, length-prefixed frames must not let a (central='c', project='ab') pin collide with a (central='cab', project='') pin");
+});
+
+// ====================================================================================================
+// Issue #112 -- `defaultOutcome` (the baseline posture) end-to-end through the loader (test-writer,
+// 2026-09-24, written BEFORE the production change; the implementer does not edit these hunks -- a
+// test believed wrong is flagged back, never edited).
+//
+// Rulings encoded (Manager, Phase 1 plan s6-policy-residuals-112-124, section 4):
+//   D1 -- no `defaultOutcomeMandatory` key. Central's declaration is locked against lower-trust layers
+//         implicitly, by trust rank.
+//   D2 -- a lower-trust layer may change the posture only by TIGHTENING allow -> deny; peers
+//         (shipped-defaults and project, same rank) override each other, as their rules already do.
+//   D3 -- exposed ONLY as `LoadSuccess.defaultOutcome: { outcome, source }`, source one of
+//         shipped-defaults | central | project | bootstrap. The bootstrap "allow" fallback is applied
+//         by the loader. A layer voided by a mandatory-id collision contributes nothing. Central
+//         absent or unsupported means no central posture.
+// ====================================================================================================
+
+type PostureOutcome = "allow" | "deny";
+type PostureSource = "shipped-defaults" | "central" | "project" | "bootstrap";
+
+/** Layer documents: `shipped`/`project` are objects written to temp files; `central` is a raw-JSON
+ * central source (or "absent"/"unsupported"). A `defaultOutcome` key is present only when given. */
+function loadPosture(opts: {
+  shipped?: { defaultOutcome?: unknown; rules?: unknown[] };
+  central?: { defaultOutcome?: unknown; rules?: unknown[] } | "absent" | "unsupported";
+  project?: { defaultOutcome?: unknown; rules?: unknown[] };
+}): ReturnType<typeof loadEffectivePolicy> {
+  let result: ReturnType<typeof loadEffectivePolicy> | undefined;
+  withTempDir((root) => {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    const doc = (d: { defaultOutcome?: unknown; rules?: unknown[] } | undefined): unknown => ({
+      version: "1.0.0",
+      rules: d?.rules ?? [],
+      ...(d !== undefined && "defaultOutcome" in d ? { defaultOutcome: d.defaultOutcome } : {}),
+    });
+    writeRuleSetFile(shippedPath, doc(opts.shipped));
+    writeRuleSetFile(projectPath, doc(opts.project));
+    const central = opts.central ?? "absent";
+    const centralSource =
+      central === "absent" || central === "unsupported"
+        ? centralSourceReturning({ status: central })
+        : centralSourceReturning({ status: "present", raw: JSON.stringify(doc(central)), channel: "test:chan" });
+    result = loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource });
+  });
+  if (result === undefined) throw new Error("loadPosture: withTempDir did not run");
+  return result;
+}
+
+function postureOf(result: ReturnType<typeof loadEffectivePolicy>): { outcome: PostureOutcome; source: PostureSource } {
+  assert.equal(result.ok, true, `expected the load to succeed; got ${JSON.stringify(result)}`);
+  if (!result.ok) throw new Error("unreachable");
+  return result.defaultOutcome;
+}
+
+// B9 (Issue #112): red-team round-1 finding 8's proof-test, name kept verbatim. Under ruling D1 "mark
+// it mandatory" is satisfied by central's declaration being locked by trust rank -- there is no
+// separate flag -- so the body proves central's declaration cannot be relaxed by a lower-trust layer.
+test("a RuleSet may declare defaultOutcome, a later layer may override it, and a central layer may mark it mandatory so no project layer can relax it", () => {
+  // (i) each tier may declare it; the declaring tier is the reported source (an explicit "allow"
+  // is distinguishable from the bootstrap fallback by its source).
+  for (const tier of ["shipped-defaults", "central", "project"] as const) {
+    for (const outcome of ["allow", "deny"] as const) {
+      const declared = { defaultOutcome: outcome };
+      const result = loadPosture(
+        tier === "shipped-defaults" ? { shipped: declared } : tier === "central" ? { central: declared } : { project: declared },
+      );
+      assert.deepEqual(postureOf(result), { outcome, source: tier }, `${tier} alone declaring ${outcome}`);
+    }
+  }
+
+  // (ii) a later layer may override it: central over shipped-defaults, project over shipped-defaults.
+  assert.deepEqual(postureOf(loadPosture({ shipped: { defaultOutcome: "deny" }, central: { defaultOutcome: "allow" } })), { outcome: "allow", source: "central" });
+  assert.deepEqual(postureOf(loadPosture({ shipped: { defaultOutcome: "allow" }, project: { defaultOutcome: "deny" } })), { outcome: "deny", source: "project" });
+
+  // (iii) central's declaration cannot be relaxed by the project layer; the project layer is not
+  // voided for trying (the relaxing declaration is ignored, the load still succeeds).
+  const relaxAttempt = loadPosture({ central: { defaultOutcome: "deny" }, project: { defaultOutcome: "allow" } });
+  assert.deepEqual(postureOf(relaxAttempt), { outcome: "deny", source: "central" });
+  if (relaxAttempt.ok) assert.deepEqual(relaxAttempt.voidedLayers, []);
+});
+
+// B10 (Issue #112): bootstrap fallback preserved. RED at HEAD because the field does not exist.
+test('Issue #112 B10: no layer declares defaultOutcome -> LoadSuccess.defaultOutcome is { outcome: "allow", source: "bootstrap" }, the same value the hook\'s bootstrap constant supplies', () => {
+  const result = loadPosture({});
+  assert.deepEqual(postureOf(result), { outcome: "allow", source: "bootstrap" });
+  assert.equal(postureOf(result).outcome, BOOTSTRAP_DEFAULT_OUTCOME, "the fallback must be the bootstrap constant itself, not a second literal that could drift");
+});
+
+// B11 (Issue #112): central absent/unsupported contributes no posture, exactly like it contributes
+// no rules (AC5a); a project declaration alone still counts.
+test("Issue #112 B11: central absent or unsupported + project declares deny -> deny from project (tighten works without central; central contributes no posture)", () => {
+  for (const central of ["absent", "unsupported"] as const) {
+    assert.deepEqual(postureOf(loadPosture({ central, project: { defaultOutcome: "deny" } })), { outcome: "deny", source: "project" }, `central=${central}`);
+  }
+});
+
+// B12 (Issue #112): only the posture is ignored, never the layer.
+test("Issue #112 B12: central deny + project allow -> deny from central, the load is ok, and the project layer's own rules still merge (its relaxing posture is ignored, the layer is not voided)", () => {
+  const result = loadPosture({
+    central: { defaultOutcome: "deny", rules: [{ id: "central-rule", effect: "deny" }] },
+    project: { defaultOutcome: "allow", rules: [{ id: "project-rule", effect: "allow" }] },
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.defaultOutcome, { outcome: "deny", source: "central" });
+    assert.deepEqual(result.voidedLayers, []);
+    assert.deepEqual(result.merged.rules.map((r) => r.id).sort(), ["central-rule", "project-rule"]);
+  }
+});
+
+// B13 (Issue #112): fail closed, no silent default. At HEAD an unknown-key rejection also reaches
+// schema-invalid, so the assertion that the message does NOT say "unknown key" is what makes this
+// red for the right reason (the key is not known yet) rather than accidentally green.
+test("Issue #112 B13: an invalid defaultOutcome in any layer -> the whole load is rejected (schema-invalid, that layer named, message names defaultOutcome and is not an unknown-key error), never silently defaulted", () => {
+  for (const bad of ["ask", "DENY", true, null, 1] as const) {
+    for (const layerName of ["central", "shipped-defaults", "project"] as const) {
+      const declared = { defaultOutcome: bad };
+      const result = loadPosture(
+        layerName === "central" ? { central: declared } : layerName === "shipped-defaults" ? { shipped: declared } : { project: declared },
+      );
+      assert.equal(result.ok, false, `${layerName} defaultOutcome=${JSON.stringify(bad)} must reject the whole load`);
+      if (!result.ok) {
+        assert.equal(result.reasonKind, "schema-invalid");
+        assert.equal(result.failedLayer, layerName);
+        assert.match(result.message, /defaultOutcome/);
+        assert.doesNotMatch(result.message, /unknown key/, `defaultOutcome is a known key with a bad value (${layerName}, ${JSON.stringify(bad)})`);
+      }
+    }
+  }
+});
+
+// B14 (Issue #112): POL-09 pin coverage of the new key is free (raw bytes), kept as a regression.
+// RED at HEAD because both documents are rejected (the key is unknown there), so `ok` is false.
+test("Issue #112 B14: two policies differing ONLY in the project layer's defaultOutcome produce different pin digests", () => {
+  const allow = loadPosture({ project: { defaultOutcome: "allow" } });
+  const deny = loadPosture({ project: { defaultOutcome: "deny" } });
+  assert.equal(allow.ok, true, "the allow document must load");
+  assert.equal(deny.ok, true, "the deny document must load");
+  if (allow.ok && deny.ok) assert.notEqual(allow.pin.digest, deny.pin.digest);
+});
+
+// B15 (Issue #112) [derived]: shape contract on every successful load, across the central states.
+test("Issue #112 B15: every successful load carries defaultOutcome of exactly { outcome, source } shape, across central absent, unsupported and present", () => {
+  const OUTCOMES: readonly string[] = ["allow", "deny"];
+  const SOURCES: readonly string[] = ["shipped-defaults", "central", "project", "bootstrap"];
+  const cases: { label: string; central: "absent" | "unsupported" | { rules?: unknown[] } }[] = [
+    { label: "absent", central: "absent" },
+    { label: "unsupported", central: "unsupported" },
+    { label: "present-valid", central: { rules: [{ id: "c", effect: "deny" }] } },
+  ];
+  for (const c of cases) {
+    const result = loadPosture({ central: c.central });
+    assert.equal(result.ok, true, `case "${c.label}"`);
+    if (result.ok) {
+      const posture: unknown = result.defaultOutcome;
+      assert.ok(typeof posture === "object" && posture !== null, `case "${c.label}": defaultOutcome must be an object; got ${JSON.stringify(posture)}`);
+      assert.deepEqual(Object.keys(posture).sort(), ["outcome", "source"], `case "${c.label}"`);
+      assert.ok(OUTCOMES.includes(result.defaultOutcome.outcome), `case "${c.label}": outcome ${result.defaultOutcome.outcome}`);
+      assert.ok(SOURCES.includes(result.defaultOutcome.source), `case "${c.label}": source ${result.defaultOutcome.source}`);
+    }
+  }
+});
+
+// B8 (Issue #112), loader level: a layer voided by a mandatory-id collision contributes nothing, its
+// posture included; with nothing else declared the loader falls back to bootstrap.
+test('Issue #112 B8 (loader): a project layer voided by redefining a central mandatory rule does not contribute its defaultOutcome -- with no other declaration the result is { "allow", "bootstrap" }', () => {
+  const result = loadPosture({
+    central: { rules: [{ id: "central-mandatory-id", effect: "deny", mandatory: true }] },
+    project: { defaultOutcome: "deny", rules: [{ id: "central-mandatory-id", effect: "allow" }] },
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.voidedLayers, [{ layer: "project", ruleId: "central-mandatory-id" }]);
+    assert.deepEqual(result.defaultOutcome, { outcome: "allow", source: "bootstrap" });
+  }
 });
