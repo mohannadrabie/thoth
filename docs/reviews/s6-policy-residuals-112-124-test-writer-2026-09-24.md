@@ -203,7 +203,7 @@ Cause: app-security and red-team independently showed that Job 1's `raw-bytes-ab
 
 - The bound is now exact equality of the rejection tail against `REJECTED: <layer> policy load failed (<reasonKind>): <message>`, with `<message>` computed in the test from the offending source by the same engine that produced it in the loader:
   - parse failures: `<origin>: <JSON.parse's own error message for that exact text>`;
-  - schema failures: `<origin>: <field>: <message>; ...` from `validateRuleSet` (new import of `../rule/schema.ts` into the test);
+  - schema failures: `<origin>: <field>: <message>; ...` from `validateRuleSet` (new import of `src/policy/rule/schema.ts` into the test);
   - central read-error: the thrown message (unchanged).
 - `RejectionBound` is now `{ message: string; raw?: string }` (still a required parameter; a seventh call site omitting it, or passing `/./`, still fails `tsc`, re-verified: TS2554 and TS2345).
 - `ISSUE-123(b)` kept: whole-echo check on `raw`, skipped only where the honest message itself already contains the whole source. New `ISSUE-123(c)` (red-team's name): exact equality at all six sites. Both share one `rejectionSites()` list. File: 14 tests (13 before plus `ISSUE-123(c)`), all pass.
