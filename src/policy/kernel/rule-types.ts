@@ -10,6 +10,8 @@
 // these types is tested where the logic lives — kernel.test.ts, schema.test.ts,
 // precedence.test.ts).
 
+import type { VerdictOutcome } from "./verdict.ts";
+
 export type RuleEffect = "allow" | "deny";
 
 export interface Rule {
@@ -36,6 +38,11 @@ export interface RuleSet {
   /** POL-06: "Configuration shall be schema-validated and versioned." */
   version: string;
   rules: Rule[];
+  /** POL-01 (Issue #112): this layer's declared baseline posture -- the verdict when no rule
+   * matches and POL-05 did not fire. Optional; resolved across layers by trust rank (see
+   * src/policy/rule/precedence.ts's `mergeLayersWithMandatoryLock`). Pure data: the kernel itself
+   * still reads only `WorldFacts.defaultOutcome`, never this field. */
+  defaultOutcome?: VerdictOutcome;
 }
 
 export interface ValidationError {

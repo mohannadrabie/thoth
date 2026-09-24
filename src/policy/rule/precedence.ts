@@ -15,6 +15,7 @@
 // merge-by-id logic is factored into the generic `mergeLayersById` core, which
 // `mergeToolClassificationLayers` (two-tier: shipped + central, per the T5 ruling) also calls.
 import type { Rule, RuleSet } from "../kernel/rule-types.ts";
+import type { VerdictOutcome } from "../kernel/verdict.ts";
 import type {
   MergedToolClassification,
   MergedToolClassificationSet,
@@ -175,6 +176,40 @@ export interface NamedRuleLayer {
   name: LayerName;
   version: string;
   items: readonly Rule[];
+  /** POL-01 (Issue #112): this layer's optional baseline posture. See `resolveDefaultOutcome`. */
+  defaultOutcome?: VerdictOutcome;
+}
+
+/** The resolved baseline posture and the layer that supplied it. */
+export interface ResolvedDefaultOutcome {
+  outcome: VerdictOutcome;
+  source: LayerName;
+}
+
+/**
+ * POL-01 (Issue #112): resolves the layers' optional `defaultOutcome` declarations through the SAME
+ * `TRUST_RANK` the mandatory lock uses -- never a layer name, so a future 4th layer is a compile
+ * error in `TRUST_RANK` rather than an untested cell here. Walks `layers` in precedence order,
+ * holding the current (outcome, declaring layer):
+ *   - the first declaration is adopted;
+ *   - a later layer of EQUAL or HIGHER trust overrides it (peers override each other, exactly as
+ *     their rules do);
+ *   - a later layer of LOWER trust may only TIGHTEN (allow -> deny); a relaxing or redundant
+ *     declaration is ignored, and the layer is NOT voided -- so a central-declared posture can never
+ *     be relaxed by shipped-defaults or project (POL-07's central-only intent, applied to a scalar).
+ * Callers pass only ACCEPTED layers, so a voided layer contributes nothing. Returns undefined when
+ * no layer declares one -- the bootstrap fallback is the loader's job (rule/ never imports config/).
+ */
+function resolveDefaultOutcome(layers: readonly NamedRuleLayer[]): ResolvedDefaultOutcome | undefined {
+  let held: ResolvedDefaultOutcome | undefined;
+  for (const layer of layers) {
+    const declared = layer.defaultOutcome;
+    if (declared === undefined) continue;
+    const lowerTrust = held !== undefined && TRUST_RANK[layer.name] < TRUST_RANK[held.source];
+    const tightens = held?.outcome === "allow" && declared === "deny";
+    if (held === undefined || !lowerTrust || tightens) held = { outcome: declared, source: layer.name };
+  }
+  return held;
 }
 
 export interface MandatoryLockViolation {
@@ -203,6 +238,9 @@ export interface MandatoryLockResult {
   /** Issue #114 [HIGH] fix, loud-disclosure condition — see `InertMandatoryDeclaration`'s own doc
    * comment. Empty when every `mandatory: true` declaration in this call had real locking force. */
   inertMandatoryDeclarations: InertMandatoryDeclaration[];
+  /** POL-01 (Issue #112): the resolved baseline posture across the ACCEPTED layers, or undefined
+   * when none declared one. See `resolveDefaultOutcome`. */
+  defaultOutcome?: ResolvedDefaultOutcome | undefined;
 }
 
 /**
@@ -292,7 +330,7 @@ export function mergeLayersWithMandatoryLock(layers: readonly NamedRuleLayer[]):
     if (layer.items.length > 0) version = layer.version;
   }
 
-  return { merged: { version, rules }, voidedLayers, inertMandatoryDeclarations };
+  return { merged: { version, rules }, voidedLayers, inertMandatoryDeclarations, defaultOutcome: resolveDefaultOutcome(acceptedLayers) };
 }
 
 /**

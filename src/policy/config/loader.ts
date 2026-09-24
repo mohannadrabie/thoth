@@ -50,6 +50,8 @@ import {
 import { findRulePositions, tokenize } from "./position-parser.ts";
 import type { CentralPolicyResult, CentralPolicySource } from "./central-source.ts";
 import { computePin, type PolicyPin } from "./pin.ts";
+import { BOOTSTRAP_DEFAULT_OUTCOME } from "./bootstrap-ruleset.ts";
+import type { VerdictOutcome } from "../kernel/verdict.ts";
 
 export interface LoadedLayer {
   name: LayerName;
@@ -100,6 +102,19 @@ export interface LoadSuccess {
    * declaration with no real locking force (today: any shipped-defaults/project declaration) is
    * never silently dropped — named here so printer.ts/print-cli.ts can disclose it. */
   inertMandatoryDeclarations: InertMandatoryDeclaration[];
+  /** POL-01 (Issue #112): resolved baseline posture, resolved by trust rank -- see
+   * precedence.ts's `resolveDefaultOutcome`. Always present on a successful load. */
+  defaultOutcome: ResolvedPosture;
+}
+
+/** POL-01 (Issue #112): the resolved baseline posture -- what a caller passes as
+ * `WorldFacts.defaultOutcome`. `source` names the layer that supplied it, or "bootstrap" when no
+ * layer declared one (the code-literal fallback stays "allow"). Exposed as a result field only --
+ * not in printer stdout, and nothing consumes it until the kernel-gate hook is rewired (that hook
+ * still reads its own bootstrap constant). */
+export interface ResolvedPosture {
+  outcome: VerdictOutcome;
+  source: LayerName | "bootstrap";
 }
 
 export type LoadResult = LoadSuccess | LoadFailure;
@@ -131,6 +146,12 @@ function parseLayerText(origin: string, text: string): ParsedLayer | ParseFailur
   const positions = findRulePositions(tokenize(text));
   const ruleLines = ruleSet.rules.map((_, i) => positions[i]?.line ?? -1);
   return { ruleSet, ruleLines };
+}
+
+// exactOptionalPropertyTypes: an undeclared posture must be an ABSENT key, never `defaultOutcome: undefined`.
+function namedLayer(name: LayerName, ruleSet: RuleSet): NamedRuleLayer {
+  const base = { name, version: ruleSet.version, items: ruleSet.rules };
+  return ruleSet.defaultOutcome === undefined ? base : { ...base, defaultOutcome: ruleSet.defaultOutcome };
 }
 
 function isParseFailure(x: ParsedLayer | ParseFailure): x is ParseFailure {
@@ -212,9 +233,9 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
   }
 
   const namedLayers: NamedRuleLayer[] = [
-    { name: "shipped-defaults", version: shippedParsed.ruleSet.version, items: shippedParsed.ruleSet.rules },
-    { name: "central", version: centralRuleSet.version, items: centralRuleSet.rules },
-    { name: "project", version: projectParsed.ruleSet.version, items: projectParsed.ruleSet.rules },
+    namedLayer("shipped-defaults", shippedParsed.ruleSet),
+    namedLayer("central", centralRuleSet),
+    namedLayer("project", projectParsed.ruleSet),
   ];
 
   const lockResult = mergeLayersWithMandatoryLock(namedLayers);
@@ -244,5 +265,6 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
     pin,
     voidedLayers: lockResult.voidedLayers,
     inertMandatoryDeclarations: lockResult.inertMandatoryDeclarations,
+    defaultOutcome: lockResult.defaultOutcome ?? { outcome: BOOTSTRAP_DEFAULT_OUTCOME, source: "bootstrap" },
   };
 }
