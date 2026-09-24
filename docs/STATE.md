@@ -9,8 +9,8 @@ Base: `origin/master` at `ae6b4f1` (PR #286 merged; master CI green on the last 
 
 | Story | Issues | Branch | Verdicts (stage 3) |
 |---|---|---|---|
-| `s1-oss01-residuals-270-271` | #270, #271 | `fix/s1-oss01-residuals-270-271` (10 commits ahead of master) | red-team go, app-security APPROVE, cross-domain APPROVE-WITH-CONDITIONS |
-| `s6-policy-residuals-112-124` | #112, #124 built; #107 ratified residual | `feat/s6-policy-centralization` (25 commits ahead of master; contains the S1 branch by merge commit) | red-team go, app-security APPROVE-WITH-CONDITIONS, cross-domain APPROVE-WITH-CONDITIONS |
+| `s1-oss01-residuals-270-271` | #270, #271 | `fix/s1-oss01-residuals-270-271` | red-team go, app-security APPROVE, cross-domain APPROVE-WITH-CONDITIONS |
+| `s6-policy-residuals-112-124` | #112, #124 built; #107 ratified residual | `feat/s6-policy-centralization` (contains the S1 branch by merge commit) | red-team go, app-security APPROVE-WITH-CONDITIONS, cross-domain APPROVE-WITH-CONDITIONS |
 
 **Verified on the combined tip (real runs):** `npm test` 1139 tests, 1139 pass, 0 fail, 0 skipped; typecheck and lint clean; `oss:secret-scan` PASS, 0 blocking; QA-14 in diff mode (`ae6b4f1..HEAD`) PASS, 0 failed; QA-15, kernel-purity, gate-manifest and the other `qa:*` gates PASS (several report a disclosed vacuous pass). The S1 branch alone also passes QA-14 (0 failed).
 
