@@ -321,11 +321,26 @@ test("oss01-latin1-nbsp-separator-still-matches", () => {
 //     `unclassifiedPatternIds`, so a new pattern fails the suite until its author declares it;
 //   - position: the byte replaces EACH character of the exemplar's value in turn, so a narrowing that
 //     bites only the first or only the last character is seen.
-// What stays a declared judgment, by design: whether a pattern is `free-form` (a high byte is legitimate
-// inside its value) or `ascii-only` (a fixed alphabet; the reason says which). That choice is forced and
-// visible in the diff of any change that adds a pattern; it is not a mechanical proof. Every count below
-// comes from the run (`t.diagnostic`), never from prose. Named per red-team's own suggested test:
-// oss01-no-value-class-however-written-hides-a-high-byte.
+// Issue 290 (red-team, s1-oss01-residuals-270-271, MED): a pattern declared `ascii-only` was an opt-out no
+// test checked (a mis-declared new pattern hid every high byte with the suite green). Now
+// `asciiOnlyViolations` cross-checks each `ascii-only` declaration against its own regex source.
+//
+// What is mechanical now:
+//   - every catalog pattern is classified, and no classification is stale (`unclassifiedPatternIds`);
+//   - every position of every `free-form` exemplar's value is swept with every byte 0x80-0xFF;
+//   - an `ascii-only` pattern is rejected if ANY bracketed character class in its source accepts a byte
+//     0x80-0xFF (negated classes included: they accept every such byte), or if its source holds an
+//     unbracketed wildcard (`.`, `\S`, `\W`, `\D`, `\p`, `\P`).
+// What stays a declared judgment:
+//   - the `reason` text on an `ascii-only` entry (documentation, never checked);
+//   - a `free-form` entry's exemplar and which span of it is the value (the sweep proves the pattern keeps
+//     matching whatever byte is put there, not that the span is the right one);
+//   - constructs the cross-check does not read: the whitespace escape used as a separator outside a class
+//     (aws-secret-access-key and generic-password-assignment use it deliberately, see patterns.ts), and
+//     lookarounds (a lookaround can still reject a high byte the classes accept; only the `free-form` sweep
+//     runs the whole pattern, so an `ascii-only` pattern with a value-narrowing lookaround is not covered).
+// Every count below comes from the run (`t.diagnostic`), never from prose. Named per red-team's own
+// suggested test: oss01-no-value-class-however-written-hides-a-high-byte.
 // ================================================================================================
 
 type SweepSpec =
@@ -494,4 +509,93 @@ test("oss01-no-value-class-however-written-hides-a-high-byte: an unclassified 11
   assert.deepEqual(unclassifiedPatternIds(withEleventh, HIGH_BYTE_SWEEP), { missing: [eleventh.id], stale: [] }, "a pattern added to the catalog without a registry entry is reported");
   const withoutFirst = SECRET_PATTERNS.slice(1);
   assert.deepEqual(unclassifiedPatternIds(withoutFirst, HIGH_BYTE_SWEEP).stale, [SECRET_PATTERNS[0]?.id], "a registry entry whose pattern left the catalog is reported");
+});
+
+// Issue 290: the mechanical cross-check for an `ascii-only` declaration (see the header above for what it
+// does and does not read). Mirrors the escape and bracket handling of `negatedClasses` and `whitespaceTokens`.
+
+/** Every bracketed character class in a regex source (negated or not), and every unbracketed wildcard that
+ * can stand for a high byte. An escaped bracket opens no class. */
+function classesAndWildcards(source: string): { classes: Array<{ negated: boolean; body: string }>; wildcards: string[] } {
+  const classes: Array<{ negated: boolean; body: string }> = [];
+  const wildcards: string[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === "\\") {
+      const token = source.slice(i, i + 2);
+      if (["\\S", "\\W", "\\D", "\\p", "\\P"].includes(token)) wildcards.push(token);
+      i += 2;
+      continue;
+    }
+    if (ch === "[") {
+      const negated = source[i + 1] === "^";
+      const start = i + (negated ? 2 : 1);
+      let j = start;
+      while (j < source.length && source[j] !== "]") j += source[j] === "\\" ? 2 : 1;
+      classes.push({ negated, body: source.slice(start, j) });
+      i = j + 1;
+      continue;
+    }
+    if (ch === ".") wildcards.push(".");
+    i++;
+  }
+  return { classes, wildcards };
+}
+
+/** Pure. For every `ascii-only` registry entry whose pattern is in `patterns`, the reasons its own regex
+ * source contradicts the declaration: a class that accepts a byte 0x80-0xFF (rebuilt standalone with the
+ * pattern's own flags and run behaviourally, so no spelling evades it), a class that cannot be rebuilt, or an
+ * unbracketed wildcard. Empty means every `ascii-only` declaration is consistent with its pattern. */
+function asciiOnlyViolations(
+  patterns: ReadonlyArray<{ id: string; regex: RegExp }>,
+  registry: Record<string, SweepSpec>,
+): Array<{ id: string; offender: string }> {
+  const out: Array<{ id: string; offender: string }> = [];
+  for (const p of patterns) {
+    if (registry[p.id]?.kind !== "ascii-only") continue;
+    const { classes, wildcards } = classesAndWildcards(p.regex.source);
+    for (const w of wildcards) out.push({ id: p.id, offender: `unbracketed wildcard ${w}` });
+    for (const c of classes) {
+      const text = `[${c.negated ? "^" : ""}${c.body}]`;
+      let re: RegExp;
+      try {
+        re = new RegExp(text, p.regex.flags.replace("g", ""));
+      } catch {
+        out.push({ id: p.id, offender: `class ${text} cannot be rebuilt standalone` });
+        continue;
+      }
+      const accepted: string[] = [];
+      for (let b = 0x80; b <= 0xff; b++) if (re.test(String.fromCharCode(b))) accepted.push("0x" + b.toString(16).toUpperCase());
+      if (accepted.length > 0) out.push({ id: p.id, offender: `class ${text} accepts ${accepted.length} byte(s) in 0x80-0xFF, first ${accepted[0]}` });
+    }
+  }
+  return out;
+}
+
+test("oss01-an-ascii-only-declaration-is-mechanically-consistent-with-its-pattern", (t) => {
+  assert.deepEqual(asciiOnlyViolations(SECRET_PATTERNS, HIGH_BYTE_SWEEP), [], "an ascii-only pattern's own regex accepts a high byte: declare it free-form with an exemplar");
+  const checked = SECRET_PATTERNS.filter((p) => HIGH_BYTE_SWEEP[p.id]?.kind === "ascii-only");
+  assert.ok(checked.length > 0, "non-vacuous: at least one ascii-only declaration was cross-checked");
+  const classCount = checked.reduce((n, p) => n + classesAndWildcards(p.regex.source).classes.length, 0);
+  assert.ok(classCount > 0, "non-vacuous: the cross-check read at least one character class");
+  t.diagnostic(`ascii-only patterns cross-checked=${checked.length} character classes read=${classCount}`);
+});
+
+test("oss01-an-ascii-only-declaration-is-mechanically-consistent-with-its-pattern: catches a mis-declared pattern (positive control)", () => {
+  const declared = { kind: "ascii-only" as const, reason: "plausible but wrong" };
+  const shapes: Record<string, RegExp> = {
+    "negated class (accepts every high byte), the M6 shape": /dbx:[^@\s]{8,}@/g,
+    "positive class that names 0xA0": /dbx:[\w\xa0]{8,}@/g,
+    "positive class range covering the high bytes": /dbx:[\x21-\xff]{8,}@/g,
+    "unbracketed wildcard": /dbx:.{8,}@/g,
+    "unbracketed non-word escape": /dbx:\W{8,}@/g,
+  };
+  for (const [label, regex] of Object.entries(shapes)) {
+    const found = asciiOnlyViolations([{ id: "synthetic", regex }], { synthetic: declared });
+    assert.ok(found.length > 0, `${label}: a pattern declared ascii-only with this shape must fail the cross-check`);
+  }
+  // Controls: an honest ASCII-only shape passes; the same shape declared free-form is not this test's business.
+  assert.deepEqual(asciiOnlyViolations([{ id: "synthetic", regex: /dbx:[A-Za-z0-9-]{8,}@/gi }], { synthetic: declared }), [], "control: a fixed ASCII alphabet passes");
+  assert.deepEqual(asciiOnlyViolations([{ id: "synthetic", regex: /dbx:[^@\s]{8,}@/g }], { synthetic: { kind: "free-form", prefix: "dbx:", value: "abcdefgh", suffix: "@" } }), [], "control: a free-form declaration is swept elsewhere, not judged here");
 });
