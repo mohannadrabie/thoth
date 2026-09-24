@@ -424,6 +424,13 @@ const REVIEWED_BASELINE: Readonly<Record<string, { readonly hashes: readonly str
       "the story's synthetic AWS-key-shaped fixture literal (same value and hash as the entries above), " +
       "quoted as verbatim evidence in a dated report. Not a real credential.",
   },
+  "docs/reviews/oss01-verify-still-matches-debug-2026-09-23.md::aws-access-key-id": {
+    hashes: ["4b82f7466cc183e24dffcc235b8622f6795176c22f72aedf45584003e440f78f"],
+    reason:
+      "quotes the allowlist-tool.test.ts still-matches fixture's own synthetic AKIA-shaped literal as " +
+      "reproduction evidence for a diagnosed CI-only scan-timeout flake (docs/qa/secret-scan-allowlist.json's " +
+      "own grant reason). Not a real credential.",
+  },
 });
 
 test("OSS-01 allowlist (GitHub Issue #199 reopened + Issue #200, red-team round-4 [MED]x2, " +

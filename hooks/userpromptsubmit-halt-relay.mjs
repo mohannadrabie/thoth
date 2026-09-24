@@ -67,7 +67,7 @@
 // call `process.exit(2)` before the JSON (or even the stderr line) had actually been delivered,
 // losing the message from the reader's side entirely, silently, with no error here to catch it.
 // Fix: every write below goes through `fs.writeSync` on the raw file descriptor (1 = stdout, 2 =
-// stderr) instead of `process.stdout/stderr.write` -- `writeSync` blocks the calling code until
+// stderr) instead of `process.stdout.write`/`process.stderr.write` -- `writeSync` blocks the calling code until
 // the write system call itself returns, so nothing after it (including `process.exit`) can run
 // until the bytes are actually handed to the OS. This is the same fix pattern Node's own docs
 // recommend for exactly this class of bug (a process that exits right after writing output).
