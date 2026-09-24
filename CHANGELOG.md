@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s1-oss01-residuals-270-271` (issues 270, 271): the high-byte sweep derives its scope and position, and the scan-timeout grant no longer depends on which pattern was slow
+
+CRITICAL tier (secret-scanning sensitive area; ratified by the Manager). Two non-blocking MEDs `red-team` filed in round 2 of `s1-oss01-detection-residuals` (`docs/reviews/s1-oss01-detection-residuals-red-team-round2-2026-09-22.md`).
+
+- **#270, test-only.** The 0xA0 sweep (`oss01-no-value-class-however-written-hides-a-high-byte`) hand-kept two things: which patterns it swept and the one offset where it put the byte. Now a registry in `patterns.test.ts` must classify every id in `SECRET_PATTERNS` (free-form with an exemplar, or ascii-only with a reason), checked in both directions, and the byte replaces each character of the value in turn. Named controls show a first-character-only narrowing, a last-character-only narrowing and an unclassified new pattern each fail; the old single-offset probe passes the first two, asserted inside the control. The free-form or ascii-only classification stays a declared judgment, stated in the test header. Counts come from the run (`t.diagnostic`).
+- **#271, `history-scan.ts` and `allowlist-tool.ts`.** The `oss01-scan-timeout` grant hash is now a function of the scanned text alone (`scanTimeoutHash`), not of which pattern was slow, and `allowlist-tool hash` computes it directly with no scan, so a developer's local run prints the hash CI needs on any machine, even where nothing times out. New tests: `oss01-a-scan-timeout-grant-does-not-depend-on-which-pattern-was-slow`, `oss01-scan-timeout-unlock-hash-does-not-depend-on-this-machines-speed`. One existing expectation was replaced, not deleted: `sb2-hash-lines-computes-the-scan-timeout-pattern-id-without-throwing` no longer expects an empty result for ordinary text.
+- **Ratified residual, not fixed.** Whether a blob near the 500ms bound times out at all is still a wall-clock race (and a small blob can time out under CPU contention), so the gate can occasionally block falsely, never pass falsely. THOTH-ADR-0002's register row now says so. A deterministic matcher is the only complete remedy; deferred to Issue 287.
+- **Untouched.** `SCAN_TIMEOUT_MS`, `.github/workflows/ci.yml`, the allowlist file and loader, `patterns.ts`. No allowlist entry uses the reserved id, so no grant changes.
+
 ### Fixed — `qa14-ci-red-citation-wording` (PR 281): three comment wording defects that kept master's QA-14 gate red
 
 CRITICAL tier (sensitive area: the two SUR-03 hook files, comment-only diff). Master's QA-14 (`reference-resolver.ts`) gate had been failing since this session's four earlier merges landed — ten citations it could not resolve. Three were plain wording defects in live hook comments, not review-report content, so fixable without touching an immutable report (PRINCIPLES.md rule 11):

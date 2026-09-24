@@ -309,58 +309,125 @@ test("oss01-latin1-nbsp-separator-still-matches", () => {
 // class can only match MORE, never hide data" -- is false. Demonstrated: a POSITIVE class narrower than
 // the shipped one, or a lookahead, hides a high byte exactly the same way a negated class can, and every
 // one of those spellings passes the old guard green because it never looks at how the class was written.
-// This replaces syntax classification with a whole-PATTERN behaviour sweep: splice every byte 0x80-0xFF
-// into each exemplar's real value position and run the REAL, shipped regex end to end, asserting the
-// match still covers the whole literal -- construct-independent by design, so a future narrowing, however
-// it is spelled, cannot pass this the way it passed the syntax-scoped guard it supersedes. Named per
-// red-team's own suggested test: oss01-no-value-class-however-written-hides-a-high-byte.
+// This replaces syntax classification with a whole-PATTERN behaviour sweep: put every byte 0x80-0xFF into
+// the value and run the REAL, shipped regex end to end, asserting the match still covers the whole
+// literal -- construct-independent by design, so a future narrowing, however it is spelled, cannot pass
+// this the way it passed the syntax-scoped guard it supersedes.
+//
+// Issue 270 (red-team, s1-oss01-detection-residuals round 2, MED; the fourth iteration of one root-cause
+// class after 244, 249 and 268): that sweep still had two hand-kept dimensions -- WHICH patterns it swept
+// (a two-key table) and WHERE the byte went (one fixed offset). Both are now derived:
+//   - scope: `HIGH_BYTE_SWEEP` must classify EVERY id in `SECRET_PATTERNS`, checked in both directions by
+//     `unclassifiedPatternIds`, so a new pattern fails the suite until its author declares it;
+//   - position: the byte replaces EACH character of the exemplar's value in turn, so a narrowing that
+//     bites only the first or only the last character is seen.
+// What stays a declared judgment, by design: whether a pattern is `free-form` (a high byte is legitimate
+// inside its value) or `ascii-only` (a fixed alphabet; the reason says which). That choice is forced and
+// visible in the diff of any change that adds a pattern; it is not a mechanical proof. Every count below
+// comes from the run (`t.diagnostic`), never from prose. Named per red-team's own suggested test:
+// oss01-no-value-class-however-written-hides-a-high-byte.
 // ================================================================================================
 
-/** One exemplar per catalog pattern with a free-form ("value class") match region -- the two patterns
- * app-security-reviewer identified as carrying an open or negated class. `withByte(b)` splices byte `b`
- * (0x80-0xFF, as a JS char code) into the value position; the WHOLE returned string must always be what
- * the pattern matches -- nothing before or after the spliced byte may be left unmatched. */
-const VALUE_CLASS_EXEMPLARS: Record<string, { regex: RegExp; withByte: (b: number) => string }> = {
-  "generic-password-assignment": {
-    regex: findPattern("generic-password-assignment").regex,
-    withByte: (b) => `${PASSWORD_NAME} = "abcd${String.fromCharCode(b)}efgh"`,
-  },
-  "private-key-block": {
-    regex: findPattern("private-key-block").regex,
-    withByte: (b) => {
-      const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
-      const end = ["-----END", "PRIVATE KEY-----"].join(" ");
-      return [begin, `MIIB${String.fromCharCode(b)}AAAA`, end].join("\n");
-    },
-  },
+type SweepSpec =
+  | { kind: "free-form"; prefix: string; value: string; suffix: string }
+  | { kind: "ascii-only"; reason: string };
+
+const PEM_BEGIN = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+const PEM_END = ["-----END", "PRIVATE KEY-----"].join(" ");
+
+/** One entry per catalog pattern id. `free-form`: `value` is the region a high byte must never hide (the
+ * whole exemplar `prefix + value + suffix` must be what the pattern matches). `ascii-only`: a fixed
+ * alphabet with the reason it needs no high-byte sweep. */
+const HIGH_BYTE_SWEEP: Record<string, SweepSpec> = {
+  "generic-password-assignment": { kind: "free-form", prefix: `${PASSWORD_NAME} = "`, value: "abcdefgh", suffix: `"` },
+  "private-key-block": { kind: "free-form", prefix: `${PEM_BEGIN}\n`, value: "MIIBAAAA", suffix: `\n${PEM_END}` },
+  "aws-access-key-id": { kind: "ascii-only", reason: "fixed [0-9A-Z] alphabet after a literal prefix" },
+  "aws-secret-access-key": { kind: "ascii-only", reason: "fixed base64 alphabet [A-Za-z0-9/+=]" },
+  "github-pat": { kind: "ascii-only", reason: "fixed [A-Za-z0-9] alphabet after a literal prefix" },
+  "github-fine-grained-pat": { kind: "ascii-only", reason: "fixed [A-Za-z0-9] segments after a literal prefix" },
+  "slack-token": { kind: "ascii-only", reason: "fixed [A-Za-z0-9-] alphabet after a literal prefix" },
+  "internal-hostname": { kind: "ascii-only", reason: "hostname labels are ASCII (internationalized names travel as punycode)" },
+  "ipv4-private": { kind: "ascii-only", reason: "digits and dots only" },
+  "email-address": { kind: "ascii-only", reason: "ASCII local part and domain; a high byte ends the match, it hides no value inside one" },
 };
 
-/** Behaviourally sweeps `re` (a fresh, non-global copy is made internally) against `withByte`'s exemplar
- * for every byte 0x80-0xFF; returns the bytes, if any, where the whole exemplar was NOT the match -- i.e.
- * a high byte that ended the value early (a truncated match) or kept the pattern from matching the
- * literal at all (a `null` match, the same net effect: the literal goes unreported). */
-function sweepAgainstRegex(re: RegExp, withByte: (b: number) => string): string[] {
-  const fresh = new RegExp(re.source, re.flags.replace("g", ""));
-  const hidden: string[] = [];
-  for (let b = 0x80; b <= 0xff; b++) {
-    const text = withByte(b);
-    fresh.lastIndex = 0;
-    if (fresh.exec(text)?.[0] !== text) hidden.push("0x" + b.toString(16).toUpperCase());
-  }
-  return hidden;
+/** Pure. Ids in `patterns` with no registry entry (`missing`) and registry ids not in `patterns` (`stale`). */
+function unclassifiedPatternIds(
+  patterns: ReadonlyArray<{ id: string }>,
+  registry: Record<string, SweepSpec>,
+): { missing: string[]; stale: string[] } {
+  const ids = new Set(patterns.map((p) => p.id));
+  return {
+    missing: [...ids].filter((id) => !(id in registry)),
+    stale: Object.keys(registry).filter((id) => !ids.has(id)),
+  };
 }
 
-test("oss01-no-value-class-however-written-hides-a-high-byte", () => {
-  const ids = Object.keys(VALUE_CLASS_EXEMPLARS);
-  assert.ok(ids.length >= 2, "non-vacuous: both catalog patterns with a free-form value class are covered");
-  for (const [id, spec] of Object.entries(VALUE_CLASS_EXEMPLARS)) {
-    const hidden = sweepAgainstRegex(spec.regex, spec.withByte);
+/** Behaviourally sweeps `re` (a fresh, non-global copy is made internally) over a free-form exemplar: every
+ * character of `value`, in turn, is replaced by every byte 0x80-0xFF, and the WHOLE exemplar must still be
+ * the match. Returns the cells where it was not (a truncated match, or none: the literal goes unreported)
+ * and the number of cells tried. */
+function sweepEveryPosition(
+  re: RegExp,
+  spec: Extract<SweepSpec, { kind: "free-form" }>,
+): { hidden: string[]; cells: number } {
+  const fresh = new RegExp(re.source, re.flags.replace("g", ""));
+  const hidden: string[] = [];
+  let cells = 0;
+  for (let pos = 0; pos < spec.value.length; pos++) {
+    for (let b = 0x80; b <= 0xff; b++) {
+      cells++;
+      const value = spec.value.slice(0, pos) + String.fromCharCode(b) + spec.value.slice(pos + 1);
+      const text = spec.prefix + value + spec.suffix;
+      fresh.lastIndex = 0;
+      if (fresh.exec(text)?.[0] !== text) hidden.push(`pos${pos}:0x${b.toString(16).toUpperCase()}`);
+    }
+  }
+  return { hidden, cells };
+}
+
+function freeFormSpec(id: string): Extract<SweepSpec, { kind: "free-form" }> {
+  const spec = HIGH_BYTE_SWEEP[id];
+  if (spec?.kind !== "free-form") throw new Error(`${id} is not a free-form entry`);
+  return spec;
+}
+
+test("oss01-every-catalog-pattern-is-classified-for-the-high-byte-sweep", (t) => {
+  const { missing, stale } = unclassifiedPatternIds(SECRET_PATTERNS, HIGH_BYTE_SWEEP);
+  assert.deepEqual(missing, [], "a catalog pattern has no HIGH_BYTE_SWEEP entry: declare it free-form (with an exemplar) or ascii-only (with a reason)");
+  assert.deepEqual(stale, [], "HIGH_BYTE_SWEEP names an id that is not in SECRET_PATTERNS");
+  for (const [id, spec] of Object.entries(HIGH_BYTE_SWEEP)) {
+    if (spec.kind === "ascii-only") assert.ok(spec.reason.trim().length > 0, `${id}: an ascii-only entry must say why`);
+    else {
+      const control = spec.prefix + spec.value + spec.suffix;
+      assert.equal(freshMatch(id, control), control, `${id}: control, the all-ASCII exemplar is matched whole`);
+    }
+  }
+  const kinds = Object.values(HIGH_BYTE_SWEEP).map((s) => s.kind);
+  t.diagnostic(`catalog patterns=${SECRET_PATTERNS.length} free-form=${kinds.filter((k) => k === "free-form").length} ascii-only=${kinds.filter((k) => k === "ascii-only").length}`);
+});
+
+/** The first match of a fresh, non-global copy of catalog pattern `id` in `text`. */
+function freshMatch(id: string, text: string): string | undefined {
+  const p = findPattern(id);
+  return new RegExp(p.regex.source, p.regex.flags.replace("g", "")).exec(text)?.[0];
+}
+
+test("oss01-no-value-class-however-written-hides-a-high-byte", (t) => {
+  let total = 0;
+  for (const [id, spec] of Object.entries(HIGH_BYTE_SWEEP)) {
+    if (spec.kind !== "free-form") continue;
+    const { hidden, cells } = sweepEveryPosition(findPattern(id).regex, spec);
+    total += cells;
+    assert.equal(cells, spec.value.length * 128, `${id}: derived, every position times every high byte was tried`);
     assert.deepEqual(
       hidden,
       [],
       `pattern ${id} hides high byte(s) ${hidden.join(",")} somewhere in its value class, however that class is spelled`,
     );
   }
+  assert.ok(total > 0, "non-vacuous: at least one free-form pattern was swept");
+  t.diagnostic(`sweep cells=${total}`);
 });
 
 test("oss01-no-value-class-however-written-hides-a-high-byte: catches non-negated spellings the old guard missed (positive control)", () => {
@@ -370,7 +437,7 @@ test("oss01-no-value-class-however-written-hides-a-high-byte: catches non-negate
   const shippedClass = `[^${classBody}]`;
   assert.ok(shipped.includes(shippedClass), "control: the exact class text is present in the shipped source");
   const flags = findPattern("generic-password-assignment").regex.flags.replace("g", "");
-  const { withByte } = VALUE_CLASS_EXEMPLARS["generic-password-assignment"]!;
+  const spec = freeFormSpec("generic-password-assignment");
 
   // Two of red-team's own demonstrated shapes -- neither is a negated class, so `negatedClasses()` (the
   // #249 guard's own extractor) finds NOTHING to probe in either mutated source, proving the old guard is
@@ -389,11 +456,42 @@ test("oss01-no-value-class-however-written-hides-a-high-byte: catches non-negate
       [],
       `control: ${label} is not a negated class -- the OLD guard's own extractor must be blind to it`,
     );
-    const mutated = new RegExp(mutatedSource, flags);
-    const hidden = sweepAgainstRegex(mutated, withByte);
+    const { hidden } = sweepEveryPosition(new RegExp(mutatedSource, flags), spec);
     assert.ok(
       hidden.length > 0,
       `${label}: this whole-pattern sweep must catch the same defect class the old, syntax-scoped guard missed`,
     );
   }
+});
+
+// Issue 270 shapes 5 and 6: a narrowing that bites only ONE end of the value. The old sweep spliced the
+// byte at one interior offset, so it reported 0 hidden cells for both of these (measured before the fix);
+// the every-position sweep must see each.
+test("oss01-no-value-class-however-written-hides-a-high-byte: catches a first-character-only and a last-character-only narrowing (positive control)", () => {
+  const shipped = findPattern("generic-password-assignment").regex.source;
+  const classBody = negatedClasses(shipped)[0] ?? "";
+  const cls = `[^${classBody}]{8,}`;
+  assert.ok(shipped.includes(cls), "control: the shipped class token with its {8,} quantifier is present");
+  const flags = findPattern("generic-password-assignment").regex.flags.replace("g", "");
+  const spec = freeFormSpec("generic-password-assignment");
+
+  const firstOnly = new RegExp(shipped.replace(cls, `(?!\\xa0)${cls}`), flags);
+  const lastOnly = new RegExp(shipped.replace(cls, `[^${classBody}]{7,}(?<!\\xa0)`), flags);
+  const interior = Math.floor(spec.value.length / 2);
+  for (const [label, re] of [["first-character-only", firstOnly], ["last-character-only", lastOnly]] as const) {
+    const { hidden } = sweepEveryPosition(re, spec);
+    assert.ok(hidden.length > 0, `${label}: the every-position sweep must catch it`);
+    assert.ok(hidden.every((c) => !c.startsWith(`pos${interior}:`)), `${label}: control, it bites at an END position, not at the interior offset the old sweep used`);
+    // The pre-fix probe: one interior splice, on this same mutant, sees nothing.
+    const oldStyle = spec.prefix + spec.value.slice(0, interior) + String.fromCharCode(0xa0) + spec.value.slice(interior + 1) + spec.suffix;
+    assert.equal(re.exec(oldStyle)?.[0], oldStyle, `${label}: control, the single-interior-offset probe the old sweep used passes this mutant`);
+  }
+});
+
+test("oss01-no-value-class-however-written-hides-a-high-byte: an unclassified 11th pattern fails coverage (positive control)", () => {
+  const eleventh = { id: "synthetic-eleventh-pattern", description: "control", regex: /zz[a-z]{8}/g };
+  const withEleventh = [...SECRET_PATTERNS, eleventh];
+  assert.deepEqual(unclassifiedPatternIds(withEleventh, HIGH_BYTE_SWEEP), { missing: [eleventh.id], stale: [] }, "a pattern added to the catalog without a registry entry is reported");
+  const withoutFirst = SECRET_PATTERNS.slice(1);
+  assert.deepEqual(unclassifiedPatternIds(withoutFirst, HIGH_BYTE_SWEEP).stale, [SECRET_PATTERNS[0]?.id], "a registry entry whose pattern left the catalog is reported");
 });

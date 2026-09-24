@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { decodeGitQuotedPath, makeGitOps } from "../lib/git.ts";
 import { realRunner } from "../lib/exec.ts";
 import type { AllowlistEntry } from "./history-scan.ts";
-import { SCAN_TIMEOUT_PATTERN_ID, clip, decodeBlobVariants, entryRejection, scanBlobText, scanHistory } from "./history-scan.ts";
+import { SCAN_TIMEOUT_PATTERN_ID, clip, decodeBlobVariants, entryRejection, scanBlobText, scanHistory, scanTimeoutHash } from "./history-scan.ts";
 import { SECRET_PATTERNS } from "./patterns.ts";
 
 export const ALLOWLIST_PATH = "docs/qa/secret-scan-allowlist.json";
@@ -301,14 +301,16 @@ export function verifyMigration(legacy: unknown, migrated: unknown, matches: rea
  * found" made the HASH-COMMAND the gate prints for EVERY scan-timeout block fail, unconditionally, for
  * every path and every commit — there was no way to actually compute and grant that finding kind. Fixed
  * together with Issue 264 (never alone: landing this without 264 would make the content-blind grant easy
- * to add) by re-running every real pattern against `text` and keeping only the resulting
- * `oss01-scan-timeout` findings — the exact same computation `scanBlobText` performs for the gate itself,
- * so this reproduces the identical hash(es) the gate reported, whichever real pattern(s) timed out. */
+ * to add).
+ *
+ * Issue 271: that first fix re-ran the wall-clock scan, so a machine where nothing timed out printed no
+ * hash while CI, where the blob did time out, blocked. The scan-timeout hash is a function of the text
+ * alone (`scanTimeoutHash`), so this branch computes it directly, with no scan and no clock: the same
+ * hash the gate reports, on every machine. A hash for a blob that does not time out locally is harmless
+ * (an entry that matches nothing, Issue 235). */
 export function hashLines(text: string, patternId: string): string[] {
   if (patternId === SCAN_TIMEOUT_PATTERN_ID) {
-    return scanBlobText(text, SECRET_PATTERNS)
-      .filter((f) => f.patternId === SCAN_TIMEOUT_PATTERN_ID)
-      .map((f) => `${f.valueSha256}  ${f.redacted}`);
+    return [`${scanTimeoutHash(text)}  …[SCAN-TIMEOUT bytes=${text.length}]`];
   }
   const pattern = SECRET_PATTERNS.find((p) => p.id === patternId);
   if (pattern === undefined) throw new Error(`unknown pattern id ${patternId}`);

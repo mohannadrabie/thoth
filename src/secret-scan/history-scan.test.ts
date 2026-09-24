@@ -14,6 +14,7 @@ import {
   isValidAllowlistEntry,
   loadAllowlist,
   partitionAllowlisted,
+  scanBlobText,
   scanHistory,
   SCAN_TIMEOUT_MS,
   SCAN_TIMEOUT_PATTERN_ID,
@@ -2136,6 +2137,36 @@ test("oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-pa
     const result = summarizeMatches(await scanHistory(makeGitOps(realRunner, dir)), await loadAllowlist(join(dir, ALLOWLIST_PATH)));
     assert.equal(result.ok, true, "control: the exact granted blob still passes at the same path");
   });
+});
+
+// ================================================================================================
+// Issue 271 (red-team, s1-oss01-detection-residuals round 2, MED): the scan-timeout hash was keyed to WHICH
+// pattern timed out, and which pattern is slow on a blob near the budget is a wall-clock race (the same
+// input gave "none" and "internal-hostname" on one machine). So the grant a developer computed could differ
+// from the one CI needed. The hash is now a function of the scanned text alone. The blob below is far past
+// the budget for both patterns (tens of seconds unbounded against a 500 ms bound), so both really time out
+// on any machine and this test never sits in the boundary band. Named per red-team's own suggested test:
+// oss01-a-scan-timeout-grant-does-not-depend-on-which-pattern-was-slow.
+// ================================================================================================
+
+test("oss01-a-scan-timeout-grant-does-not-depend-on-which-pattern-was-slow", () => {
+  const hostile = "a-".repeat(100_000);
+  const only = (id: string) => SECRET_PATTERNS.filter((p) => p.id === id);
+  const timeoutHashes = (id: string) =>
+    scanBlobText(hostile, only(id))
+      .filter((f) => f.patternId === SCAN_TIMEOUT_PATTERN_ID)
+      .map((f) => f.valueSha256);
+
+  const viaHostname = timeoutHashes("internal-hostname");
+  const viaEmail = timeoutHashes("email-address");
+  assert.equal(viaHostname.length, 1, "control: internal-hostname really times out on this blob");
+  assert.equal(viaEmail.length, 1, "control: email-address really times out on this blob");
+  assert.deepEqual(viaHostname, viaEmail, "the grant hash must not change with which pattern was the slow one");
+  assert.equal(
+    viaHostname[0],
+    sha256(`${SCAN_TIMEOUT_PATTERN_ID}:${hostile}`),
+    "and it is the sha256 of the reserved id plus the scanned text, computed here independently",
+  );
 });
 
 // ================================================================================================
