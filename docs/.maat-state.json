@@ -2422,7 +2422,7 @@
     }
   },
   "adrCatalog": {
-    "version": "a7d04fabeb165ca9f8ce8ab40be20bd12238e3cd",
+    "version": "13c1476929d3e207c52b0316502a30ad4e02bc33",
     "location": "adr/devops, adr/software-engineering, docs/adr",
     "roots": [
       {
