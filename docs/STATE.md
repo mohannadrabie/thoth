@@ -1,7 +1,7 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-24 (two stories built, reviewed and verified on branches; no PR is open yet). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-09-24 (two stories built, reviewed and verified; PRs #295 (S1) and #296 (S6) open, awaiting green CI and the human merge). Entries below this one are superseded but kept for continuity.
 
 ## Resume point — 2026-09-24: S1 residuals and S6 residuals ready for two PRs
 
@@ -40,7 +40,7 @@ Base: `origin/master` at `ae6b4f1` (PR #286 merged; master CI green on the last 
 - QA-14 in diff mode flags example or shorthand paths inside new review reports (same class as Issue #280). Four such tokens were reworded before merge, wording only, no finding text changed.
 - Two stories on separate branches conflict at four append points (`CHANGELOG.md`, `docs/decisions.md`, `docs/REVIEW_LOG.md`, `docs/run-log.jsonl`). The combined branch resolves them once, keeping both sides.
 
-**Single next action:** the human opens the two PRs above.
+**Single next action:** the human merges PR #295 (S1) once its required check is green, then PR #296 (S6). PRs were opened by the Manager on 2026-09-24 under the human's preapproval. The five 2026-09-24 decisions.md rows are ratified (human blanket preapproval, not itemised). Merging #295 closes #270 and #271 and leaves the S1 milestone with no open issue; close the milestone after that.
 
 ## Prior entry: four PRs merged, master CI found red, fix merged, master protected (superseded above)
 
