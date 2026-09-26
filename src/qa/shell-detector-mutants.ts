@@ -37,6 +37,7 @@ const policySourceDir = join(here, "..", "policy");
 const TEST_FILES = [
   "policy/normalizer/shell.test.ts",
   "policy/normalizer/shell-scanner.test.ts",
+  "policy/normalizer/shell-scanner-linear.test.ts",
   "policy/normalizer/flag-catalog.test.ts",
   "policy/normalizer/wrapper-catalog.test.ts",
   "policy/normalizer/registry.test.ts",
@@ -416,8 +417,32 @@ const MUTANTS: Mutant[] = [
     "multi-redirect-collection-disabled",
     "Issue #74: stopping at the first live redirect again would under-report a command with more than one live '>'/'>>'",
     SCANNER,
-    "    const [target] = tokenize(rest);\n    if (target) targets.push(target);\n  }\n  return targets;",
-    "    const [target] = tokenize(rest);\n    if (target) return [target];\n  }\n  return targets;",
+    "    const target = firstTokenFrom(index, idx + length);\n    if (target) targets.push(target);\n  }\n  return targets;",
+    "    const target = firstTokenFrom(index, idx + length);\n    if (target) return [target];\n  }\n  return targets;",
+  ),
+  // --- S7-A (Issue #304): mutants for the branches the linear redirect scan introduced. The pin table in
+  // policy/normalizer/shell-scanner-linear.test.ts (and the existing scanner tests) must kill each one; the
+  // wider equivalence proof is the differential instrument (src/qa/redirect-scan-differential.ts).
+  textMutant(
+    "redirect-target-suffix-offset-ignored",
+    "Issue #304: returning the WHOLE token value instead of the suffix from the redirect's own offset would make every glued target ('echo >a>b' -> 'a>b', 'b') carry the operator and the text before it, changing the write targets the deny rules see",
+    SCANNER,
+    "return token.value.slice(valueOffsetAt[offset] ?? 0);",
+    "return token.value;",
+  ),
+  textMutant(
+    "fd-dup-word-read-from-whole-token",
+    "Issue #304: reading the fd-dup word from the whole token that spans the ampersand (not the text after it) makes '2>&1' read as '2>&1', which is not all digits, so the fd-dup is mis-taken for a file redirect and fabricates the target '1'",
+    SCANNER,
+    "const fdWord = firstTokenFrom(index, idx + length + 1);",
+    "const fdWord = index.tokens.find((t) => t.end > idx + length + 1)?.value;",
+  ),
+  textMutant(
+    "token-index-search-boundary-inclusive",
+    "Issue #304: an inclusive token-end comparison in the index search selects the token that ENDS at the redirect's offset (the operator token of a spaced '> a'), so the target reads as '>' instead of 'a'",
+    SCANNER,
+    "if ((tokens[mid]?.end ?? 0) > offset) hi = mid;",
+    "if ((tokens[mid]?.end ?? 0) >= offset) hi = mid;",
   ),
   // --- Round 3, council-approved path (docs/reviews/s4-shell-semantic-detector-council-path-
   // forward-2026-09-03.md): mutants for the new/changed branches Issues #80/#81/#82 introduced,
