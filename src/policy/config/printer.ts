@@ -14,6 +14,7 @@
 import { loadEffectivePolicy, type FailedLayerName, type LoadFailureReasonKind, type LoadSuccess, type ResolvedPosture } from "./loader.ts";
 import type { CentralPolicySource } from "./central-source.ts";
 import type { PolicyPin } from "./pin.ts";
+import { sanitizeForTerminal } from "./sanitize.ts";
 
 export interface PrinterInput {
   shippedDefaultsPath: string;
@@ -72,9 +73,57 @@ export function renderPostureLine(posture: ResolvedPosture): string {
   return `posture: ${posture.outcome} (source: ${posture.source}; in-repo layer, not centrally enforced; rules from other layers can still allow)`;
 }
 
+// Issue #294 (S6): the render boundary. Every interpolated string that came from policy text (a rule
+// id, an unknown key echoed inside a schema message, a JSON.parse snippet, a file path, a channel
+// descriptor) passes through sanitizeForTerminal below; values the code itself controls (enums,
+// counts, line numbers) stay bare. echo-sanitize.test.ts scans this file for any interpolation that
+// is neither wrapped nor on its named allowlist. The loader and schema keep the raw text.
+
+// Issue #318: the string conversion for a value the type system says is a string but that a policy
+// source port can hand over as anything (undefined, a number, an object, a null-prototype object, one
+// whose toString throws). print-cli.ts calls the exported renderers outside any try, so they must be
+// total. Clean strings come back unchanged (String of a string is the same string).
+const UNPRINTABLE_VALUE = "(unprintable value)";
+function describeValue(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return UNPRINTABLE_VALUE;
+  }
+}
+
+/** The Issue #114 line print-cli.ts writes for a `mandatory: true` declaration with no locking force.
+ * Lives here (not inline in print-cli.ts) so it is testable: print-cli.ts hard-wires the real
+ * registry reader and repo paths, with no seam a test may use (Issue #99). Clean input yields the
+ * exact pre-#294 string. */
+export function renderInertMandatoryNote(d: { layer: string; ruleId: string }): string {
+  return `NOTE: rule id="${sanitizeForTerminal(describeValue(d.ruleId))}" (layer=${sanitizeForTerminal(describeValue(d.layer))}) declares mandatory:true but has no real locking force -- only the central layer's mandatory declarations are authoritative; this declaration is NOT silently dropped, it still resolves normally, but it does not protect anything.`;
+}
+
+/** The `pin:` line print-cli.ts writes after the printed rules (POL-09, Issue #111). Lives here for the
+ * same reason as renderInertMandatoryNote: print-cli.ts has no seam a test may use (Issue #99), and the
+ * channel descriptor is policy-derived text. Clean input yields the exact pre-#313 line. */
+export function renderPinLine(pin: PolicyPin): string {
+  return `pin: sha256:${pin.digest} channel=${sanitizeForTerminal(describeValue(pin.channel))} computedAt=${pin.computedAt}`;
+}
+
+/** Issue #315: text for a value caught by the last-resort backstop. Anything can be thrown (undefined,
+ * null, a string, an object with no toString, an Error whose message getter throws), and the backstop
+ * must still return a rejection, never throw. An Error, or any object with a string `message`, shows
+ * that message (what master showed); anything else shows String(value); a value that cannot even be
+ * stringified shows a constant. sanitizeForTerminal stays typed `string`: the coercion is here. */
+function describeThrown(err: unknown): string {
+  try {
+    const message = (err as { message?: unknown } | null | undefined)?.message;
+    return typeof message === "string" ? message : String(err);
+  } catch {
+    return "(unprintable thrown value)";
+  }
+}
+
 function centralStatusLine(centralStatus: "absent" | "unsupported" | "present" | undefined, centralChannel: string | undefined): string {
   if (centralStatus === undefined) return "central-channel status=read-error";
-  if (centralStatus === "present") return `central-channel status=present channel=${centralChannel}`;
+  if (centralStatus === "present") return `central-channel status=present channel=${sanitizeForTerminal(String(centralChannel))}`;
   return `central-channel status=${centralStatus}`;
 }
 
@@ -89,7 +138,7 @@ function renderRejection(
   centralStatus: "absent" | "unsupported" | "present" | undefined,
   centralChannel: string | undefined,
 ): PrinterResult {
-  const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: ${failedLayer} policy load failed (${reasonKind}): ${message}`].join(
+  const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: ${failedLayer} policy load failed (${reasonKind}): ${sanitizeForTerminal(message)}`].join(
     "\n",
   );
   return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE, inertMandatoryDeclarations: [], posture: undefined, postureLine: POSTURE_LINE_REJECTED };
@@ -103,7 +152,7 @@ function renderSuccess(result: LoadSuccess): PrinterResult {
   // innocent or absent). Every one of test-writer's own printer.test.ts fixtures has ZERO voided
   // layers, so this loop is a strict no-op against every locked assertion in that file.
   for (const v of result.voidedLayers) {
-    lines.push(`VOIDED: layer "${v.layer}" rejected in its entirety: rule id "${v.ruleId}" redefines a mandatory rule from an earlier layer`);
+    lines.push(`VOIDED: layer "${sanitizeForTerminal(v.layer)}" rejected in its entirety: rule id "${sanitizeForTerminal(v.ruleId)}" redefines a mandatory rule from an earlier layer`);
   }
   lines.push(`--- resolved rules (${result.merged.rules.length}) ---`);
   const layersByName = new Map(result.layers.map((l) => [l.name, l]));
@@ -112,7 +161,7 @@ function renderSuccess(result: LoadSuccess): PrinterResult {
     const idxInLayer = layer?.ruleSet.rules.findIndex((r) => r.id === rule.id) ?? -1;
     const line = idxInLayer >= 0 ? (layer?.ruleLines[idxInLayer] ?? -1) : -1;
     const origin = layer?.origin ?? "(unknown)";
-    lines.push(`rule id=${rule.id} effect=${rule.effect} layer=${rule.sourceLayer} origin=${origin} line=${line} mandatory=${rule.mandatory ?? false}`);
+    lines.push(`rule id=${sanitizeForTerminal(rule.id)} effect=${rule.effect} layer=${rule.sourceLayer} origin=${sanitizeForTerminal(origin)} line=${line} mandatory=${rule.mandatory ?? false}`);
   }
   return {
     stdout: lines.join("\n"),
@@ -139,6 +188,6 @@ export function printEffectivePolicy(input: PrinterInput): PrinterResult {
     // last resort and turned into a read-error-shaped rejection. `failedLayer` defaults to
     // "central" in this backstop only, since the true origin is genuinely unknown at this point —
     // every NAMED failure shape (the common case) is already attributed correctly by loader.ts.
-    return renderRejection("read-error", (err as Error).message, "central", undefined, undefined);
+    return renderRejection("read-error", describeThrown(err), "central", undefined, undefined);
   }
 }
