@@ -1,13 +1,14 @@
 {
   "scope": "s7a-gate-hook-robustness",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 0,
-  "reviewRoundsTotal": 0,
+  "reviewRoundsSinceClean": 1,
+  "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
   "note_2026-09-26b": "s7a-gate-hook-robustness (Issues #303, #304; CRITICAL): Manager RATIFIED the proposed tier unchanged (run-log tier-ratified event); the Phase 1 plan was approved as written. Build: the hook loads its project modules with import() inside its try/catch (only node: built-ins are static), prints one fixed line with an Unlock clause and a letters-only error type, and fails closed on a stdout write error; the redirect scan in src/policy/normalizer/shell-scanner.ts is linear (one token index per call) with a differential-equivalence instrument against a frozen copy of the old scan. Launcher-level faults (interpreter off PATH, bad NODE_OPTIONS, nonexistent SYSTEMROOT) stay probed PROCEEDS under a narrowed AP-13 (Issue #308). No review round has run yet: red-team, app-security-reviewer and cross-domain-reviewer reports are pending. The rulings row in docs/decisions.md is pending human ratification.",
+  "note_2026-09-26c": "s7a-gate-hook-robustness fix-now round 1 (post-build review round 1: red-team no-go on one HIGH, app-security-reviewer approve, cross-domain-reviewer approve-with-conditions; ONE REWORK-class verdict, so reviewRoundsSinceClean=1 and reviewRoundsTotal=1). Fixed in-story: Issue #321 (HIGH, the separator scan was quadratic on a trailing newline-dense whitespace run; security finding, so the rule 21 exposure cap does not apply), #322 (input-size class recorded per shape, residual set widened), #323 (memory exhaustion recorded as a launcher-owned PROCEEDS row), #324 (differential oracle now a self-contained frozen copy of the whole old module), plus app-security LOW 1 and LOW 2 and the cross-domain wording items. The hook stays UNWIRED. A re-review of the fix-now delta is the Manager's call; the rulings addendum row in docs/decisions.md is pending human ratification.",
   "priorScope": {
     "scope": "s7-kernel-gate-classification",
     "tier": "CRITICAL",
