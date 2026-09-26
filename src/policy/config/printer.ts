@@ -79,19 +79,32 @@ export function renderPostureLine(posture: ResolvedPosture): string {
 // counts, line numbers) stay bare. echo-sanitize.test.ts scans this file for any interpolation that
 // is neither wrapped nor on its named allowlist. The loader and schema keep the raw text.
 
+// Issue #318: the string conversion for a value the type system says is a string but that a policy
+// source port can hand over as anything (undefined, a number, an object, a null-prototype object, one
+// whose toString throws). print-cli.ts calls the exported renderers outside any try, so they must be
+// total. Clean strings come back unchanged (String of a string is the same string).
+const UNPRINTABLE_VALUE = "(unprintable value)";
+function describeValue(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return UNPRINTABLE_VALUE;
+  }
+}
+
 /** The Issue #114 line print-cli.ts writes for a `mandatory: true` declaration with no locking force.
  * Lives here (not inline in print-cli.ts) so it is testable: print-cli.ts hard-wires the real
  * registry reader and repo paths, with no seam a test may use (Issue #99). Clean input yields the
  * exact pre-#294 string. */
 export function renderInertMandatoryNote(d: { layer: string; ruleId: string }): string {
-  return `NOTE: rule id="${sanitizeForTerminal(d.ruleId)}" (layer=${sanitizeForTerminal(d.layer)}) declares mandatory:true but has no real locking force -- only the central layer's mandatory declarations are authoritative; this declaration is NOT silently dropped, it still resolves normally, but it does not protect anything.`;
+  return `NOTE: rule id="${sanitizeForTerminal(describeValue(d.ruleId))}" (layer=${sanitizeForTerminal(describeValue(d.layer))}) declares mandatory:true but has no real locking force -- only the central layer's mandatory declarations are authoritative; this declaration is NOT silently dropped, it still resolves normally, but it does not protect anything.`;
 }
 
 /** The `pin:` line print-cli.ts writes after the printed rules (POL-09, Issue #111). Lives here for the
  * same reason as renderInertMandatoryNote: print-cli.ts has no seam a test may use (Issue #99), and the
  * channel descriptor is policy-derived text. Clean input yields the exact pre-#313 line. */
 export function renderPinLine(pin: PolicyPin): string {
-  return `pin: sha256:${pin.digest} channel=${sanitizeForTerminal(pin.channel)} computedAt=${pin.computedAt}`;
+  return `pin: sha256:${pin.digest} channel=${sanitizeForTerminal(describeValue(pin.channel))} computedAt=${pin.computedAt}`;
 }
 
 /** Issue #315: text for a value caught by the last-resort backstop. Anything can be thrown (undefined,

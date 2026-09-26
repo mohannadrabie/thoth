@@ -38,8 +38,9 @@ function main(): void {
   // Path B): a mandatory:true declaration with no real locking force is never silently dropped --
   // printed here, one line per declaration, same "never touch printer.ts's tested stdout" reasoning
   // as the pin/disclosure lines above. Issues #294 and #313: the NOTE and pin lines are built (and sanitized)
-  // by printer.ts's renderInertMandatoryNote and renderPinLine so they are testable; this file builds no
-  // text of its own (print-lines.test.ts guards that).
+  // by printer.ts's renderInertMandatoryNote and renderPinLine so they are testable. print-lines.test.ts
+  // is a labelled heuristic guard that every write here looks like a call to a renderer imported from
+  // printer.ts (or a PrinterResult field); it is a source scan, not a proof.
   for (const d of result.inertMandatoryDeclarations) {
     process.stdout.write(renderInertMandatoryNote(d) + "\n");
   }
