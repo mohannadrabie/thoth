@@ -111,9 +111,9 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 - Copying `hooks/pretooluse-kernel-gate.mjs`, `src`, `package.json`, `docs/qa/tool-inventory.json`, `docs/qa/s5-central-classification.json` and `.thoth/policy.json` (1.7 MB) to a temp dir and running the copy: exit 0, 216 ms. Module-relative policy and fixture paths then resolve inside the copy, so a test can author project policy and a fixture without touching tracked files. Used by every H check and the G9 probe. The design-challenger round 2 confirmed fidelity (the copy is made at test time, so it cannot drift from the real tree) and that the strict helper rejects crash-as-deny.
 - **Registry pinning (R-6).** The hook takes no central-source seam, so a spawned hook reads the real registry. The sandbox helper therefore overwrites the COPY's `src/policy/config/central-source.ts` default export with a fixed "absent" source, so H verdicts cannot flip on a Windows host with central policy deployed. Recorded fidelity limit: the real reader is exercised only by the C suite, C11, P6 and the locked hook tests (which still spawn the real reader; residual R-6 in 12a).
 
-### S-9. Can a `settings.local.json` env block override `CLAUDE_PROJECT_DIR` for a hook process? SETTLED cheaply (U-9): NO on this runtime
+### S-9. Can an env block in the local settings override file override `CLAUDE_PROJECT_DIR` for a hook process? SETTLED cheaply (U-9): NO on this runtime
 
-- Real `claude -p` session (2.1.267, Windows, haiku), `.claude/settings.local.json` with `env.CLAUDE_PROJECT_DIR` set to a nonexistent directory, a PreToolUse hook logging `process.env.CLAUDE_PROJECT_DIR` and `cwd`: the hook saw the real scratch project directory for both. Limits: one runtime version, print mode, only `settings.local.json` tried (not user or managed settings).
+- Real `claude -p` session (2.1.267, Windows, haiku), the local settings override file with `env.CLAUDE_PROJECT_DIR` set to a nonexistent directory, a PreToolUse hook logging `process.env.CLAUDE_PROJECT_DIR` and `cwd`: the hook saw the real scratch project directory for both. Limits: one runtime version, print mode, only the local settings override file tried (not user or managed settings).
 - Effect on the design: the gate does not use `CLAUDE_PROJECT_DIR` at all (section 4, item 8); the evidence only supports leaving SessionStart's existing seam alone.
 
 ## 4. Design (one page; rule 17)
@@ -193,8 +193,8 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 |---|---|
 | H1 | `MCP tool of a classified server (the first committed fixture entry, name read from the fixture) is not denied: exit 0, empty stdout, empty stderr` |
 | H2 | `tool_name Edit is denied (strict helper)` (complements locked AC-19, which stays unmodified) |
-| H3 | `MCP tool of an unclassified server (mcp__nosuchserver__x) is denied (strict), reason names the unresolved cause` |
-| H4 | `sandbox fixture with stand-in entry docs: mcp__docs__x not denied (control); mcp__docs___x and mcp__docs__evil__x denied; stand-in entry "my server": mcp__my_server__x denied (rejected entry); entries "my server" plus my_server: mcp__my_server__x denied; stand-in entry my_server alone: mcp__my_server__x denied (underscore names are not admitted); the first committed entry name plus a tool segment holding a triple underscore is denied with a reason naming the cause` |
+| H3 | `MCP tool of an unclassified server (mcp__nosuchserver__x) is denied (strict) by the kernel's POL-05 rule (the deny is not the pre-kernel refusal); the reason is the kernel's fixed POL-05 text and does not name the cause` |
+| H4 | `sandbox fixture with stand-in entry docs: mcp__docs__x not denied (control); mcp__docs___x and mcp__docs__evil__x denied; stand-in entry "my server": mcp__my_server__x denied (rejected entry); entries "my server" plus my_server: mcp__my_server__x denied; stand-in entry my_server alone: mcp__my_server__x denied (underscore names are not admitted); the first committed entry name plus a tool segment holding a triple underscore is denied by the kernel's POL-05 rule` |
 | H5 | `sandbox: project policy defaultOutcome deny: Bash kubectl get pod/x --context=c is denied (strict); defaultOutcome allow: not denied` (R3 wiring at hook level) |
 | H6 | `sandbox: corrupt project policy: Bash and MCP calls denied (strict); reason names layer project and kind json-parse-error; reason does not contain the file bytes` |
 | H7 | `sandbox: project rule "deny verbs [tool-class:remote-mutating] targets [mcp/<first fixture entry>/]": that server's MCP call denied; the sandbox fixture flips that entry to read-only: not denied` (R1 at hook level, both directions) |
@@ -409,7 +409,7 @@ Instrument: `grep -rn -E "presence-only|inert today|class.{0,40}inert|inert.{0,4
 | `src/policy/config/bootstrap-ruleset.ts` header | the hook no longer consumes `loadBootstrapRuleSet` |
 | `src/policy/config/central-source.ts` header (#107 notes) | describe the additive fallback |
 
-Not edited by an agent: `CLAUDE.md` "Sensitive areas" still names the deleted `hooks/report-subject-gate.mjs` (human-owned).
+Not edited by an agent: `CLAUDE.md` "Sensitive areas" still names the deleted report-subject gate hook script (human-owned).
 
 ## 11. Test-first dispatch check: YES, dispatch `test-writer` BEFORE Phase 2
 
@@ -479,8 +479,9 @@ None. Nothing blocks `test-writer`. Two items for the Manager and human:
 | `src/policy/normalizer/tool-class-format.ts` (new) | marker table, sanitize, parse, build, `buildServerIndex`, `GRAMMAR_VERSION`, grammar doc | IMPL |
 | `src/policy/normalizer/tool-class.ts` (new) | normalizer registered by declaration | IMPL |
 | `src/policy/normalizer/tool-class.test.ts` (new) | N1-N11 incl. N3b, N4b, N9b (N12 is CMD) | IMPL |
+| `src/policy/normalizer/tool-class-golden.test.ts` (new) | G13, G13b | IMPL |
 | `src/policy/gate/tool-routing.ts`, `decide-tool-call.ts`, `render-hook-output.ts` (new dir) | routing rows with builders and flag; gate with gate-owned ports; typed closed hook output | IMPL |
-| `src/policy/gate/*.test.ts`, `src/policy/tools/classification-catalog.test.ts`, `src/qa/gate-fail-open-probe.ts` and its test (new) | G1-G20 (no G12) | IMPL |
+| `src/policy/gate/decide-tool-call.test.ts`, `src/policy/gate/render-hook-output.test.ts`, `src/policy/gate/gate-structure.test.ts`, `src/policy/tools/classification-catalog.test.ts`, `src/qa/gate-fail-open-probe.ts` and `src/qa/gate-fail-open-probe.test.ts` (new) | G1-G20 (no G12) | IMPL |
 | `src/policy/tools/classification-catalog.ts` (new) | LOCATION function, `projectDir()`, and CATALOG function (two exports) | IMPL |
 | `hooks/pretooluse-kernel-gate.mjs` | thin adapter; module-relative fixture; header rewritten | IMPL |
 | `hooks/sessionstart-tool-enum.mjs` | keep resolving the location before stdin; swap inline `resolveFixtureLocation` body and merge lines for calls into the shared module; nothing else | IMPL |
@@ -521,7 +522,7 @@ Estimated production diff about 350 lines. Rollout: none; the unwired hook is th
 | U-6 | Count of acceptance criteria and checks | DONE by script (7a) | the awk command in 7a |
 | U-7 | `--no-experimental-strip-types` launch fault on Node 22.18.0 (CI's version); the design-challenger measured it on 24.15.0 | UNRUN | run the G9 probe on CI's Node |
 | U-8 | Real `claude -p` session against the built hook for a Bash call and an MCP call | UNRUN (activation) | Manager or implementer at activation |
-| U-9 | A `settings.local.json` env block overriding `CLAUDE_PROJECT_DIR` in a real session | SETTLED for `settings.local.json` on 2.1.267 in print mode (S-9: not overridden); still UNRUN for user and managed settings | the gate does not depend on it (module-relative) |
+| U-9 | An env block in the local settings override file overriding `CLAUDE_PROJECT_DIR` in a real session | SETTLED for the local settings override file on 2.1.267 in print mode (S-9: not overridden); still UNRUN for user and managed settings | the gate does not depend on it (module-relative) |
 | X-1 | A child key the user cannot read is still listed by the parent query (bears on C4: the fallback rethrows when the listing shows Thoth) | UNRUN (the harness refused a registry write) | scratch key under HKCU, deny read on the child, run `reg query` on the parent and on the child with `/v`; human or implementer |
 | X-2 | Which characters the runtime sanitizes beyond space and dot | UNRUN | scratch `claude -p` session with servers declared as `a:b`, `a+b`, `a b`, `a.b`, an accented name, `a__b`; print `tool_name` from a PreToolUse hook; implementer. Until run, any unobserved character mismatches toward deny (and only `[A-Za-z0-9-]` names are admitted) |
 | X-3 | Drills M1-M7 on the built code, actual red sets next to predicted | PHASE 2 GATE (not run: no code exists) | implementer, before the review chain |
@@ -531,3 +532,39 @@ Estimated production diff about 350 lines. Rollout: none; the unwired hook is th
 Manager: dispatch `test-writer` for H (H1-H13 incl. H11b, with the registry-pinned sandbox helper) and P (P1-P7), plus the AC-2 amendment and comment edits.
 
 RECEIPT: verdict=PLAN-READY(no blocking questions; Q-C is a human activation blocker) criteria="87/87 mapped (script-generated, section 7a: C:11 D:2 G:22 H:14 L:4 M:7 N:15 P:7 S:5)" checks="0/0/0 (plan only; 1 cheap probe run this revision: S-9 settings env override of CLAUDE_PROJECT_DIR; X-1, X-2, X-3, U-1, U-3, U-5, U-7, U-8 unrun)" adr=HIT(37) pr=n/a
+
+## 20. Phase 2 build record (appended 2026-09-26; docs only)
+
+### 20a. X-3: mutation drills on the BUILT code, actual red set next to the predicted one
+
+Method: each mutant applied to the built file, the story's eight test files run (63 tests, baseline 63 pass), the file reverted with git checkout. Every predicted test went red; no predicted check survived.
+
+| Drill | Mutant | Predicted red set | ACTUAL red set | Match |
+|---|---|---|---|---|
+| M1 | normalizer emits one marker for every class | G13, G4, G5, H7 | H7, H12, G4, G5, G13, G13b | superset (H12 and G13b also red) |
+| M2 | first committed fixture entry flipped to read-only | G13, H7 | H7, G13 | exact |
+| M3 | hook re-hardcodes the bootstrap outcome | H5, H11 (G3 green) | H5, H11 | exact; G3 stayed green as predicted |
+| M4 | load failure ignored by the gate | G1, H6 | H6, G1 | exact |
+| M5 | marker verbs added to KNOWN_VERBS | N8, N9b, H11b | H11b, N8, N9b | exact; N9 and H11 stayed green as predicted |
+| M6 | route Bash through tool-class | H5, H10, G3, G16 (G11 and the old G16 "stay green") | H5, H8, H10, H13, AC-2, G3, G7, G16, G11 | superset; **prediction defect: G11 went RED**, because the built G11 also pins the routing table's row to toolType mapping, so a mis-pointed row is caught there. H8, H13, AC-2 and G7 were also red |
+| M7 | server lookup by prefix or longest match | N3b (H4, N3, N4, N5 "stay green") | H4, N3b | superset; H4 also red (test-writer added exactness cases; the plan's "H4 stays green" was too weak) |
+
+Findings from the drills: none unkilled. Two prediction understatements (M6: G11 and others; M7: H4), both in the safe direction (more checks catch the mutant than the plan claimed). Drill driver and raw output: scratchpad, not repo code.
+
+### 20b. Other Phase 2 evidence (real output recorded in the hand-back receipt)
+
+- Full suite: 1213 tests, 1213 pass, 0 fail, 0 skipped (baseline at master was 1139).
+- G9 probe (real hook, injected faults): three PROCEEDS (node without type stripping, missing import target, interpreter not on PATH; all recorded as AP-13) and six BLOCKS (empty stdin, invalid JSON, numeric tool_name, unroutable tool_name, unclassified MCP tool, corrupt project policy). Not probed and recorded: input size (AP-14), hook timeout, lock timeout.
+- Latency with the loader in the path (Windows, N=40, shell-form spawn): qa gate-latency-budget p50 164.8 ms, p99 193.1 ms; Bash allow p50 165.8, p99 196.4; classified MCP allow p50 162.8, p99 189.0; unclassified MCP deny p50 167.1, p99 187.5. All far below the 2000 ms budget (p99 about 9.8 percent). CI runs Linux, no registry spawn.
+- Stale-comment grep (S3): the stale phrases are gone from every file this story may edit. Remaining hits are three recorded historical or accepted-record lines: the append-only backlog entry for the issue (with the S7 update appended), an unrelated S4 line in the same file, and the accepted ADR residual row (human, Q-C).
+- Diff-scope check against the Phase 2 base: PASS, zero forbidden paths, comment-only files equal after comment stripping, settings.json equal outside its comment key, fixture equal outside its notes, zero deleted lines in the existing central-source, printer, latency and locked hook tests, no SessionStart test changed.
+
+## 21. Draft decisions rows for the Manager to ratify (NOT written into the decision log by the implementer)
+
+1. **#288 precondition 2 and the trust model (R5, R-E).** Peer semantics kept, no change to the rule precedence module: project may relax a shipped posture when central is absent or declares nothing; a lower-trust layer may tighten to deny. Central posture is un-relaxable as a SCALAR only: a rank-0 layer's allow RULE (or a redefined shipped rule id) can still allow what a central posture denies. The print line says so (tests P2, P7, G7). Central cannot require its own allow; queued for the architect.
+2. **#107 additive reading.** The ratified 2026-09-24 condition is discharged by a locale-independent fallback with the English match kept as the fast path (no test deleted). The header-line evidence of the ruling was adapted to a line at or under the parent path (Q-E, measured: the header line is printed only for keys with values). Not demonstrated on a non-English host; the calendar backstop 2026-10-24 stays for the English text match.
+3. **S5 criterion 12 partly superseded.** The gate now also evaluates mcp__ names; every other tool_name, built-ins included, is still refused. Nothing is wired.
+4. **Q-B outcome.** A kernel allow emits nothing; measured that a hook allow skips the user's permission prompt.
+5. **No cache supersedes the S6 architecture pre-build recommendation in the backlog (compute once per session)**, on measured evidence (about 42 ms p50, 76 ms p99 added).
+6. **AP-13 and AP-14 bound as activation blockers** (issues 303 and 304); not fixed here.
+7. **Grammar version 1** of the tool-class markers and targets, with the rule-author facts in the grammar module header; a bump needs a decisions row and a central-rule migration note.

@@ -13,8 +13,8 @@ Date: 2026-09-26. Source: `intake-refiner` run, Manager-checked. **Verdict: NEED
 | Fact | Evidence |
 |---|---|
 | No `PreToolUse` entry exists in `.claude/settings.json` | `hooks` holds only `SessionStart` and `UserPromptSubmit` |
-| `hooks/report-subject-gate.mjs` does not exist | not in `hooks/`; settings comment says the entry was deleted 2026-09-06 (Issue #87) |
-| `CLAUDE.md` "Sensitive areas" still names `report-subject-gate.mjs` | doc drift; human-owned file, not edited here |
+| The report-subject gate hook script does not exist | not in `hooks/`; settings comment says the entry was deleted 2026-09-06 (Issue #87) |
+| `CLAUDE.md` "Sensitive areas" still names the deleted report-subject gate hook script | doc drift; human-owned file, not edited here |
 | The hook accepts only `tool_name == "Bash"` and denies any other tool | `hooks/pretooluse-kernel-gate.mjs`, criterion 19 |
 | The classification fixture holds 6 tools, all `remote-mutating` MCP servers | `docs/qa/s5-central-classification.json` |
 | `shipped-defaults.json` has `rules: []` | wiring Bash live denies ordinary commands until baseline policy content exists |
