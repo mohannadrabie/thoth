@@ -8,8 +8,9 @@
 // built and tested but NOT WIRED. `.claude/settings.json` has no `hooks.PreToolUse` entry for it, so
 // nothing is enforced live from this policy today. Activation is a separate, human-owned step with
 // its own preconditions (plan section 14, AP-1 to AP-14), among them baseline allow content
-// (nothing denies by class from shipped data until then), a refreshed tool inventory, and the two
-// unfixed launch and size fail-open blockers below.
+// (nothing denies by class from shipped data until then), a refreshed tool inventory, and the
+// launcher-level residuals below (AP-13, narrowed by docs/plans/s7a-gate-hook-robustness-phase1-
+// 2026-09-26.md).
 //
 // SCOPE (plan R-B): the gate evaluates ONLY `tool_name == "Bash"` (S4 shell normalizer) and names of
 // the form `mcp__<server>__<tool>` (the tool-class normalizer, class carried on a marker verb, see
@@ -31,26 +32,28 @@
 // only for an exact allow verdict; any other result shape exits 2 with stderr, never silent (PT-15).
 //
 // SUR-10 fail-open paths (REQUIREMENTS.md; enumerated by src/qa/gate-fail-open-probe.ts, recorded in
-// plan section 9):
+// plan section 9). Claude Code treats exit 2 as a block and exit 1, a signal or a timeout as
+// NON-BLOCKING (measured on 2.1.267), so every failure this script can catch must end in exit 2:
 //   - missing configuration / unknown tool: a policy or fixture that cannot load denies; an
 //     unclassified, ambiguous or unparseable MCP name is opaque and POL-05 denies it.
-//   - internal exception: the body below runs inside main().catch: exit 2 with stderr.
-//     CORRECTION of an earlier claim that the WHOLE body ran in one try/catch: the static imports
-//     below run BEFORE that catch. A process that dies there (Node without TypeScript type
-//     stripping, a missing or renamed import target, an interpreter that is not on PATH) exits 1,
-//     which Claude Code treats as NON-BLOCKING: the call PROCEEDS (measured, design-challenger
-//     round 1, Claude Code 2.1.267). NOT fixed in this story; bound as activation blocker AP-13
-//     (Issue #303). The same family includes env-induced launch failures (NODE_OPTIONS with an
-//     unknown flag exits 9; SYSTEMROOT pointing at a nonexistent directory aborts Node on Windows),
-//     injected by the probe in src/qa/gate-fail-open-probe.ts and recorded as PROCEEDS.
-//   - discarded stdout write: a decided deny written to a stdout the reader has already closed is
-//     dropped and the process exits 0 with empty stdout, which on this runtime means ALLOW
-//     (red-team attack 3, demonstrated with a destroyed stream, unproven in a real session). The
-//     adapter has no write-error listener yet. NOT fixed in this story; recorded as the probe row
-//     `stdout-closed-before-write` under AP-13.
-//   - input size: a padded, redirect-dense command makes S4's redirect scan quadratic and can outrun
-//     the hook timeout, which proceeds. NOT fixed in this story (shell-scanner.ts untouched); bound
-//     as AP-14 (Issue #304).
+//   - internal exception AND module-load failure (Issue #303): the whole body, including the load of
+//     every project module, runs inside ONE try/catch below. Only `node:` built-ins are static
+//     imports, so a Node that cannot strip TypeScript types, or a missing or renamed project file,
+//     is caught and exits 2 (before this change those static imports ran before any catch and
+//     exited 1). The stderr message is fixed text, an unlock clause, and the error TYPE only
+//     (letters only, else `Error`): no path, no stack and no raw message reach the model.
+//   - stdout write failure: the decision is written with a completion callback and the stream has
+//     an error listener; a write that fails, or a stream that errors, exits 2 (before this change a
+//     deny written to a closed pipe was dropped and the process exited 0 with empty stdout, which on
+//     this runtime means ALLOW: red-team attack 3, demonstrated with a destroyed stream on Windows,
+//     unproven in a real session).
+//   - input size (Issue #304): S4's redirect scan is linear (one token index per call), so a padded
+//     redirect-dense command finishes in milliseconds instead of outrunning the hook timeout.
+//   - RESIDUAL, owned by the launcher (the future settings entry's command form, Issue #308, AP-13
+//     narrowed): faults that kill the process BEFORE any of this script runs cannot be fixed inside
+//     it. Measured: an interpreter that is not on PATH (exit 127 or 1), `NODE_OPTIONS` with an
+//     unknown flag (exit 9), `SYSTEMROOT` pointing at a nonexistent directory on Windows (exit 134).
+//     The probe in src/qa/gate-fail-open-probe.ts injects each and records PROCEEDS.
 //   - hook timeout / non-blocking hook surface: runtime properties, disclosed, not preventable here.
 //
 // TIMEOUT DISCLOSURE (SUR-12 / OPS-03 split-budget model): the declared entry timeout (60, set at
@@ -63,15 +66,14 @@
 // trail (hash-chained, append-only) is S8's job (INT-05); this hook writes no file.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decideToolCall } from "../src/policy/gate/decide-tool-call.ts";
-import { renderHookOutput } from "../src/policy/gate/render-hook-output.ts";
-import { loadEffectivePolicy } from "../src/policy/config/loader.ts";
-import { defaultCentralPolicySource } from "../src/policy/config/central-source.ts";
-import { assembleCatalog, moduleRelativeFixtureLocation } from "../src/policy/tools/classification-catalog.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SHIPPED_DEFAULTS_PATH = join(HERE, "..", "src", "policy", "config", "shipped-defaults.json");
 const PROJECT_POLICY_PATH = join(HERE, "..", ".thoth", "policy.json");
+
+// PRINCIPLES rule 2: a block names its unlock. Fixed text: it must carry no path, no stack frame and no
+// parser text (the stderr redaction test rejects them), because stderr is a model-visible channel.
+const UNLOCK = "Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout).";
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -85,53 +87,90 @@ function readStdin() {
   });
 }
 
-/** The gate's ports (src/policy/gate/decide-tool-call.ts owns their types, so the gate imports nothing
- * from src/policy/config/): the real loader, adapted here to the gate's own layer-and-kind result
- * (never the raw loader message), and the module-relative catalog. The gate returns a CLOSED result:
- * a kernel verdict (allow or deny) or a refusal (malformed input, an unroutable tool_name, a policy
- * load failure), and renderHookOutput maps it to what this script writes. A port that throws (for
- * example a malformed fixture) propagates out of the gate to main().catch below: exit 2. */
-const PORTS = {
-  loadPolicy() {
-    const loaded = loadEffectivePolicy({
-      shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
-      projectPolicyPath: PROJECT_POLICY_PATH,
-      centralSource: defaultCentralPolicySource,
-    });
-    if (!loaded.ok) return { ok: false, failedLayer: loaded.failedLayer, reasonKind: loaded.reasonKind };
-    return {
-      ok: true,
-      ruleSet: { version: loaded.merged.version, rules: loaded.merged.rules },
-      defaultOutcome: loaded.defaultOutcome.outcome,
-    };
-  },
-  loadCatalog() {
-    return assembleCatalog(moduleRelativeFixtureLocation()).merged;
-  },
-};
-
-// main(): read the payload, decide, render, exit. Anything thrown from here (empty stdin, unparseable
-// JSON, a port that throws) reaches main().catch at the bottom: exit 2 with a stderr message, the one
-// code the PreToolUse contract guarantees blocks the call. The imports above run BEFORE this catch
-// exists (see the SUR-10 note in the header: AP-13).
-async function main() {
-  const raw = await readStdin();
-
-  if (raw.trim() === "") {
-    throw new Error("empty stdin: no hook payload received at all");
+/** Fail closed: ONE fixed line (what happened, the unlock, the error TYPE only) on stderr, then exit 2, the
+ * one code the PreToolUse contract guarantees blocks the call. The error type is accepted only when it is
+ * letters only (S7 fix-now, app-security finding 4: err.stack carried absolute file paths and parser text
+ * into a model-visible channel); anything else prints as the bare type `Error`. The exit runs in a finally
+ * so that even a broken stderr cannot turn this into a non-blocking exit 1. */
+function failClosed(what, err) {
+  const name = typeof err?.name === "string" && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : "Error";
+  try {
+    process.stderr.write(`pretooluse-kernel-gate.mjs: ${what}, fail-closed (exit 2). ${UNLOCK} Error type: ${name}\n`);
+  } finally {
+    process.exit(2);
   }
-
-  const input = JSON.parse(raw);
-  const output = renderHookOutput(decideToolCall(input, PORTS));
-  if (output.stderr !== "") process.stderr.write(output.stderr);
-  if (output.stdout !== "") process.stdout.write(output.stdout);
-  process.exit(output.exitCode);
 }
 
-main().catch((err) => {
-  // A fixed message plus the error NAME only (S7 fix-now, app-security finding 4): err.stack carried
-  // absolute file paths and parser text (a fragment of a malformed fixture or payload) into a
-  // model-visible channel.
-  process.stderr.write(`pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2): ${typeof err?.name === "string" ? err.name : "Error"}\n`);
-  process.exit(2);
-});
+const STDOUT_FAILED = "decision could not be written to stdout";
+
+/** Writes the decision and resolves only when the stream reports it flushed. A failed write (the callback
+ * receives an error) fails closed here, so a decided deny that never reached the reader is never an exit 0. */
+function writeStdout(text) {
+  return new Promise((resolvePromise) => {
+    process.stdout.write(text, (err) => (err ? failClosed(STDOUT_FAILED, err) : resolvePromise(undefined)));
+  });
+}
+
+// main(): load the project modules and read the payload (concurrently, so start-up cost is one load),
+// decide, render, write, exit. EVERYTHING that can throw runs inside the try: a module that cannot load, an
+// empty or unparseable payload, a port that throws. The catch is the only exit path for a failure.
+async function main() {
+  try {
+    // A stdout error event (for example EPIPE on a pipe the reader closed) has no other listener: without
+    // this it would be an uncaught exception, exit 1, non-blocking.
+    process.stdout.on("error", (err) => failClosed(STDOUT_FAILED, err));
+
+    // The project modules are loaded with import() so a load failure lands in the catch below. The gate
+    // module's surface this hook uses, written in static-import spelling because the locked test AC-H13
+    // (hooks/pretooluse-kernel-gate-classification.test.ts) reads this spelling to discover the export it
+    // wraps:
+    //   import { decideToolCall } from "../src/policy/gate/decide-tool-call.ts"
+    const [raw, gate, render, loader, central, catalog] = await Promise.all([
+      readStdin(),
+      import("../src/policy/gate/decide-tool-call.ts"),
+      import("../src/policy/gate/render-hook-output.ts"),
+      import("../src/policy/config/loader.ts"),
+      import("../src/policy/config/central-source.ts"),
+      import("../src/policy/tools/classification-catalog.ts"),
+    ]);
+
+    if (raw.trim() === "") {
+      throw new Error("empty stdin: no hook payload received at all");
+    }
+    const input = JSON.parse(raw);
+
+    // The gate's ports (src/policy/gate/decide-tool-call.ts owns their types, so the gate imports nothing
+    // from src/policy/config/): the real loader, adapted here to the gate's own layer-and-kind result
+    // (never the raw loader message), and the module-relative catalog. The gate returns a CLOSED result: a
+    // kernel verdict (allow or deny) or a refusal (malformed input, an unroutable tool_name, a policy load
+    // failure), and renderHookOutput maps it to what this script writes. A port that throws (for example a
+    // malformed fixture) propagates to the catch below: exit 2.
+    const ports = {
+      loadPolicy() {
+        const loaded = loader.loadEffectivePolicy({
+          shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
+          projectPolicyPath: PROJECT_POLICY_PATH,
+          centralSource: central.defaultCentralPolicySource,
+        });
+        if (!loaded.ok) return { ok: false, failedLayer: loaded.failedLayer, reasonKind: loaded.reasonKind };
+        return {
+          ok: true,
+          ruleSet: { version: loaded.merged.version, rules: loaded.merged.rules },
+          defaultOutcome: loaded.defaultOutcome.outcome,
+        };
+      },
+      loadCatalog() {
+        return catalog.assembleCatalog(catalog.moduleRelativeFixtureLocation()).merged;
+      },
+    };
+
+    const output = render.renderHookOutput(gate.decideToolCall(input, ports));
+    if (output.stderr !== "") process.stderr.write(output.stderr);
+    if (output.stdout !== "") await writeStdout(output.stdout);
+    process.exit(output.exitCode);
+  } catch (err) {
+    failClosed("internal exception", err);
+  }
+}
+
+main().catch((err) => failClosed("internal exception", err));
