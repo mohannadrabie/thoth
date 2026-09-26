@@ -35,6 +35,8 @@ export interface RecordedDecision {
   expect: FaultOutcome;
   /** False when the path is recorded but not probed here. */
   probed: boolean;
+  /** Set when the fault only exists on one platform (the probe skips it elsewhere). */
+  platform?: NodeJS.Platform;
   /** The activation precondition that closes a PROCEEDS path (required for PROCEEDS rows). */
   ap?: string;
   note: string;
@@ -44,6 +46,9 @@ export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "node-without-ts-type-stripping", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "old or unflagged Node: the module graph fails to load, exit 1, non-blocking (Issue #303)" },
   { id: "import-target-missing", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "a static import target is missing or renamed: exit 1, non-blocking (Issue #303)" },
   { id: "interpreter-not-on-path", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "the command cannot start: shell exit 127 or 1, non-blocking (Issue #303)" },
+  { id: "node-options-bad-flag", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "NODE_OPTIONS with an unknown flag: Node exits 9 before any hook code runs, non-blocking (app-security finding 1; reach of a settings env block to the hook is unproven, U-9)" },
+  { id: "systemroot-nonexistent", expect: "PROCEEDS", probed: true, platform: "win32", ap: "AP-13", note: "SYSTEMROOT pointing at a nonexistent directory: Node aborts at start-up on Windows, non-blocking (app-security finding 1)" },
+  { id: "stdout-closed-before-write", expect: "PROCEEDS", probed: false, ap: "AP-13", note: "a destroyed or closed stdout discards a decided deny and the process exits 0 with empty stdout, which means allow (red-team attack 3, demonstrated with a destroyed stream, UNPROVEN in a real session); the adapter has no write-error listener; activation adds one" },
   { id: "empty-stdin", expect: "BLOCKS", probed: true, note: "exit 2 with stderr" },
   { id: "invalid-json-stdin", expect: "BLOCKS", probed: true, note: "exit 2 with stderr" },
   { id: "numeric-tool-name", expect: "BLOCKS", probed: true, note: "malformed input: deny JSON" },
@@ -91,9 +96,18 @@ interface Spawned {
   stdout: string;
   stderr: string;
 }
-function run(command: string, args: string[], input: string, cwd: string, shell: boolean): Spawned {
-  const r = spawnSync(command, args, { input, encoding: "utf8", cwd, shell, timeout: 30_000, windowsHide: true });
+function run(command: string, args: string[], input: string, cwd: string, shell: boolean, env?: NodeJS.ProcessEnv): Spawned {
+  const r = spawnSync(command, args, { input, encoding: "utf8", cwd, shell, timeout: 30_000, windowsHide: true, ...(env === undefined ? {} : { env }) });
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** A copy of the current environment with `overrides` applied; keys matching `removeCase` (case-insensitively, Windows
+ * environment names are case-insensitive) are dropped first so an override is not duplicated under another casing. */
+function envWith(overrides: Record<string, string>, removeCase: string[] = []): NodeJS.ProcessEnv {
+  const drop = new Set(removeCase.map((k) => k.toLowerCase()));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!drop.has(k.toLowerCase())) env[k] = v;
+  return { ...env, ...overrides };
 }
 
 /** Runs every probed fault against the real hook (copied into throwaway trees). */
@@ -116,6 +130,12 @@ export function runProbe(repoRoot: string): FaultResult[] {
     record("import-target-missing", run(process.execPath, [join(bare, "pretooluse-kernel-gate.mjs")], BASH_PAYLOAD, join(root, "bare"), false));
 
     record("interpreter-not-on-path", run(`thoth-no-such-interpreter "${hook}"`, [], BASH_PAYLOAD, good, true));
+    // Environment-induced launch failures (AP-13 family): a payload the gate DENIES normally, so PROCEEDS is unambiguous.
+    const denied = payload("mcp__nosuchserver__x");
+    record("node-options-bad-flag", run(process.execPath, [hook], denied, good, false, envWith({ NODE_OPTIONS: "--no-such-flag-s7" })));
+    if (process.platform === "win32") {
+      record("systemroot-nonexistent", run(process.execPath, [hook], denied, good, false, envWith({ SYSTEMROOT: join(root, "no-such-systemroot") }, ["SYSTEMROOT"])));
+    }
     record("empty-stdin", run(process.execPath, [hook], "", good, false));
     record("invalid-json-stdin", run(process.execPath, [hook], "{ not json at all", good, false));
     record("numeric-tool-name", run(process.execPath, [hook], payload(12345), good, false));

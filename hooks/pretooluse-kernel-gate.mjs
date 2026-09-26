@@ -40,7 +40,14 @@
 //     stripping, a missing or renamed import target, an interpreter that is not on PATH) exits 1,
 //     which Claude Code treats as NON-BLOCKING: the call PROCEEDS (measured, design-challenger
 //     round 1, Claude Code 2.1.267). NOT fixed in this story; bound as activation blocker AP-13
-//     (Issue #303).
+//     (Issue #303). The same family includes env-induced launch failures (NODE_OPTIONS with an
+//     unknown flag exits 9; SYSTEMROOT pointing at a nonexistent directory aborts Node on Windows),
+//     injected by the probe in src/qa/gate-fail-open-probe.ts and recorded as PROCEEDS.
+//   - discarded stdout write: a decided deny written to a stdout the reader has already closed is
+//     dropped and the process exits 0 with empty stdout, which on this runtime means ALLOW
+//     (red-team attack 3, demonstrated with a destroyed stream, unproven in a real session). The
+//     adapter has no write-error listener yet. NOT fixed in this story; recorded as the probe row
+//     `stdout-closed-before-write` under AP-13.
 //   - input size: a padded, redirect-dense command makes S4's redirect scan quadratic and can outrun
 //     the hook timeout, which proceeds. NOT fixed in this story (shell-scanner.ts untouched); bound
 //     as AP-14 (Issue #304).
@@ -122,6 +129,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2): ${err?.stack ?? err}\n`);
+  // A fixed message plus the error NAME only (S7 fix-now, app-security finding 4): err.stack carried
+  // absolute file paths and parser text (a fragment of a malformed fixture or payload) into a
+  // model-visible channel.
+  process.stderr.write(`pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2): ${typeof err?.name === "string" ? err.name : "Error"}\n`);
   process.exit(2);
 });

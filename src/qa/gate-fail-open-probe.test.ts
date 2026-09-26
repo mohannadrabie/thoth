@@ -33,9 +33,18 @@ test("G9: SUR-10 by script: every probed fault's observed outcome equals its rec
     assert.equal(o.outcome, row.expect, `${o.id}: observed ${o.outcome}, recorded ${row.expect}; ${o.detail}`);
   }
   for (const row of RECORDED_DECISIONS) {
-    if (row.probed) assert.ok(probedIds.has(row.id), `recorded row ${row.id} was never probed`);
+    if (row.probed && (row.platform === undefined || row.platform === process.platform)) assert.ok(probedIds.has(row.id), `recorded row ${row.id} was never probed`);
     if (row.expect === "PROCEEDS") assert.ok(row.ap !== undefined && row.ap.startsWith("AP-"), `${row.id}: a PROCEEDS path must name the AP that closes it`);
   }
   const proceeds = observed.filter((o) => o.outcome === "PROCEEDS").map((o) => o.id).sort();
-  assert.deepEqual(proceeds, ["import-target-missing", "interpreter-not-on-path", "node-without-ts-type-stripping"], "the three unnamed launch paths (AP-13) are the ONLY probed fail-open paths");
+  const expectedProceeds = ["import-target-missing", "interpreter-not-on-path", "node-options-bad-flag", "node-without-ts-type-stripping", ...(process.platform === "win32" ? ["systemroot-nonexistent"] : [])].sort();
+  assert.deepEqual(proceeds, expectedProceeds, "the launch-failure family (AP-13, including the two environment-induced faults) are the ONLY probed fail-open paths");
+});
+
+test("G9: the discarded-stdout-write path is recorded (not probed here) as a PROCEEDS row that names AP-13 (red-team attack 3, plan section 9)", () => {
+  const row = RECORDED_DECISIONS.find((r) => r.id === "stdout-closed-before-write");
+  assert.ok(row !== undefined, "the row exists");
+  assert.equal(row.expect, "PROCEEDS");
+  assert.equal(row.probed, false);
+  assert.equal(row.ap, "AP-13");
 });
