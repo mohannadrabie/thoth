@@ -615,18 +615,19 @@ test("ISSUE-108(b): central channel ABSENT and wholly uninvolved, but the SHIPPE
 // JSON.parse error snippet itself embeds a newline from the pretty-printed source) -- see
 // INTERPRETATION CHOICE 7 above for the full history.
 
-test("ISSUE-108(c): a UTF-8 BOM on a PRETTY-PRINTED (multi-line) project file still names the PROJECT layer, exits 1, and leaks no rule data -- even though its rejection spans MORE than 2 stdout lines (the JSON.parse error snippet embeds a newline from the pretty-printed source), the shape red-team round-5 finding 2 showed the ORIGINAL exact-2-lines contract would have wrongly failed on", () => {
+test("ISSUE-108(c) [AMENDED 2026-09-26, Issue #294, Manager ruling]: a UTF-8 BOM on a PRETTY-PRINTED (multi-line) project file still names the PROJECT layer, exits 1, and leaks no rule data -- and, now that the JSON.parse error snippet's embedded newline (from the pretty-printed source) is STRIPPED at the render boundary, its rejection is EXACTLY 2 stdout lines (status line + REJECTED line)", () => {
   const result: PrinterResult = printEffectivePolicy({
     shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
     projectPolicyPath: PROJECT_BOM_PRETTY_MALFORMED_PATH,
     centralSource: centralSourceReturning({ status: "absent" }),
   });
   assert.equal(result.exitCode, 1, `expected exit code 1 for a PROJECT-layer parse failure (fail-closed); stdout=${result.stdout}`);
-  // The property this test exists to prove: this fixture's rejection is MORE than 2 lines (the
-  // exact shape the old contract could not tolerate) -- asserted explicitly here, not just relied
-  // on implicitly, so this test would itself have failed loudly (a wrong `=== 2`) rather than
-  // silently passing had the relaxation in INTERPRETATION CHOICE 7 not been made.
-  assert.ok(result.stdout.split("\n").length > 2, `expected this PRETTY-PRINTED BOM fixture's rejection to span MORE than 2 lines (proving it exercises the shape the old exact-2-lines contract could not tolerate); got:\n${result.stdout}`);
+  // AMENDED 2026-09-26 (Issue #294, Manager ruling): this test formerly asserted `> 2` lines because
+  // the raw newline inside the JSON.parse error snippet (from the pretty-printed source) used to be
+  // echoed to stdout (INTERPRETATION CHOICE 7). Policy-derived text is now sanitized at the render
+  // boundary, so that newline is stripped and the rejection is EXACTLY 2 lines. `=== 2` is strictly
+  // stronger than the old `> 2`: it also proves no control character survives to split the line.
+  assert.equal(result.stdout.split("\n").length, 2, `expected this PRETTY-PRINTED BOM fixture's rejection to be EXACTLY 2 lines (the JSON.parse snippet's embedded newline is stripped by the #294 sanitizer); got:\n${result.stdout}`);
   buildExpectedRejectionStdout("central-channel status=absent", "project", "json-parse-error", fileParseFailureBound(PROJECT_BOM_PRETTY_MALFORMED_PATH))(result.stdout);
   assert.doesNotMatch(result.stdout, /REJECTED: central policy load failed/, `expected the rejection to NEVER claim "central policy load failed" when central was absent and uninvolved -- the PROJECT layer is the true offender; got:\n${result.stdout}`);
 });
