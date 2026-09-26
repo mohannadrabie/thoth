@@ -11,7 +11,7 @@
 // loader/precedence/pin unit tests exercise directly — not a second, parallel implementation of
 // the merge/validation logic (architecture-reviewer S6 pre-build finding 1's "one merge core"
 // concern, applied one layer up: one load pipeline, one renderer on top of it).
-import { loadEffectivePolicy, type FailedLayerName, type LoadFailureReasonKind, type LoadSuccess } from "./loader.ts";
+import { loadEffectivePolicy, type FailedLayerName, type LoadFailureReasonKind, type LoadSuccess, type ResolvedPosture } from "./loader.ts";
 import type { CentralPolicySource } from "./central-source.ts";
 import type { PolicyPin } from "./pin.ts";
 
@@ -21,14 +21,16 @@ export interface PrinterInput {
   centralSource: CentralPolicySource;
 }
 
-// Stage-3 round-1 fix-now (2026-09-08), Issue #109 [MED]: this printer answers "why is this
-// blocked" from S6's own RESOLVED policy (loadEffectivePolicy) — it does NOT necessarily match what
-// hooks/pretooluse-kernel-gate.mjs enforces LIVE today. That hook stays on its own, separate
-// loadBootstrapRuleSet() path this story (docs/decisions.md's S6 plan-ratification row, item 3 —
-// deliberately not rewired, to avoid opportunistic scope-widening into hook-surface territory).
-// Exported so print-cli.ts (and any other consumer) can surface it without duplicating the text.
+// Stage-3 round-1 fix-now (2026-09-08), Issue #109 [MED], REWRITTEN by S7 (2026-09-26): this printer
+// answers "why is this blocked" from the RESOLVED policy (loadEffectivePolicy). Since S7 the kernel-gate
+// hook reads the SAME loader (rules and the resolved posture, Issue #288), but that hook is NOT WIRED
+// into .claude/settings.json (no PreToolUse entry), so nothing is enforced live from this policy today.
+// This literal must stay TRUE: printer.test.ts AC-P5 derives the wiring state from .claude/settings.json
+// and requires this text to equal the matching literal EXACTLY, so wiring the hook (activation) forces
+// a deliberate update here. Exported so print-cli.ts (and any other consumer) can surface it without
+// duplicating the text.
 export const ENFORCEMENT_DISCLOSURE =
-  "NOTE: this reflects S6's own resolved policy (loadEffectivePolicy) -- it is not necessarily what hooks/pretooluse-kernel-gate.mjs enforces live today (that hook still reads via its own, separate loadBootstrapRuleSet() path; see docs/decisions.md's S6 plan-ratification row).";
+  "NOTE: this reflects S6's own resolved policy (loadEffectivePolicy). hooks/pretooluse-kernel-gate.mjs reads the same loader but is not wired into .claude/settings.json (no PreToolUse entry), so nothing is enforced live from this policy today.";
 
 export interface PrinterResult {
   stdout: string;
@@ -50,6 +52,24 @@ export interface PrinterResult {
    * here, never silently dropped. Kept OUT of `stdout` for the identical locked-test reason `pin`
    * and `disclosure` are above -- empty on a fail-closed rejection (no lock result to report). */
   inertMandatoryDeclarations: readonly { layer: string; ruleId: string }[];
+  /** R4 / Issue #288 precondition 1 (S7): the loader's resolved baseline posture and the layer that
+   * supplied it (`LoadSuccess.defaultOutcome`), or `undefined` on a fail-closed rejection (no
+   * posture is resolved). Kept OUT of `stdout` for the identical locked-test reason `pin` and
+   * `disclosure` are above. */
+  posture?: ResolvedPosture | undefined;
+  /** The one-line operator rendering of `posture`, printed by print-cli.ts. Names the SOURCE and never
+   * claims more than the merge does: a lower-trust layer's ALLOW RULE can still allow what a central
+   * posture denies (Issue #288 precondition 2, printer.test.ts AC-P7). */
+  postureLine: string;
+}
+
+const POSTURE_LINE_REJECTED = "posture: unresolved (policy load rejected)";
+
+/** printer.test.ts AC-P2 pins these strings exactly. */
+export function renderPostureLine(posture: ResolvedPosture): string {
+  if (posture.source === "bootstrap") return `posture: ${posture.outcome} (source: bootstrap; no layer declared a posture)`;
+  if (posture.source === "central") return `posture: ${posture.outcome} (source: central; rules from lower-trust layers can still allow)`;
+  return `posture: ${posture.outcome} (source: ${posture.source}; in-repo layer, not centrally enforced; rules from other layers can still allow)`;
 }
 
 function centralStatusLine(centralStatus: "absent" | "unsupported" | "present" | undefined, centralChannel: string | undefined): string {
@@ -72,7 +92,7 @@ function renderRejection(
   const stdout = [centralStatusLine(centralStatus, centralChannel), `REJECTED: ${failedLayer} policy load failed (${reasonKind}): ${message}`].join(
     "\n",
   );
-  return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE, inertMandatoryDeclarations: [] };
+  return { stdout, exitCode: 1, disclosure: ENFORCEMENT_DISCLOSURE, inertMandatoryDeclarations: [], posture: undefined, postureLine: POSTURE_LINE_REJECTED };
 }
 
 function renderSuccess(result: LoadSuccess): PrinterResult {
@@ -100,6 +120,8 @@ function renderSuccess(result: LoadSuccess): PrinterResult {
     pin: result.pin,
     disclosure: ENFORCEMENT_DISCLOSURE,
     inertMandatoryDeclarations: result.inertMandatoryDeclarations,
+    posture: result.defaultOutcome,
+    postureLine: renderPostureLine(result.defaultOutcome),
   };
 }
 
