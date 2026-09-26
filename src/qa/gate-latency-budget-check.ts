@@ -72,10 +72,30 @@ export interface LatencyPercentiles {
  * shipped script). */
 export type CallTimer = (scriptPath: string, stdinPayload: string) => number;
 
+/**
+ * S7 L4 (design-challenger round 1 attack 8, PT-11): the instrument must assert the child's OUTCOME.
+ * Before this the exit status and stdout were discarded, so a crashed or truncated hook run also
+ * "passed" the latency budget. An acceptable hook outcome under the PreToolUse contract is: exit 2
+ * (blocks), or exit 0 with EMPTY stdout (a kernel allow emits nothing, Q-B) or with a parseable JSON
+ * stdout (a deny). Anything else (exit 1, a null status from a timeout or spawn failure, exit 0 with
+ * unparseable stdout) throws. Large-input corpus entries belong to Issue #304's own story.
+ */
+export function assertHookOutcome(status: number | null, stdout: string): void {
+  if (status === null) throw new Error("gate-latency-budget-check: the hook run has no exit status (timeout or spawn failure)");
+  if (status === 2) return;
+  if (status !== 0) throw new Error(`gate-latency-budget-check: the hook exited with status ${status}; only exit 0 or 2 is a valid gate outcome`);
+  if (stdout.trim() === "") return;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    throw new Error("gate-latency-budget-check: the hook exited 0 with stdout that does not parse as JSON");
+  }
+}
+
 export const REAL_SHELL_FORM_TIMER: CallTimer = (scriptPath, stdinPayload) => {
   const command = `node "${scriptPath}"`;
   const start = process.hrtime.bigint();
-  spawnSync(command, {
+  const result = spawnSync(command, {
     input: stdinPayload,
     encoding: "utf8",
     shell: true,
@@ -83,6 +103,7 @@ export const REAL_SHELL_FORM_TIMER: CallTimer = (scriptPath, stdinPayload) => {
     timeout: 30_000,
   });
   const end = process.hrtime.bigint();
+  assertHookOutcome(result.status, result.stdout ?? "");
   return Number(end - start) / 1e6;
 };
 

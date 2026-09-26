@@ -77,3 +77,29 @@ test("REAL_SHELL_FORM_TIMER + measureLatency: measures the REAL hooks/pretooluse
   const result = checkLatencyBudget(measurement, OPS03_CEILING_MS);
   assert.equal(result.ok, true, JSON.stringify(result));
 });
+
+// --- S7 L4 (story-implementer, written failing first): the instrument asserts the child's OUTCOME.
+// Before this, REAL_SHELL_FORM_TIMER discarded the child's exit status and stdout, so a crashed or
+// truncated hook run also "passed" the budget (design-challenger round 1, attack 8, PT-11).
+import { assertHookOutcome } from "./gate-latency-budget-check.ts";
+
+test("L4: assertHookOutcome accepts exit 0 with empty stdout (a kernel allow), exit 0 with a parseable deny JSON, and exit 2", () => {
+  assertHookOutcome(0, "");
+  assertHookOutcome(0, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "r" } }));
+  assertHookOutcome(2, "");
+});
+
+test("L4: assertHookOutcome throws on exit 1, a null status (timeout or spawn failure), and exit 0 with unparseable stdout", () => {
+  assert.throws(() => assertHookOutcome(1, ""), /exit/i);
+  assert.throws(() => assertHookOutcome(null, ""), /timeout|status/i);
+  assert.throws(() => assertHookOutcome(0, "not json at all"), /stdout|parse/i);
+  assert.throws(() => assertHookOutcome(127, ""), /exit/i);
+});
+
+test("L4: measureLatency fails (propagates the throw) when the timer reports a bad hook outcome", () => {
+  const badTimer = (): number => {
+    assertHookOutcome(1, "");
+    return 1;
+  };
+  assert.throws(() => measureLatency("x", ["c"], 1, badTimer), /exit/i);
+});
