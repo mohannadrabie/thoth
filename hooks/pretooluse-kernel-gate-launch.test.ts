@@ -121,6 +121,20 @@ test("A7 fail-closed-error-name-is-sanitized: an error whose name holds a path-l
   assert.match(run.stderr, /Error type: Error\n$/, "an unsafe error name falls back to the bare type Error");
 });
 
+test("fail-closed-survives-a-throwing-error-name: a thrown value whose name getter throws (itself) still ends in exit 2 with the bare type Error, never a non-blocking exit 1 (app-security finding 1)", () => {
+  const sb = createGateSandbox();
+  const planted = path.join(sb.root, "src", "policy", "gate", "render-hook-output.ts");
+  // The getter throws the object itself, so BOTH catch paths of the hook (the body's catch and main()'s catch)
+  // meet a value whose name cannot be read.
+  fs.writeFileSync(planted, ["const hostile = { get name(): string { throw hostile; } };", "throw hostile;", "export {};", ""].join("\n"), "utf8");
+  const run = sb.bash(BASH_COMMAND);
+  assert.equal(run.code, 2, `an unreadable error name must still fail closed with exit 2; got ${describeRun(run)}`);
+  assert.equal(classifyOutcome(run.code, run.stdout), "BLOCKS", describeRun(run));
+  assert.equal(run.stdout, "", "no stdout on exit 2");
+  assert.match(run.stderr, /fail-closed \(exit 2\)/, `fixed message expected; got ${JSON.stringify(run.stderr)}`);
+  assert.match(run.stderr, /Error type: Error\n$/, "an unreadable name falls back to the bare type Error");
+});
+
 // --- A8 (in-hook half): stdout write failures ----------------------------------------------------
 
 function preloadUrl(dir: string, name: string, source: string): string {

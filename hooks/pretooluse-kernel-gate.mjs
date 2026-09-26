@@ -91,10 +91,17 @@ function readStdin() {
  * one code the PreToolUse contract guarantees blocks the call. The error type is accepted only when it is
  * letters only (S7 fix-now, app-security finding 4: err.stack carried absolute file paths and parser text
  * into a model-visible channel); anything else prints as the bare type `Error`. The exit runs in a finally
- * so that even a broken stderr cannot turn this into a non-blocking exit 1. */
+ * so that even a broken stderr cannot turn this into a non-blocking exit 1. The name lookup is inside the same
+ * try: a thrown value whose `name` getter throws (app-security finding 1) reads as the bare type `Error`. */
 function failClosed(what, err) {
-  const name = typeof err?.name === "string" && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : "Error";
   try {
+    let name = "Error";
+    try {
+      const candidate = err?.name;
+      if (typeof candidate === "string" && /^[A-Za-z]{1,40}$/.test(candidate)) name = candidate;
+    } catch {
+      name = "Error";
+    }
     process.stderr.write(`pretooluse-kernel-gate.mjs: ${what}, fail-closed (exit 2). ${UNLOCK} Error type: ${name}\n`);
   } finally {
     process.exit(2);
