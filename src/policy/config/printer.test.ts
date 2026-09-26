@@ -287,6 +287,13 @@ import { fileURLToPath } from "node:url";
 import { printEffectivePolicy, type PrinterInput, type PrinterResult } from "./printer.ts";
 import { validateRuleSet } from "../rule/schema.ts";
 import type { CentralPolicySource, CentralPolicyResult } from "./central-source.ts";
+// S7 additions (test-writer, 2026-09-26): imports used only by the AC-P1..P5, P7 tests appended at
+// the end of this file. Separate import statements on purpose: no existing line is edited.
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { loadEffectivePolicy } from "./loader.ts";
+import { decide } from "../kernel/kernel.ts";
+import type { ActionRecord } from "../kernel/action-record.ts";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(THIS_DIR, "..", "..", "..");
@@ -745,4 +752,168 @@ test("AC3: package.json defines a policy:print script, and the file it points at
   const targetRelative = match?.[1] ?? "";
   const targetAbsolute = path.join(REPO_ROOT, targetRelative);
   assert.ok(existsSync(targetAbsolute), `expected the file "policy:print" points at to exist: ${targetAbsolute} (from script: ${script})`);
+});
+
+// =============================================================================================
+// S7 ADDITIONS (test-writer, 2026-09-26; docs/plans/s7-kernel-gate-classification-phase1-2026-09-26.md
+// section 7 "P: printer and CLI (TW)"; requirement R4 / Issue #288 precondition 1, R5). STRICTLY
+// ADDITIVE: no test above this line, and none of the exact-equality answer-key machinery, is edited.
+//
+// THE NEW PRINT SURFACE (R4): `PrinterResult` gains
+//   - `posture?: { outcome: "allow" | "deny"; source: "shipped-defaults" | "central" | "project" | "bootstrap" } | undefined`
+//       -- exactly the loader's resolved posture (`LoadSuccess.defaultOutcome`); `undefined` on a
+//          fail-closed rejection;
+//   - `postureLine: string` -- the one-line human rendering below;
+// and print-cli.ts prints the line (src/policy/config/print-cli.test.ts). NOT printer `stdout`: the
+// exact-equality answer key above stays byte-for-byte (AC-P4 pins that).
+//
+// `postureLine` grammar (exact strings from plan P2; the wording never claims more than the merge
+// does, because an in-repo layer, or a lower-trust layer's ALLOW RULE, can still allow what a
+// central posture denies -- Issue #288 precondition 2, documented by AC-P7):
+//   central:                    posture: <outcome> (source: central; rules from lower-trust layers can still allow)
+//   shipped-defaults / project: posture: <outcome> (source: <layer>; in-repo layer, not centrally enforced; rules from other layers can still allow)
+//   bootstrap:                  posture: allow (source: bootstrap; no layer declared a posture)
+//   rejected load:              posture: unresolved (policy load rejected)
+// INTERPRETATION CHOICES (flagged, the plan gives the strings for one representative of each row):
+//   - the in-repo template is applied to BOTH in-repo layers with the layer name and the outcome
+//     substituted (the plan writes "shipped-defaults or project" as one row);
+//   - the central template is exercised with outcome deny (the only central case the plan spells).
+//
+// Type note: the assertions read the new fields through a local intersection type, so this file
+// type-checks both before the fields exist (the red state) and after (`PrinterResult` then
+// declares them; the intersection is compatible with the declared types).
+interface S7PostureFields {
+  posture?: { outcome: string; source: string } | undefined;
+  postureLine?: string;
+}
+type S7PrinterResult = PrinterResult & S7PostureFields;
+
+const s7TempDirs: string[] = [];
+process.on("exit", () => {
+  for (const d of s7TempDirs) rmSync(d, { recursive: true, force: true });
+});
+function s7PolicyFile(label: string, body: { defaultOutcome?: "allow" | "deny"; rules?: unknown[] }): string {
+  const dir = mkdtempSync(path.join(tmpdir(), `thoth-s7-printer-${label}-`));
+  s7TempDirs.push(dir);
+  const file = path.join(dir, "policy.json");
+  writeFileSync(file, JSON.stringify({ version: `0.0.0-s7-${label}`, ...(body.defaultOutcome === undefined ? {} : { defaultOutcome: body.defaultOutcome }), rules: body.rules ?? [] }), "utf8");
+  return file;
+}
+function s7CentralPresent(body: { defaultOutcome?: "allow" | "deny"; rules?: unknown[] }): CentralPolicySource {
+  const raw = JSON.stringify({ version: "0.0.0-s7-central", ...(body.defaultOutcome === undefined ? {} : { defaultOutcome: body.defaultOutcome }), rules: body.rules ?? [] });
+  return centralSourceReturning({ status: "present", raw, channel: CENTRAL_CHANNEL });
+}
+function s7Print(shippedPath: string, projectPath: string, central: CentralPolicySource): S7PrinterResult {
+  return printEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource: central });
+}
+
+const S7_CENTRAL_LINE = "posture: deny (source: central; rules from lower-trust layers can still allow)";
+const S7_BOOTSTRAP_LINE = "posture: allow (source: bootstrap; no layer declared a posture)";
+const S7_REJECTED_LINE = "posture: unresolved (policy load rejected)";
+const s7InRepoLine = (outcome: string, layer: string): string =>
+  `posture: ${outcome} (source: ${layer}; in-repo layer, not centrally enforced; rules from other layers can still allow)`;
+
+test("AC-P1: PrinterResult.posture equals exactly {outcome, source} for shipped deny; central deny with a project allow posture (central wins); none declared ({allow, bootstrap}); and is undefined on a rejection", () => {
+  const empty = s7PolicyFile("p1-empty", {});
+  const shippedDeny = s7PolicyFile("p1-shipped-deny", { defaultOutcome: "deny" });
+  const projectAllow = s7PolicyFile("p1-project-allow", { defaultOutcome: "allow" });
+  const absent = centralSourceReturning({ status: "absent" });
+
+  assert.deepStrictEqual(s7Print(shippedDeny, empty, absent).posture, { outcome: "deny", source: "shipped-defaults" }, "shipped-defaults declares deny, nothing else declares: the resolved posture is deny from shipped-defaults");
+  assert.deepStrictEqual(s7Print(empty, projectAllow, s7CentralPresent({ defaultOutcome: "deny" })).posture, { outcome: "deny", source: "central" }, "central deny outranks a project allow posture (a lower-trust layer may only tighten): deny from central");
+  assert.deepStrictEqual(s7Print(empty, empty, absent).posture, { outcome: "allow", source: "bootstrap" }, "no layer declares a posture: the bootstrap allow");
+  // peer semantics (ratified 2026-09-24, Issue #288 precondition 2): with central absent, the LAST
+  // declaring in-repo layer wins, and the source names the layer that supplied the outcome, not the first declarer
+  assert.deepStrictEqual(s7Print(shippedDeny, projectAllow, absent).posture, { outcome: "allow", source: "project" }, "project may relax a shipped-defaults deny when central declares nothing: allow from project");
+  assert.deepStrictEqual(s7Print(s7PolicyFile("p1-shipped-allow", { defaultOutcome: "allow" }), s7PolicyFile("p1-project-deny", { defaultOutcome: "deny" }), absent).posture, { outcome: "deny", source: "project" }, "a peer may tighten: deny from project");
+
+  const rejected = s7Print(empty, empty, centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL }));
+  assert.equal(rejected.exitCode, 1, "control: this input is a fail-closed rejection");
+  assert.equal(rejected.posture, undefined, "a rejected load resolves no posture: posture is undefined");
+});
+
+test("AC-P2: postureLine carries the exact strings, naming the source and never claiming more than the merge does", () => {
+  const empty = s7PolicyFile("p2-empty", {});
+  const shippedDeny = s7PolicyFile("p2-shipped-deny", { defaultOutcome: "deny" });
+  const projectDeny = s7PolicyFile("p2-project-deny", { defaultOutcome: "deny" });
+  const projectAllow = s7PolicyFile("p2-project-allow", { defaultOutcome: "allow" });
+  const absent = centralSourceReturning({ status: "absent" });
+
+  assert.equal(s7Print(empty, empty, s7CentralPresent({ defaultOutcome: "deny" })).postureLine, S7_CENTRAL_LINE, "central row");
+  assert.equal(s7Print(shippedDeny, empty, absent).postureLine, s7InRepoLine("deny", "shipped-defaults"), "shipped-defaults row");
+  assert.equal(s7Print(empty, projectDeny, absent).postureLine, s7InRepoLine("deny", "project"), "project row (deny)");
+  assert.equal(s7Print(empty, projectAllow, absent).postureLine, s7InRepoLine("allow", "project"), "project row (allow)");
+  assert.equal(s7Print(empty, empty, absent).postureLine, S7_BOOTSTRAP_LINE, "bootstrap row");
+});
+
+test("AC-P3: on a fail-closed rejection the postureLine is 'posture: unresolved (policy load rejected)' and posture is undefined, at every rejection site", () => {
+  const empty = s7PolicyFile("p3-empty", {});
+  const cases: { label: string; result: S7PrinterResult }[] = [
+    { label: "central malformed JSON", result: s7Print(empty, empty, centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL })) },
+    { label: "central read throws", result: s7Print(empty, empty, centralSourceThrowing(CENTRAL_READ_ERROR_MESSAGE)) },
+    { label: "shipped-defaults malformed", result: s7Print(SHIPPED_DEFAULTS_MALFORMED_PATH, empty, centralSourceReturning({ status: "absent" })) },
+    { label: "project BOM", result: s7Print(empty, PROJECT_BOM_MALFORMED_PATH, centralSourceReturning({ status: "absent" })) },
+  ];
+  for (const c of cases) {
+    assert.equal(c.result.exitCode, 1, `${c.label}: control, a rejection`);
+    assert.equal(c.result.postureLine, S7_REJECTED_LINE, `${c.label}: postureLine`);
+    assert.equal(c.result.posture, undefined, `${c.label}: posture`);
+  }
+});
+
+test("AC-P4: printer stdout is unchanged by the new surface and never carries the posture line (a mutant appending the line to stdout would break the exact-equality answer key)", () => {
+  const empty = s7PolicyFile("p4-empty", {});
+  const shippedDeny = s7PolicyFile("p4-shipped-deny", { defaultOutcome: "deny" });
+  const success = s7Print(shippedDeny, empty, centralSourceReturning({ status: "absent" }));
+  assert.equal(typeof success.postureLine, "string", "the new surface must exist for this guard to be meaningful (postureLine is a string)");
+  assert.ok((success.postureLine ?? "").length > 0, "postureLine must be non-empty");
+  assert.equal(success.stdout, "central-channel status=absent\n--- resolved rules (0) ---", "success stdout is exactly the pre-S7 grammar");
+  assert.ok(!success.stdout.includes(success.postureLine ?? "\u0000never"), "stdout must not contain the posture line");
+  assert.doesNotMatch(success.stdout, /^posture:/m, "no line of stdout may start with 'posture:'");
+
+  const rejected = s7Print(empty, empty, centralSourceReturning({ status: "present", raw: CENTRAL_MALFORMED_JSON_RAW, channel: CENTRAL_CHANNEL }));
+  assert.equal(typeof rejected.postureLine, "string", "a rejection also carries a postureLine");
+  assert.ok(!rejected.stdout.includes(rejected.postureLine ?? "\u0000never"), "rejection stdout must not contain the posture line");
+  assert.doesNotMatch(rejected.stdout, /^posture:/m, "no line of a rejection's stdout may start with 'posture:'");
+});
+
+test("AC-P5: the enforcement disclosure cannot pass both ways: it equals the literal for the current wiring state (derived from .claude/settings.json), exactly, no regex", () => {
+  // Literals authored by test-writer (the plan says "both literals in the test" but does not word
+  // them; wording flagged in the report). The UNWIRED text must stay TRUE while no PreToolUse entry
+  // for the gate script exists; the WIRED text is what the disclosure must become when one does.
+  const UNWIRED_LITERAL =
+    "NOTE: this reflects S6's own resolved policy (loadEffectivePolicy). hooks/pretooluse-kernel-gate.mjs reads the same loader but is not wired into .claude/settings.json (no PreToolUse entry), so nothing is enforced live from this policy today.";
+  const WIRED_LITERAL =
+    "NOTE: this reflects S6's own resolved policy (loadEffectivePolicy). hooks/pretooluse-kernel-gate.mjs reads the same loader and is wired as a PreToolUse entry in .claude/settings.json, so it enforces this resolved policy live on the calls it matches.";
+  assert.notEqual(UNWIRED_LITERAL, WIRED_LITERAL, "the two literals must differ, or the check could pass both ways");
+
+  const settings = JSON.parse(readFileSync(path.join(REPO_ROOT, ".claude", "settings.json"), "utf8")) as { hooks?: { PreToolUse?: { hooks?: { command?: string }[] }[] } };
+  const preToolUse = settings.hooks?.PreToolUse ?? [];
+  const wired = preToolUse.some((entry) => (entry.hooks ?? []).some((h) => typeof h.command === "string" && h.command.includes("pretooluse-kernel-gate.mjs")));
+  const expected = wired ? WIRED_LITERAL : UNWIRED_LITERAL;
+
+  const result = s7Print(s7PolicyFile("p5-empty-a", {}), s7PolicyFile("p5-empty-b", {}), centralSourceReturning({ status: "absent" }));
+  assert.equal(result.disclosure, expected, `the disclosure must equal the ${wired ? "WIRED" : "UNWIRED"} literal exactly (settings.json ${wired ? "has a" : "has no"} PreToolUse entry for the gate script)`);
+});
+
+test("AC-P7: documenting (R-E, Issue #288 precondition 2): with the real loader, a central posture deny plus a project ALLOW RULE resolves posture deny/central while decide() over the same merged rules returns allow; the postureLine carries the lower-trust-rules clause", () => {
+  const empty = s7PolicyFile("p7-empty", {});
+  const projectAllowGet = s7PolicyFile("p7-project-allow-get", {
+    rules: [{ id: "p7-project-allow-get", effect: "allow", verbs: ["get"], rationale: "P7 project allow rule" }],
+  });
+  const central = s7CentralPresent({ defaultOutcome: "deny" });
+
+  const printed = s7Print(empty, projectAllowGet, central);
+  assert.equal(printed.exitCode, 0, "control: the load succeeds");
+  assert.deepStrictEqual(printed.posture, { outcome: "deny", source: "central" }, "the resolved SCALAR posture is deny from central");
+  assert.equal(printed.postureLine, S7_CENTRAL_LINE, "the line names central and says lower-trust layers can still allow");
+  assert.ok((printed.postureLine ?? "").includes("rules from lower-trust layers can still allow"), "the line must not overclaim central control");
+
+  const loaded = loadEffectivePolicy({ shippedDefaultsPath: empty, projectPolicyPath: projectAllowGet, centralSource: central });
+  assert.ok(loaded.ok, "control: loadEffectivePolicy succeeds on the same inputs");
+  if (!loaded.ok) return;
+  const world = { rules: { version: loaded.merged.version, rules: loaded.merged.rules }, defaultOutcome: loaded.defaultOutcome.outcome };
+  const record = (verb: string): ActionRecord => ({ source: "structured", verbs: [verb], targets: ["pods/x"], environment: "unknown", identity: "p7", deferred: false, unresolved: [] });
+  assert.equal(decide(world, record("get")).outcome, "allow", "the project allow RULE allows what the central posture denies (central is un-relaxable only as a scalar)");
+  assert.equal(decide(world, record("list")).outcome, "deny", "control: a call no rule matches falls to the central deny posture");
 });
