@@ -15,11 +15,35 @@
 
 export type QuoteState = "none" | "single" | "double";
 
-/** Optional work meter (S7-A, Issue #304): a deterministic count of the characters the quote walk and the
- * tokenizer core visited during one redirect scan. It exists so a test can prove the scan is linear
- * without a wall clock. Passed only through the redirect-scan entry points; absent means no counting. */
+/** Optional work meter (S7-A, Issues #304 and #321): a deterministic count of the characters visited during one
+ * scan: every quote walk, every tokenizer pass, and the separator scan's own loops. It exists so a test can
+ * prove a scan is linear without a wall clock. Passed only through the metered entry points
+ * (`extractRedirectTargets`, `findLiveRedirectOperatorPositions`, `findLiveTrailingSensitiveSeparator`);
+ * absent means no counting. */
 export interface ScanWorkMeter {
   chars: number;
+}
+
+/** The meter of the metered entry point that is running right now, if any. Every quote walk and every tokenizer
+ * pass adds to it, so a scan that calls the public `tokenize` (or `quoteStates`) once per match is counted in
+ * full, not only the calls a meter argument was threaded through (app-security LOW 2: the earlier argument-only
+ * meter could not see such a call). The scans are synchronous, so one module-level slot is enough. */
+let activeMeter: ScanWorkMeter | undefined;
+
+function meterAdd(chars: number): void {
+  if (activeMeter !== undefined) activeMeter.chars += chars;
+}
+
+/** Runs `run` with `meter` active (restoring the previous meter after, even on a throw). No meter: `run` as is. */
+function metered<T>(meter: ScanWorkMeter | undefined, run: () => T): T {
+  if (meter === undefined) return run();
+  const previous = activeMeter;
+  activeMeter = meter;
+  try {
+    return run();
+  } finally {
+    activeMeter = previous;
+  }
 }
 
 /** Single source of truth for the quote walk — `quoteStates` and `hasUnterminatedQuote` are both
@@ -41,7 +65,7 @@ export interface ScanWorkMeter {
  * ("none"-state) backslash branch: this is the one case where a caller checking `states[i] !== "none"`
  * to mean "live" is actually wrong, because bash treats a backslash-escaped operator character
  * outside any quote as ordinary literal text, not as a live operator. */
-function walkQuoteState(text: string, meter?: ScanWorkMeter): { perChar: QuoteState[]; final: QuoteState; escaped: boolean[] } {
+function walkQuoteState(text: string): { perChar: QuoteState[]; final: QuoteState; escaped: boolean[] } {
   const perChar: QuoteState[] = new Array<QuoteState>(text.length);
   const escaped: boolean[] = new Array<boolean>(text.length).fill(false);
   let state: QuoteState = "none";
@@ -83,7 +107,7 @@ function walkQuoteState(text: string, meter?: ScanWorkMeter): { perChar: QuoteSt
     if (ch === '"') state = "none";
     i += 1;
   }
-  if (meter !== undefined) meter.chars += i;
+  meterAdd(i);
   return { perChar, final: state, escaped };
 }
 
@@ -191,10 +215,19 @@ function isLiveGreaterThan(
  * just as well as a genuine live operator, so the `&` right after it was wrongly excluded as
  * "fd-dup," when in real bash it is a genuine background separator. `isLiveGreaterThan` (above) now
  * requires the neighbour be both unquoted AND unescaped before it counts as fd-dup-adjacent. */
-export function findLiveTrailingSensitiveSeparator(text: string): string | undefined {
-  const states = quoteStates(text);
-  const escaped = escapedChars(text);
+export function findLiveTrailingSensitiveSeparator(text: string, meter?: ScanWorkMeter): string | undefined {
+  return metered(meter, () => scanTrailingSensitiveSeparator(text));
+}
+
+/** Linear (Issue #321): the forward whitespace walk below is done at most ONCE per whitespace run. When the walk
+ * reaches the end of `text` there is no live content after candidate `i`, and every later position of that run is
+ * whitespace too (a `&` is never whitespace), so no later candidate can find content either: the scan stops instead
+ * of re-walking the same run once per newline (the earlier version was quadratic in a trailing newline-dense run:
+ * 64 KB of blank lines outran the 30 s spawn timeout through the real hook). */
+function scanTrailingSensitiveSeparator(text: string): string | undefined {
+  const { perChar: states, escaped } = walkQuoteState(text);
   for (let i = 0; i < text.length; i++) {
+    meterAdd(1);
     if (states[i] !== "none") continue;
     const ch = text[i];
     const isNewline = ch === "\n";
@@ -207,7 +240,9 @@ export function findLiveTrailingSensitiveSeparator(text: string): string | undef
     if (!isNewline && !isSingleAmpersand) continue;
     let j = i + 1;
     while (j < text.length && /\s/.test(text[j] ?? "")) j += 1;
+    meterAdd(j - i - 1);
     if (j < text.length) return isNewline ? "\\n" : "&";
+    break; // the whitespace run reached the end of the text: nothing later can find live content
   }
   return undefined;
 }
@@ -370,9 +405,9 @@ function firstTokenFrom(index: TokenScan, offset: number): string | undefined {
  * scan right after just the escaped character (`re.lastIndex = idx + 1`), not past the whole
  * matched run, so a genuinely live second `>` glued directly onto an escaped one (`\>>x`) is still
  * found as its own, real, single-character redirect. */
-function findLiveRedirectMatches(liveText: string, meter?: ScanWorkMeter): RedirectScan {
-  const { perChar: states, escaped } = walkQuoteState(liveText, meter);
-  const index = scanTokens(liveText, states, true, meter);
+function findLiveRedirectMatches(liveText: string): RedirectScan {
+  const { perChar: states, escaped } = walkQuoteState(liveText);
+  const index = scanTokens(liveText, states, true);
   const re = />{1,2}/g;
   const matches: LiveRedirectMatch[] = [];
   let m: RegExpExecArray | null;
@@ -420,8 +455,12 @@ function findLiveRedirectMatches(liveText: string, meter?: ScanWorkMeter): Redir
  * first, and stdout lands on the last). Empty array when no live, file-targeting redirect exists
  * (a fd-dup redirect contributes nothing — see `findLiveRedirectMatches`). */
 export function extractRedirectTargets(liveText: string, meter?: ScanWorkMeter): string[] {
+  return metered(meter, () => collectRedirectTargets(liveText));
+}
+
+function collectRedirectTargets(liveText: string): string[] {
   const targets: string[] = [];
-  const { matches, index } = findLiveRedirectMatches(liveText, meter);
+  const { matches, index } = findLiveRedirectMatches(liveText);
   for (const { idx, length } of matches) {
     // Reads the first token of the same quote-aware tokenizer as everything else in this module,
     // rather than a naive `\S+` whitespace match — a quoted target containing live whitespace (e.g.
@@ -472,7 +511,7 @@ interface TokenScan {
   valueOffsetAt: Int32Array;
 }
 
-function scanTokens(liveText: string, states: readonly QuoteState[], trackOffsets: boolean, meter?: ScanWorkMeter): TokenScan {
+function scanTokens(liveText: string, states: readonly QuoteState[], trackOffsets: boolean): TokenScan {
   const tokens: IndexedToken[] = [];
   const valueOffsetAt = new Int32Array(trackOffsets ? liveText.length + 1 : 0);
   let current = "";
@@ -514,7 +553,7 @@ function scanTokens(liveText: string, states: readonly QuoteState[], trackOffset
     i += 1;
   }
   if (inToken) tokens.push({ value: current, start, end: n });
-  if (meter !== undefined) meter.chars += i;
+  meterAdd(i);
   return { tokens, valueOffsetAt };
 }
 
@@ -528,7 +567,7 @@ export function tokenize(liveText: string): string[] {
  * operator's TOKEN from `positional` by comparing the token's `start` (from
  * `tokenizeWithOffsets`) against this set — position, not value (Issue #80). */
 export function findLiveRedirectOperatorPositions(liveText: string, meter?: ScanWorkMeter): number[] {
-  return findLiveRedirectMatches(liveText, meter).matches.map((m) => m.tokenStart);
+  return metered(meter, () => findLiveRedirectMatches(liveText).matches.map((m) => m.tokenStart));
 }
 
 /** Strips a path prefix (everything up to and including the last "/") and lowercases — used to
