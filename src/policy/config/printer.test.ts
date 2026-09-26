@@ -286,6 +286,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { printEffectivePolicy, type PrinterInput, type PrinterResult } from "./printer.ts";
 import { validateRuleSet } from "../rule/schema.ts";
+import { sanitizeForTerminal } from "./sanitize.ts";
 import type { CentralPolicySource, CentralPolicyResult } from "./central-source.ts";
 // S7 additions (test-writer, 2026-09-26): imports used only by the AC-P1..P5, P7 tests appended at
 // the end of this file. Separate import statements on purpose: no existing line is edited.
@@ -374,7 +375,10 @@ function parseFailureBound(origin: string, text: string): RejectionBound {
     reason = (err as Error).message;
   }
   assert.ok(reason.length > 0, "fixture-integrity: expected this text to FAIL JSON.parse (a fixture that parses proves nothing here)");
-  return { message: `${origin}: ${reason}`, raw: text.trim() };
+  // AMENDED 2026-09-26 (Issue #294, Manager ruling Q1(a), test-writer): the printer strips terminal-active
+  // characters at the render boundary, so the expected message is the same honest message run THROUGH
+  // sanitizeForTerminal (stricter, not weaker: raw newlines in a pretty-printed JSON.parse snippet must NOT reach stdout).
+  return { message: sanitizeForTerminal(`${origin}: ${reason}`), raw: text.trim() };
 }
 function schemaFailureBound(origin: string, text: string): RejectionBound {
   const errors = validateRuleSet(JSON.parse(text) as unknown, text);
