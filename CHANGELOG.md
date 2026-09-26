@@ -16,6 +16,15 @@ CRITICAL tier (sensitive areas: policy enforcement gate, guard/policy engine, po
 - **Tests.** test-writer's tests and the amended AC-2 were red before the build; the implementer's own tests were written failing first. The mutation drills are recorded in plan section 20a (not in this file). Full suite at the end of the fix-now round: 1219 tests, 1219 pass, 0 fail, 0 skipped (`npm test`).
 - **Fix-now round (Stage 3, no HIGH).** The latency instrument accepts only a deny JSON on non-empty stdout; the hook's exit-2 stderr prints a fixed message and the error name instead of the stack; the tool segment of an MCP name is restricted to `[A-Za-z0-9_-]`; the tool name reflected into a deny reason is capped at 512 characters with a visible marker; the fail-open probe also injects `NODE_OPTIONS` and (Windows) `SYSTEMROOT` faults and records the discarded-stdout-write path. A documenting test pins that a half-provisioned central key rethrows on a non-English host (issue 309).
 
+### Changed — `decisions-handoff-sweep`: 15 ratified decision rows moved to the archive
+
+TRIVIAL tier (docs only, scripted). `node docs/decisions-archive.mjs --apply` moved 17 rows dated 2026-09-13 and 2026-09-14 from `docs/decisions.md` to `docs/decisions-archive.md`. Two were then put back, so the net move is 15 rows.
+
+- **Eligibility:** ratified Y and review-back date before 2026-09-26, none struck through or superseded.
+- **Two rows stay active.** Each quotes a synthetic email literal. The secret scan exempts that literal by path (`docs/decisions.md`), so the archive path would need a new allowlist entry. That file is the secret-scan exemption mechanism, a named sensitive area, so the entry needs its own reviewed change. Tracked in Issue #298.
+- **Verbatim:** the 15 removed lines and the 15 appended lines are byte-identical (checked with `cmp` on sorted extracts); no other line changed in either file.
+- **No dangling pointers:** a script compared every active row's neighbours before and after. Of the active rows with "row above" or "row below" wording, two had a neighbour change, and in both it was the row below. Neither refers to a row below.
+
 ### Added — `s6-policy-residuals-112-124` (issues 112, 124): a policy layer can declare its baseline posture, and the printer test bounds rejection messages
 
 CRITICAL tier (sensitive area: policy delivery/config surface). Issue #107 is recorded as a ratified residual (no code); Issues #112 and #124 are addressed.
