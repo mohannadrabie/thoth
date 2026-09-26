@@ -47,9 +47,13 @@ const LOADED: Shape[] = [
 ];
 
 function load(layer: FailedLayerName, rules: Rule[]): LoadResult {
+  return loadText(layer, JSON.stringify({ version: "1.0.0", rules }));
+}
+
+/** The same, with the layer's raw text supplied by the caller (so a schema-invalid shape can be planted). */
+function loadText(layer: FailedLayerName, text: string): LoadResult {
   const root = mkdtempSync(join(tmpdir(), "thoth-s7b-r2-"));
   try {
-    const text = JSON.stringify({ version: "1.0.0", rules });
     const shippedPath = join(root, "shipped-defaults.json");
     const projectPath = join(root, "project.json");
     writeFileSync(shippedPath, layer === "shipped-defaults" ? text : EMPTY, "utf8");
@@ -100,6 +104,34 @@ test("R2-5c one bad element is enough: a rule with a valid marker and a mistyped
   const r = load("project", [{ id: "mixed", effect: "deny", verbs: [RM, RM.slice(0, -2)] }]);
   assert.ok(!r.ok && r.reasonKind === "schema-invalid");
   assert.ok(r.message.includes("rules[0].verbs[1]"));
+});
+
+test("R2-11 schema-first: malformed rule sets come back as schema-invalid from the schema alone on every layer, never a throw from the reachability check; a rule with a schema error AND an unreachable verb reports the schema error only", () => {
+  const typo = RM.slice(0, -1);
+  const malformed: { label: string; text: string }[] = [
+    { label: "rules is not an array", text: JSON.stringify({ version: "1.0.0", rules: "nope" }) },
+    { label: "a rule is null", text: JSON.stringify({ version: "1.0.0", rules: [null] }) },
+    { label: "verbs is a string, not an array", text: JSON.stringify({ version: "1.0.0", rules: [{ id: "m1", effect: "deny", verbs: typo }] }) },
+    { label: "a target is a number", text: JSON.stringify({ version: "1.0.0", rules: [{ id: "m2", effect: "deny", targets: [5] }] }) },
+    { label: "an unknown effect beside an unreachable verb", text: JSON.stringify({ version: "1.0.0", rules: [{ id: "m3", effect: "bogus", verbs: [typo] }] }) },
+  ];
+  const problems: string[] = [];
+  for (const layer of LAYERS) {
+    for (const c of malformed) {
+      let r: LoadResult | undefined;
+      try {
+        r = loadText(layer, c.text);
+      } catch (err) {
+        problems.push(`${layer} / ${c.label}: threw ${(err as Error).message}`);
+        continue;
+      }
+      if (r.ok) problems.push(`${layer} / ${c.label}: loaded ok`);
+      else if (r.reasonKind !== "schema-invalid" || r.failedLayer !== layer) problems.push(`${layer} / ${c.label}: ${r.reasonKind} on ${r.failedLayer}`);
+      else if (c.label.startsWith("an unknown effect") && r.message.includes("can never match")) problems.push(`${layer} / ${c.label}: the reachability text leaked into a schema failure: ${r.message}`);
+    }
+  }
+  console.log(`R2-11: ${String(LAYERS.length * malformed.length)} malformed cases computed from ${String(malformed.length)} shapes`);
+  assert.equal(problems.length, 0, problems.join("\n"));
 });
 
 test("R2-9 rejection-through-printer: the real printer prints the layer, the schema-invalid kind and the message in the same two-line shape; control characters and a very long id are bounded", () => {
