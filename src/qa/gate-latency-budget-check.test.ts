@@ -117,3 +117,45 @@ test("L4b: assertHookOutcome rejects exit 0 with an allow JSON, an empty object,
   assertHookOutcome(2, "");
   assertHookOutcome(0, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "r" } }));
 });
+
+// --- S7-A (Issue #304, story-implementer, written failing first): a padded, redirect-dense command must
+// clear the same 2000 ms ceiling THROUGH THE REAL HOOK as a small one. The old redirect scan re-tokenized
+// the whole remainder once per match: quadratic, 5.9 s in-process at 16 KB for the glued shape and 30 s spawn
+// timeouts from 64 KB up (plan section 3). Real spawns, cold process, per size and per shape (A15); the
+// corpus carries a 128 KB entry (A16).
+import * as latencyModule from "./gate-latency-budget-check.ts";
+import { REDIRECT_SHAPE_NAMES, buildRedirectShape } from "./redirect-shapes.ts";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const HOOK_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "hooks", "pretooluse-kernel-gate.mjs");
+const bashStdin = (command: string): string =>
+  JSON.stringify({ session_id: "s7a-latency-test", hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+
+for (const sizeKb of [16, 64, 128]) {
+  for (const shape of REDIRECT_SHAPE_NAMES) {
+    test(`A15 real-hook-redirect-dense-under-2000ms: shape=${shape} size=${sizeKb} KB finishes under the OPS-03 ceiling with a valid gate outcome`, () => {
+      const command = buildRedirectShape(shape, sizeKb * 1024);
+      assert.ok(command.length >= sizeKb * 1024, "the builder must reach the requested size");
+      // REAL_SHELL_FORM_TIMER throws on a null status (timeout), exit 1, or unparseable stdout (assertHookOutcome).
+      const elapsedMs = REAL_SHELL_FORM_TIMER(HOOK_PATH, bashStdin(command));
+      assert.ok(elapsedMs < OPS03_CEILING_MS, `${shape} at ${sizeKb} KB took ${elapsedMs.toFixed(0)} ms; the ceiling is ${OPS03_CEILING_MS} ms`);
+    });
+  }
+}
+
+test("A16 latency-corpus-has-a-128KB-entry: the exported corpus holds a command of 131072 characters or more", () => {
+  const corpus = (latencyModule as { CORPUS?: readonly string[] }).CORPUS;
+  assert.ok(corpus !== undefined, "the corpus must be exported");
+  assert.ok(corpus.some((c) => c.length >= 128 * 1024), `no corpus entry is 128 KB or larger; longest is ${Math.max(...corpus.map((c) => c.length))}`);
+  assert.ok(corpus.some((c) => c.length < 1024), "the small realistic entries stay in the corpus");
+});
+
+test("A16 latency-corpus-every-entry-passes-the-outcome-assertion: one real cold run of every corpus entry is a valid gate outcome and the corpus p99 clears the ceiling", () => {
+  const corpus = (latencyModule as { CORPUS?: readonly string[] }).CORPUS;
+  assert.ok(corpus !== undefined, "the corpus must be exported");
+  const measurement = measureLatency(HOOK_PATH, corpus, 1, REAL_SHELL_FORM_TIMER);
+  assert.equal(measurement.iterations, corpus.length);
+  const result = checkLatencyBudget(measurement, OPS03_CEILING_MS);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
