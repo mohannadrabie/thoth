@@ -1,0 +1,144 @@
+// S7-B (Issue #306, ruling R2), loader level: the PT-12 entry test (S7 round-2 design-challenger attack 1)
+// through the REAL loadEffectivePolicy for all three layers, the rejection through the real printer, and
+// the migration exposure of the check (docs/plans/s7b-policy-authoring-safety-phase1-2026-09-26.md, R2-5,
+// R2-9, R2-10). story-implementer's own tests, written failing first.
+//
+// The inert deny shapes (a: misspelled marker, b: server target without the trailing slash, d: declared
+// server name instead of the sanitized one) must be `schema-invalid` load failures naming the layer that
+// actually holds the rule (never misattributed, Issue #108), the rule id and the field path. Shape c
+// (legacy mutating verbs plus an MCP target) still loads. Valid deny rules load.
+//
+// The case counts are computed from the tables below at run time and printed; none is typed as a claim.
+// NAMES. Stand-in server names only (G19).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { loadEffectivePolicy, type FailedLayerName, type LoadResult } from "./loader.ts";
+import { printEffectivePolicy } from "./printer.ts";
+import type { CentralPolicySource } from "./central-source.ts";
+import type { Rule } from "../kernel/rule-types.ts";
+import { CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
+
+const LAYERS: readonly FailedLayerName[] = ["central", "shipped-defaults", "project"];
+const EMPTY = JSON.stringify({ version: "0.0.0-empty", rules: [] });
+const MARKERS = Object.values(CLASS_MARKER_VERBS);
+const SERVER = "standin-x";
+const RM = CLASS_MARKER_VERBS["remote-mutating"];
+
+interface Shape {
+  label: string;
+  rule: Rule;
+  field: string;
+}
+const REJECTED: Shape[] = [
+  { label: "a: misspelled marker verb", rule: { id: "rej-typo", effect: "deny", verbs: [RM.slice(0, -1)] }, field: "rules[0].verbs[0]" },
+  { label: "b: server target without the trailing slash", rule: { id: "rej-noslash", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}`] }, field: "rules[0].targets[0]" },
+  { label: "d: declared server name instead of the sanitized runtime name", rule: { id: "rej-declared", effect: "deny", targets: [`${MCP_TARGET_PREFIX}standin x/`] }, field: "rules[0].targets[0]" },
+];
+const LOADED: Shape[] = [
+  { label: "c: legacy mutating verbs plus an MCP server prefix (documented, never matches a class record)", rule: { id: "ok-legacy", effect: "deny", verbs: ["write", "execute"], targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
+  { label: "marker only", rule: { id: "ok-marker", effect: "deny", verbs: [RM] }, field: "" },
+  { label: "marker plus server prefix", rule: { id: "ok-marker-server", effect: "deny", verbs: [RM], targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
+  { label: "server prefix only", rule: { id: "ok-server", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
+  { label: "an exact server-and-tool target", rule: { id: "ok-exact", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}/run`] }, field: "" },
+];
+
+function load(layer: FailedLayerName, rules: Rule[]): LoadResult {
+  const root = mkdtempSync(join(tmpdir(), "thoth-s7b-r2-"));
+  try {
+    const text = JSON.stringify({ version: "1.0.0", rules });
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeFileSync(shippedPath, layer === "shipped-defaults" ? text : EMPTY, "utf8");
+    writeFileSync(projectPath, layer === "project" ? text : EMPTY, "utf8");
+    const centralSource: CentralPolicySource = { read: () => (layer === "central" ? { status: "present", channel: "test-channel-descriptor", raw: text } : { status: "absent" }) };
+    return loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("R2-5 PT-12 entry test: shapes a, b and d are schema-invalid load failures on every layer, attributed to that layer, naming the rule id and field path; shape c and the valid deny rules load", () => {
+  const problems: string[] = [];
+  let cases = 0;
+  for (const layer of LAYERS) {
+    for (const s of REJECTED) {
+      cases += 1;
+      const r = load(layer, [s.rule]);
+      const where = `${layer} / ${s.label}`;
+      if (r.ok) {
+        problems.push(`${where}: loaded ok, expected a rejection`);
+        continue;
+      }
+      if (r.reasonKind !== "schema-invalid") problems.push(`${where}: reasonKind ${r.reasonKind}`);
+      if (r.failedLayer !== layer) problems.push(`${where}: failedLayer ${r.failedLayer}`);
+      if (!r.message.includes(JSON.stringify(s.rule.id))) problems.push(`${where}: message does not name the rule id: ${r.message}`);
+      if (!r.message.includes(s.field)) problems.push(`${where}: message does not name the field path ${s.field}: ${r.message}`);
+    }
+    for (const s of LOADED) {
+      cases += 1;
+      const r = load(layer, [s.rule]);
+      if (!r.ok) problems.push(`${layer} / ${s.label}: rejected: ${r.message}`);
+    }
+  }
+  console.log(`R2-5: ${String(cases)} cases computed (${String(LAYERS.length)} layers x (${String(REJECTED.length)} rejected + ${String(LOADED.length)} loaded shapes))`);
+  assert.equal(problems.length, 0, problems.join("\n"));
+});
+
+test("R2-5b the message for a marker typo lists every valid marker so the fix is in the failure text; a rejected central rule is not attributed to the project layer", () => {
+  const r = load("project", [REJECTED[0]!.rule]);
+  assert.ok(!r.ok);
+  for (const m of MARKERS) assert.ok(r.message.includes(m), `lists ${m}`);
+  const central = load("central", [REJECTED[1]!.rule]);
+  assert.ok(!central.ok && central.failedLayer === "central" && central.centralStatus === "present");
+});
+
+test("R2-5c one bad element is enough: a rule with a valid marker and a mistyped marker is rejected on a real load", () => {
+  const r = load("project", [{ id: "mixed", effect: "deny", verbs: [RM, RM.slice(0, -2)] }]);
+  assert.ok(!r.ok && r.reasonKind === "schema-invalid");
+  assert.ok(r.message.includes("rules[0].verbs[1]"));
+});
+
+test("R2-9 rejection-through-printer: the real printer prints the layer, the schema-invalid kind and the message in the same two-line shape; control characters and a very long id are bounded", () => {
+  const root = mkdtempSync(join(tmpdir(), "thoth-s7b-r2-printer-"));
+  try {
+    const shippedPath = join(root, "shipped-defaults.json");
+    const projectPath = join(root, "project.json");
+    writeFileSync(shippedPath, EMPTY, "utf8");
+    const centralSource: CentralPolicySource = { read: () => ({ status: "absent" }) };
+    const print = (rules: Rule[]): { stdout: string; exitCode: number } => {
+      writeFileSync(projectPath, JSON.stringify({ version: "1.0.0", rules }), "utf8");
+      return printEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource });
+    };
+
+    const plain = print([REJECTED[0]!.rule]);
+    assert.equal(plain.exitCode, 1);
+    const lines = plain.stdout.split("\n");
+    assert.equal(lines.length, 2, `no new stdout shape: the central-status line plus one REJECTED line; got ${JSON.stringify(plain.stdout)}`);
+    assert.ok(lines[1]!.startsWith("REJECTED: project policy load failed (schema-invalid): "), lines[1]);
+    assert.ok(lines[1]!.includes("rej-typo") && lines[1]!.includes("rules[0].verbs[0]"));
+
+    const hostile = print([{ id: "x".repeat(2000), effect: "deny", targets: [`${MCP_TARGET_PREFIX}bad\u001b[31m name`] }]);
+    assert.equal(hostile.exitCode, 1);
+    assert.equal(hostile.stdout.split("\n").length, 2, "a control or line-separator character in a rejected target cannot forge a line");
+    assert.ok(!/[\p{Cc}\p{Zl}\p{Zp}]/u.test(hostile.stdout.replaceAll("\n", "")), "no control character reaches the terminal");
+    assert.ok(hostile.stdout.length < 1500, `the rejected id and target are length-bounded; stdout is ${String(hostile.stdout.length)} chars`);
+    assert.ok(!hostile.stdout.includes("x".repeat(2000)));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R2-10 no-rules-today: the real shipped-defaults and project policy files load through the real loader with the check active; the rule counts they hold are read and printed (migration exposure)", () => {
+  const shippedPath = fileURLToPath(new URL("./shipped-defaults.json", import.meta.url));
+  const projectPath = fileURLToPath(new URL("../../../.thoth/policy.json", import.meta.url));
+  const count = (p: string): number => (JSON.parse(readFileSync(p, "utf8")) as { rules: unknown[] }).rules.length;
+  const shipped = count(shippedPath);
+  const project = count(projectPath);
+  console.log(`R2-10: shipped-defaults holds ${String(shipped)} rules, project policy holds ${String(project)} rules (rules the check could reject)`);
+  const r = loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource: { read: () => ({ status: "absent" }) } });
+  assert.ok(r.ok, `the real files must keep loading: ${r.ok ? "" : r.message}`);
+});
