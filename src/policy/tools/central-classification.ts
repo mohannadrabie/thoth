@@ -6,11 +6,14 @@
 //
 // (1) `centralLayer` -- SUR-03's "central override" classification tier (T5,
 //     src/policy/rule/precedence.ts's `mergeToolClassificationLayers` second argument) for
-//     locally-declared MCP servers. Its `class` field is presence-only / inert today (GitHub Issue
-//     #93, confirmed by `red-team`: mutating an entry to `class:"read-only"` left the full test/lint/
-//     qa-gate suite green) -- no consumer reads it before S6's real central policy ships. Classifying
-//     a tool here only removes it from SUR-03's unclassified/halt set; it does not itself drive any
-//     enforcement decision. Tracked at docs/backlog.md ("Issue #93" entry) as S6's job, not built here.
+//     locally-declared MCP servers. Two consumers read it: hooks/sessionstart-tool-enum.mjs (a
+//     classified name is removed from SUR-03's unclassified/halt set) and, since S7 (GitHub Issue
+//     #93), the tool-class normalizer (src/policy/normalizer/tool-class.ts), which turns an entry's
+//     `class` into a rule-matchable marker verb on the Action record of an MCP tool call. The
+//     kernel-gate hook that runs that normalizer is BUILT BUT NOT WIRED (no PreToolUse entry), and no
+//     shipped policy rule matches a class yet (baseline allow content is an activation precondition,
+//     plan AP-1), so today a `class` value drives no live enforcement decision. Only server names
+//     consisting solely of [A-Za-z0-9-] are admitted to the class path (tool-class-format.ts).
 //
 // (2) `knownConnectors` -- a claude.ai account-connector display-name allowlist, a KNOWN, SPOOFABLE
 //     residual risk. This is a pure display-name STRING match against `~/.claude.json`'s
