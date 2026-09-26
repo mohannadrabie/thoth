@@ -7,8 +7,7 @@
 // which already have their own real (non-CLI) test coverage.
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { printEffectivePolicy, renderInertMandatoryNote } from "./printer.ts";
-import { sanitizeForTerminal } from "./sanitize.ts";
+import { printEffectivePolicy, renderInertMandatoryNote, renderPinLine } from "./printer.ts";
 import { defaultCentralPolicySource } from "./central-source.ts";
 
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -25,7 +24,7 @@ function main(): void {
   // folded into printer.ts's own `stdout` string) because that string is test-writer's locked
   // exact-match answer key — see printer.ts's own PrinterResult.pin doc comment for the full reason.
   if (result.pin) {
-    process.stdout.write(`pin: sha256:${result.pin.digest} channel=${sanitizeForTerminal(result.pin.channel)} computedAt=${result.pin.computedAt}\n`);
+    process.stdout.write(renderPinLine(result.pin) + "\n");
   }
   // R4 / Issue #288 precondition 1 (S7): the resolved baseline posture and its source, exactly one
   // line, taken from the tested PrinterResult.postureLine (never a second rendering). Same "never
@@ -38,8 +37,9 @@ function main(): void {
   // Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3, 2026-09-08 council ruling,
   // Path B): a mandatory:true declaration with no real locking force is never silently dropped --
   // printed here, one line per declaration, same "never touch printer.ts's tested stdout" reasoning
-  // as the pin/disclosure lines above. Issue #294: the line is built (and sanitized) by printer.ts's
-  // renderInertMandatoryNote so it is testable; the pin channel above is sanitized here for the same reason.
+  // as the pin/disclosure lines above. Issues #294 and #313: the NOTE and pin lines are built (and sanitized)
+  // by printer.ts's renderInertMandatoryNote and renderPinLine so they are testable; this file builds no
+  // text of its own (print-lines.test.ts guards that).
   for (const d of result.inertMandatoryDeclarations) {
     process.stdout.write(renderInertMandatoryNote(d) + "\n");
   }
