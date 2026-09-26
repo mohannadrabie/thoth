@@ -122,6 +122,12 @@ export interface CentralPolicySource {
 }
 
 export const REGISTRY_KEY_PATH = "HKLM\\SOFTWARE\\Policies\\Thoth";
+/** #107 additive fallback: the PARENT key whose subkey listing is read when call 1's stderr is not
+ * classified by the English patterns. */
+export const REGISTRY_PARENT_KEY_PATH = "HKLM\\SOFTWARE\\Policies";
+// The long-form hive spelling `reg query` prints in a listing (measured 2026-09-26: the listing says
+// "HKEY_LOCAL_MACHINE", never "HKLM").
+const REGISTRY_PARENT_LISTING_PREFIX = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies";
 export const REGISTRY_VALUE_NAME = "CentralPolicyJson";
 export const REGISTRY_CHANNEL_DESCRIPTOR = `win32-registry:${REGISTRY_KEY_PATH}\\${REGISTRY_VALUE_NAME}`;
 
@@ -152,6 +158,20 @@ export const REGISTRY_CHANNEL_DESCRIPTOR = `win32-registry:${REGISTRY_KEY_PATH}\
 //       not silently left implicit — the durable fix (e.g. a locale-independent existence check,
 //       such as PowerShell's non-localized `Test-Path` boolean output) is a larger redesign than
 //       this fix-now round's "same files, one round" scope allows.
+//
+// === S7 (2026-09-26), Issue #107 ADDITIVE fallback (Manager ruling; plan 8c) ===
+//
+// The English match above is KEPT unchanged as the fast path (one spawn, every existing test intact).
+// A locale-independent fallback is ADDED for the one case it does not classify: call 1 exits with
+// status 1 and stderr that no pattern matches. Then `reg query HKLM\SOFTWARE\Policies` (the parent)
+// is listed, and the failure is DOWNGRADED to "absent" only on positive parse evidence
+// (classifyParentListing: exit 0, a recognised listing, no Thoth subkey). Any other outcome,
+// including a failure of the second call, rethrows the ORIGINAL error (fail-closed): an
+// unrecognised non-English listing must throw, never silently drop central policy. Measured
+// 2026-09-26 (English host, real reg.exe, non-English stderr FORCED, not captured): English fast
+// path 1 spawn p50 19.5 ms; non-English absent 2 spawns p50 41.0 ms. NOT demonstrated on a real
+// non-English host (none is available here; plan U-1). Residual: a format drift that affects only
+// the Thoth line of an otherwise recognised listing still resolves absent (plan R-4).
 const NOT_FOUND_PATTERNS: readonly RegExp[] = [
   // en-US, captured verbatim (see this file's header) — the only locale this file has ever been
   // measured against with real bytes.
@@ -191,6 +211,40 @@ export function isNotFoundError(stderr: string): boolean {
   return NOT_FOUND_PATTERNS.some((pattern) => pattern.test(stderr));
 }
 
+export type ParentListingClass = "key-listed" | "key-absent" | "unrecognised";
+
+/**
+ * #107 additive fallback (S7, plan 8c): classifies the stdout of `reg query HKLM\SOFTWARE\Policies`
+ * WITHOUT reading any localized text. The listing is RECOGNISED only when (a) at least one non-blank
+ * line equals the parent path or sits under it (parent path plus a backslash, case-insensitive), and
+ * (b) every non-blank line is such a line or an INDENTED value line. Measured 2026-09-26: the queried
+ * key's own header line is printed only when the key has values, so it cannot be required; a subkey
+ * line under the parent path is the positive evidence instead. Anything else, including empty output,
+ * is "unrecognised" and the caller must rethrow (fail-closed): an unrecognised non-English listing
+ * must never silently drop central policy. "key-listed" means a line equals the Thoth subkey exactly
+ * (case-insensitive); "key-absent" means the listing is recognised and lists no such line (a lookalike
+ * such as ThothX is not the Thoth key).
+ */
+export function classifyParentListing(stdout: string): ParentListingClass {
+  const parent = REGISTRY_PARENT_LISTING_PREFIX.toLowerCase();
+  const thoth = `${parent}\\thoth`;
+  const lines = stdout.split(/\r\n|\n|\r/).filter((l) => l.trim().length > 0);
+  let anchored = 0;
+  let listed = false;
+  for (const line of lines) {
+    const t = line.trim().toLowerCase();
+    if (t === parent || t.startsWith(`${parent}\\`)) {
+      anchored++;
+      if (t === thoth) listed = true;
+      continue;
+    }
+    if (/^\s/.test(line)) continue; // an indented value line
+    return "unrecognised";
+  }
+  if (anchored === 0) return "unrecognised";
+  return listed ? "key-listed" : "key-absent";
+}
+
 /** The exact shape `execFileSync` is invoked with — a constructor-injected seam (SE ADR-0003) so
  * tests can assert the outbound call shape (AC7(i)) or simulate a failure, without ever shelling
  * out for real. Defaults to the real `node:child_process` primitive.
@@ -216,6 +270,21 @@ export type SyncRegQueryRunner = (
 
 const defaultRunner: SyncRegQueryRunner = (cmd, args, opts) =>
   execFileSync(cmd, args as string[], opts);
+
+function listingConfirmsAbsent(runner: SyncRegQueryRunner): boolean {
+  try {
+    const stdout = runner(resolveSystemRegExePath(), ["query", REGISTRY_PARENT_KEY_PATH], {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return classifyParentListing(stdout) === "key-absent";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Production `CentralPolicySource`: reads HKLM\SOFTWARE\Policies\Thoth\CentralPolicyJson via
@@ -261,6 +330,14 @@ export function createWindowsRegistryCentralPolicySource(
         // that ALSO fails this check would indicate a shape this file has never seen and should not
         // guess about.
         if (e.status === 1 && isNotFoundError(stderr)) {
+          return { status: "absent" };
+        }
+        // #107 additive fallback (S7, plan 8c): status 1 with stderr the English patterns do NOT
+        // classify. The parent listing may only DOWNGRADE this failure to "absent", and only on
+        // positive parse evidence (classifyParentListing: exit 0, recognised, no Thoth subkey). Every
+        // other outcome, including a failure of this second call, falls through to rethrow the
+        // ORIGINAL error below (fail-closed).
+        if (e.status === 1 && listingConfirmsAbsent(runner)) {
           return { status: "absent" };
         }
         // Any other failure (timeout, unexpected stderr, ENOENT, oversized output, access-denied,
