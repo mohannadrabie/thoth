@@ -7,7 +7,8 @@
 // which already have their own real (non-CLI) test coverage.
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { printEffectivePolicy } from "./printer.ts";
+import { printEffectivePolicy, renderInertMandatoryNote } from "./printer.ts";
+import { sanitizeForTerminal } from "./sanitize.ts";
 import { defaultCentralPolicySource } from "./central-source.ts";
 
 const THIS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +25,7 @@ function main(): void {
   // folded into printer.ts's own `stdout` string) because that string is test-writer's locked
   // exact-match answer key — see printer.ts's own PrinterResult.pin doc comment for the full reason.
   if (result.pin) {
-    process.stdout.write(`pin: sha256:${result.pin.digest} channel=${result.pin.channel} computedAt=${result.pin.computedAt}\n`);
+    process.stdout.write(`pin: sha256:${result.pin.digest} channel=${sanitizeForTerminal(result.pin.channel)} computedAt=${result.pin.computedAt}\n`);
   }
   // R4 / Issue #288 precondition 1 (S7): the resolved baseline posture and its source, exactly one
   // line, taken from the tested PrinterResult.postureLine (never a second rendering). Same "never
@@ -37,11 +38,10 @@ function main(): void {
   // Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3, 2026-09-08 council ruling,
   // Path B): a mandatory:true declaration with no real locking force is never silently dropped --
   // printed here, one line per declaration, same "never touch printer.ts's tested stdout" reasoning
-  // as the pin/disclosure lines above.
+  // as the pin/disclosure lines above. Issue #294: the line is built (and sanitized) by printer.ts's
+  // renderInertMandatoryNote so it is testable; the pin channel above is sanitized here for the same reason.
   for (const d of result.inertMandatoryDeclarations) {
-    process.stdout.write(
-      `NOTE: rule id="${d.ruleId}" (layer=${d.layer}) declares mandatory:true but has no real locking force -- only the central layer's mandatory declarations are authoritative; this declaration is NOT silently dropped, it still resolves normally, but it does not protect anything.\n`,
-    );
+    process.stdout.write(renderInertMandatoryNote(d) + "\n");
   }
   process.exit(result.exitCode);
 }

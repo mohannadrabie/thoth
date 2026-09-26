@@ -43,7 +43,7 @@ after(() => rmSync(TMP, { recursive: true, force: true }));
 // (hand-typed: strip, not drop, so the visible text must still be there).
 // ---------------------------------------------------------------------------------------------
 const FORGED = "REJECTED-LOOKALIKE";
-const HOSTILE = `\u001b[31m\n${FORGED}: forged line second\u0085third\rfourth\u0000\u007f\u009b[2J`;
+const HOSTILE = `\u001b[31m\n${FORGED}: forged line\u2028second\u0085third\rfourth\u0000\u007f\u009b[2J`;
 const HOSTILE_VISIBLE = `[31m${FORGED}: forged linesecondthirdfourth[2J`;
 /** The hostile text as it must appear INSIDE a JSON string literal (escapes for the control characters). */
 const HOSTILE_JSON_BODY = JSON.stringify(HOSTILE).slice(1, -1);
@@ -140,7 +140,7 @@ test("oracle bites: it flags an escape sequence, a forged line, U+2028 and a wro
   const good = "central-channel status=absent\nREJECTED: project policy load failed (schema-invalid): x";
   assert.deepEqual(violations(good, REJECTED_SHAPE), []);
   assert.notDeepEqual(violations(`${good}\u001b[2J`, REJECTED_SHAPE), []);
-  assert.notDeepEqual(violations(`${good} more`, REJECTED_SHAPE), []);
+  assert.notDeepEqual(violations(`${good}\u2028more`, REJECTED_SHAPE), []);
   assert.notDeepEqual(violations(`${good}\n${FORGED}: forged`, REJECTED_SHAPE), []);
   assert.notDeepEqual(violations(`${good}\nREJECTED: a second real-looking line`, REJECTED_SHAPE), []);
   assert.notDeepEqual(violations("no status line\nREJECTED: x", REJECTED_SHAPE), []);
