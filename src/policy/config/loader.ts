@@ -39,6 +39,7 @@
 import { readFileSync } from "node:fs";
 import type { RuleSet } from "../kernel/rule-types.ts";
 import { validateRuleSet } from "../rule/schema.ts";
+import { checkRuleReachability } from "./rule-reachability.ts";
 import {
   mergeLayersWithMandatoryLock,
   type InertMandatoryDeclaration,
@@ -145,6 +146,17 @@ function parseLayerText(origin: string, text: string): ParsedLayer | ParseFailur
     };
   }
   const ruleSet = parsed as RuleSet;
+  // S7-B (Issue #306): a rule that provably cannot match any record a normalizer emits (a misspelled
+  // class marker, a server target with no trailing slash, a server name the runtime never presents) is a
+  // load error, not a silent no-op. Runs only on a schema-valid rule set and reports under the same
+  // `schema-invalid` kind, so the failing layer is attributed exactly like a schema error.
+  const unreachable = checkRuleReachability(ruleSet);
+  if (unreachable.length > 0) {
+    return {
+      error: "schema-invalid",
+      message: `${origin}: ${unreachable.map((e) => `${e.field}: ${e.message}`).join("; ")}`,
+    };
+  }
   const positions = findRulePositions(tokenize(text));
   const ruleLines = ruleSet.rules.map((_, i) => positions[i]?.line ?? -1);
   return { ruleSet, ruleLines };

@@ -106,7 +106,7 @@ test("R2-4 shape-c-loads: legacy mutating verbs plus an MCP server prefix load w
   const legacy = ["write", "create", "modify", "delete", "move", "rename", "execute"];
   const rule = deny("legacy-plus-mcp", legacy, [`${MCP_TARGET_PREFIX}standin-x/`]);
   assert.deepEqual(checkRuleReachability(ruleSet(rule)), []);
-  const catalog: MergedToolClassificationSet = { version: "t", tools: [{ name: "standin-x", class: "remote-mutating" as ToolClass, sourceLayer: "central" }] };
+  const catalog: MergedToolClassificationSet = { version: "t", tools: [{ name: "standin-x", class: "remote-mutating", sourceLayer: "central" }] };
   const record = normalize("tool-class", { toolName: "mcp__standin-x__run", catalog, environment: "unknown", identity: "r2-4", deferred: false });
   assert.deepEqual(record.verbs, [CLASS_MARKER_VERBS["remote-mutating"]], "the class record carries the marker verb only");
   assert.equal(decide({ rules: ruleSet(rule), defaultOutcome: "allow" }, record).outcome, "allow", "the documented fact stays true: shape c never matches a class record");

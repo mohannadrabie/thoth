@@ -121,7 +121,7 @@ test("R2-9 rejection-through-printer: the real printer prints the layer, the sch
     assert.ok(lines[1]!.startsWith("REJECTED: project policy load failed (schema-invalid): "), lines[1]);
     assert.ok(lines[1]!.includes("rej-typo") && lines[1]!.includes("rules[0].verbs[0]"));
 
-    const hostile = print([{ id: "x".repeat(2000), effect: "deny", targets: [`${MCP_TARGET_PREFIX}bad\u001b[31m name`] }]);
+    const hostile = print([{ id: "x".repeat(2000), effect: "deny", targets: [`${MCP_TARGET_PREFIX}bad\u001b[31m\u2028name`] }]);
     assert.equal(hostile.exitCode, 1);
     assert.equal(hostile.stdout.split("\n").length, 2, "a control or line-separator character in a rejected target cannot forge a line");
     assert.ok(!/[\p{Cc}\p{Zl}\p{Zp}]/u.test(hostile.stdout.replaceAll("\n", "")), "no control character reaches the terminal");

@@ -1,0 +1,82 @@
+// S7-B (Issue #306, ruling R2): a rule that provably cannot match any record the normalizers emit is a
+// load error, not a silent no-op. The rule schema (src/policy/rule/schema.ts, locked) validates verbs and
+// targets as string arrays only, so a typo loads clean and never matches; under an active gate that is a
+// deny rule that silently denies nothing. This module is called by loader.ts's parseLayerText after the
+// schema check passes, and its errors join the same `schema-invalid` failure (no new failure kind).
+//
+// Three checks, applied per ELEMENT of `verbs` and `targets` (a rule listing one valid and one mistyped
+// marker is rejected, because the mistyped element is inert):
+//   V1  a verb that starts with the class-marker prefix and is not one of the class markers.
+//   V2  a target that is the MCP target prefix plus a server name with no "/" after it: no record's
+//       target is a server alone (tool records are prefix/server/tool), and a pattern without a
+//       trailing "/" matches exactly, so it can never match.
+//   V3  a target under the MCP prefix whose server segment (up to the first "/") is not an admitted
+//       server name (empty, or outside the pattern the server index admits with): the runtime never
+//       presents such a name to a class record.
+// NOT rejected, on purpose: the bare MCP prefix (matches every MCP target), a server plus trailing "/",
+// a server plus tool, and the legacy mutating verbs plus an MCP target (matches only shell-forged
+// records; documented in tool-class-format.ts, rule-author fact 4). A verb that does not start with the
+// marker prefix is out of scope (docs/backlog.md).
+//
+// The vocabulary (marker prefix, marker table, target prefix, server-name pattern) is IMPORTED from the
+// grammar file, never retyped: rule-reachability.test.ts scans this file for a retyped literal and
+// drift-checks the check against the vocabulary the normalizers emit. Pure, no I/O.
+import type { RuleSet } from "../kernel/rule-types.ts";
+import { ADMISSIBLE_SERVER_NAME, CLASS_MARKER_PREFIX, CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
+
+export interface ReachabilityError {
+  /** Dotted path to the offending element, e.g. "rules[2].verbs[1]" (the loader prints `field: message`). */
+  field: string;
+  message: string;
+}
+
+const MAX_QUOTED = 80;
+const MARKERS: readonly string[] = Object.values(CLASS_MARKER_VERBS);
+
+/** Author text (a rule id, a verb, a target) shown in a message: JSON-quoted (so control characters are
+ * visible escapes, never raw) and length-bounded. */
+function quote(text: string): string {
+  return JSON.stringify(text.length > MAX_QUOTED ? `${text.slice(0, MAX_QUOTED)}...` : text);
+}
+
+function checkVerb(ruleId: string, verb: string, field: string): ReachabilityError[] {
+  if (!verb.startsWith(CLASS_MARKER_PREFIX) || MARKERS.includes(verb)) return [];
+  return [
+    {
+      field,
+      message: `rule ${quote(ruleId)}: verb ${quote(verb)} starts with ${quote(CLASS_MARKER_PREFIX)} but is not a class marker, so it can never match a record. Unlock: use one of ${MARKERS.join(", ")}`,
+    },
+  ];
+}
+
+function checkTarget(ruleId: string, target: string, field: string): ReachabilityError[] {
+  if (!target.startsWith(MCP_TARGET_PREFIX)) return [];
+  const rest = target.slice(MCP_TARGET_PREFIX.length);
+  if (rest.length === 0) return [];
+  const errors: ReachabilityError[] = [];
+  const slash = rest.indexOf("/");
+  if (slash < 0) {
+    errors.push({
+      field,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has no "/" after the server name; a target without a trailing "/" matches exactly and no record's target is a server alone, so it can never match. Unlock: write ${quote(`${target}/`)} for every tool of the server, or ${quote(`${target}/<tool>`)} for one tool`,
+    });
+  }
+  const server = slash < 0 ? rest : rest.slice(0, slash);
+  if (!ADMISSIBLE_SERVER_NAME.test(server)) {
+    errors.push({
+      field,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has server segment ${quote(server)}, which is not an admitted server name (${ADMISSIBLE_SERVER_NAME.source}), so it can never match a record. Unlock: use the sanitized runtime name (letters, digits and hyphens only)`,
+    });
+  }
+  return errors;
+}
+
+/** Returns one error per element that can never match. Empty means every rule's verbs and targets pass. */
+export function checkRuleReachability(ruleSet: RuleSet): ReachabilityError[] {
+  const errors: ReachabilityError[] = [];
+  ruleSet.rules.forEach((rule, i) => {
+    (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`)));
+    (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`)));
+  });
+  return errors;
+}
