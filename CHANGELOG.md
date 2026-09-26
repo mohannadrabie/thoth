@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — `s6-294-echoed-key-sanitize` (issue 294, closes the S6 milestone): `policy:print` strips terminal-active characters from policy-derived text
+
+CRITICAL tier (sensitive area: policy delivery / config surface). A policy file could put an escape sequence or a line break into a key, a rule id, or malformed text that `npm run policy:print` echoed, clearing the screen or forging a `REJECTED:` line. Issue 312 tracks the one out-of-scope site (the kernel/hook deny reason).
+
+- **Helper.** `src/policy/config/sanitize.ts` exports `sanitizeForTerminal`: it removes the C0, DEL and C1 control characters plus U+2028 and U+2029 (`u`-flag class `[p{Cc}p{Zl}p{Zp}]`, the same class the S5 UserPromptSubmit hook uses). Strip, not escape; no NFKC, no truncation, so clean text is byte-identical.
+- **Where it applies.** At the render boundary only: `printer.ts` (rejection message, central channel, rule id, origin, voided-layer line) and `print-cli.ts` (pin channel, inert-mandatory note). `loader.ts`, `schema.ts` and `hooks/*` are unchanged; raw text stays below the boundary.
+- **Extracted.** `renderInertMandatoryNote` moved from `print-cli.ts` into `printer.ts` so the NOTE line is testable; its output for clean input is the pre-change string.
+- **Instruments (completeness comes from these, not from this entry).** `echo-sanitize.test.ts` walks a valid base document, putting hostile text in the value of every node and renaming every key of every object, in each of the three layers, through the real load and print path; it adds the structural echoes (duplicate key, duplicate id, mandatory collision, malformed JSON, read error, printer backstop, hostile channel) and a source scan of the interpolations in the two print modules (labelled a heuristic). `sanitize.test.ts` checks the class over the whole BMP against an independent range list and compares its literal with the hook's.
+- **Amended oracle (Q1(a)).** `test-writer` changed one helper in `printer.test.ts` so the expected `JSON.parse` message is computed through the sanitizer. Its reading against SE ADR-0005 and ADR-0010 is pending human ratification (`docs/decisions.md`).
+- **Accepted residuals.** Format characters (bidi overrides, zero-width) survive, as in S5 issue 278; homoglyphs survive; two hostile keys can strip to the same text; a stripped key can read like a known key.
+- **Open at build close.** The locked `ISSUE-108(c)` assertion in `printer.test.ts` (the rejection spans more than two lines) cannot hold once the `JSON.parse` snippet newline is stripped; flagged to the Manager and `test-writer`, not edited here.
+
 ### Added — `s7-kernel-gate-classification` (issue 93; issue 288 precondition 1 delivered; issue 107 additive fallback): a tool's class becomes rule data, the kernel-gate hook consumes the loader, the hook stays UNWIRED
 
 CRITICAL tier (sensitive areas: policy enforcement gate, guard/policy engine, policy delivery). Issue 288: precondition 1 is delivered in code; precondition 2 (the peer-override case) is re-decided in the plan and its decision-log row is pending human ratification; precondition 3 (the Node 22 raw-bytes assertion) is pending the pull request's CI run. No policy content ships and `.claude/settings.json` gains no `hooks` entry: activation is a separate, human-owned step (plan section 14, AP-1 to AP-14). Nothing denies by class from shipped data until baseline allow content exists.
