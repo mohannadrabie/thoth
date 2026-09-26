@@ -103,3 +103,17 @@ test("L4: measureLatency fails (propagates the throw) when the timer reports a b
   };
   assert.throws(() => measureLatency("x", ["c"], 1, badTimer), /exit/i);
 });
+
+// --- S7 L4b (fix-now, cross-domain finding 6): a non-empty stdout must be a parseable DENY JSON. The
+// first L4 accepted exit 0 with an allow JSON, {}, null and 123, so a hook that violated Q-B by
+// emitting an allow (or printed junk that happens to parse) still passed the latency instrument.
+test("L4b: assertHookOutcome rejects exit 0 with an allow JSON, an empty object, null, a number, an array and a deny JSON missing its decision fields", () => {
+  const allowJson = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+  for (const stdout of [allowJson, "{}", "null", "123", "[]", '"deny"', JSON.stringify({ hookSpecificOutput: {} }), JSON.stringify({ hookSpecificOutput: { permissionDecision: "ask" } })]) {
+    assert.throws(() => assertHookOutcome(0, stdout), /deny|stdout|parse/i, `stdout ${stdout} must be rejected`);
+  }
+  // controls: the accepted shapes still pass
+  assertHookOutcome(0, "");
+  assertHookOutcome(2, "");
+  assertHookOutcome(0, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "r" } }));
+});

@@ -76,8 +76,8 @@ export type CallTimer = (scriptPath: string, stdinPayload: string) => number;
  * S7 L4 (design-challenger round 1 attack 8, PT-11): the instrument must assert the child's OUTCOME.
  * Before this the exit status and stdout were discarded, so a crashed or truncated hook run also
  * "passed" the latency budget. An acceptable hook outcome under the PreToolUse contract is: exit 2
- * (blocks), or exit 0 with EMPTY stdout (a kernel allow emits nothing, Q-B) or with a parseable JSON
- * stdout (a deny). Anything else (exit 1, a null status from a timeout or spawn failure, exit 0 with
+ * (blocks), or exit 0 with EMPTY stdout (a kernel allow emits nothing, Q-B) or with a parseable deny JSON
+ * (permissionDecision "deny", S7 L4b). Anything else (exit 1, a null status from a timeout or spawn failure, exit 0 with
  * unparseable stdout) throws. Large-input corpus entries belong to Issue #304's own story.
  */
 export function assertHookOutcome(status: number | null, stdout: string): void {
@@ -85,10 +85,18 @@ export function assertHookOutcome(status: number | null, stdout: string): void {
   if (status === 2) return;
   if (status !== 0) throw new Error(`gate-latency-budget-check: the hook exited with status ${status}; only exit 0 or 2 is a valid gate outcome`);
   if (stdout.trim() === "") return;
+  let parsed: unknown;
   try {
-    JSON.parse(stdout);
+    parsed = JSON.parse(stdout);
   } catch {
     throw new Error("gate-latency-budget-check: the hook exited 0 with stdout that does not parse as JSON");
+  }
+  // S7 L4b: a non-empty stdout must be a DENY decision. An allow JSON (a Q-B violation), {}, null or a
+  // number is not a valid gate outcome and must not pass the latency instrument.
+  const hso = typeof parsed === "object" && parsed !== null ? (parsed as { hookSpecificOutput?: unknown }).hookSpecificOutput : undefined;
+  const decision = typeof hso === "object" && hso !== null ? (hso as { permissionDecision?: unknown }).permissionDecision : undefined;
+  if (decision !== "deny") {
+    throw new Error("gate-latency-budget-check: the hook exited 0 with stdout that is not a deny decision (a kernel allow emits nothing, Q-B)");
   }
 }
 
