@@ -3,14 +3,14 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 **Last updated:** 2026-09-26 (S7 built and reviewed, decisions sweep done; two PRs to open). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-26: S7 kernel-gate classification built and reviewed, sweep done; two PRs to open
+## Resume point — 2026-09-26: S7 kernel-gate classification built and reviewed, sweep done; two PRs open, CI green
 
 | Branch | Content | State |
 |---|---|---|
-| `docs/decisions-handoff-sweep` | 15 ratified decision rows moved to `docs/decisions-archive.md` (byte-identical); TRIVIAL | committed, not pushed |
-| `feat/s7-kernel-gate-classification` | the S7 story; contains the sweep branch by merge commit | committed, not pushed |
+| `docs/decisions-handoff-sweep` | 15 ratified decision rows moved to `docs/decisions-archive.md` (byte-identical); TRIVIAL | PR #310 open, required check green |
+| `feat/s7-kernel-gate-classification` | the S7 story; contains the sweep branch by merge commit | PR #311 open, required check green |
 
-**Human actions, in order:** push both branches; open and merge the sweep PR first (a merge commit, not a squash); then open the S7 PR, which then shows only the S7 changes. A squash merge of the sweep would make the S7 PR conflict in `CHANGELOG.md` and `docs/run-log.jsonl`; keep both sides in each.
+**Human actions, in order:** merge PR #310 first (a merge commit, not a squash); then merge PR #311, which then shows only the S7 changes. A squash merge of #310 would make #311 conflict in `CHANGELOG.md` and `docs/run-log.jsonl`; keep both sides in each.
 
 **S7 (Issues #93, #288, #107), CRITICAL, gate still UNWIRED**
 - **Built:** a tool-class normalizer (class is a marker verb kept out of the shell verb list, identity-only targets, exact-match name lookup), a gate module `src/policy/gate/`, the hook adapter (Bash and `mcp__` names only; a kernel allow emits nothing; anything not exactly allow or deny exits 2), the resolved posture on the print surface, and an additive locale-independent absent-detection fallback for the registry reader (#107).
@@ -27,7 +27,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 **Open items (from `gh`, not hand-counted)**
 - S7: Issue #93 stays open (capability delivered, enforcement content is activation). Issue #308 owns activation (AP-1 to AP-14). Carried activation blockers: Issues #303 (hook exits 1 before its own try/catch and Claude Code proceeds), #304 (quadratic redirect scan outruns the timeout), #305, #306, #309.
 - Closed by the S7 PR (`Closes` lines): Issues #299, #300, #301, #302, #307 (closed in code; their residuals are carried to #306 and #308).
-- Unrun and needing CI or a human: the Linux and Node 22 run of the fail-open probe and latency check, the Node 22 raw-bytes assertion (Issue #288 precondition 3), a real non-English registry listing, and whether a settings env block reaches hooks.
+- CI on the PR (Linux, Node 22.18.0) confirmed: the full suite, the Node 22 raw-bytes assertion tests (Issue #288 precondition 3), the fail-open probe test and the latency check all pass. Still unrun: a real non-English registry listing, and whether a settings env block reaches hooks.
 - S6: Issues #107, #288 (both stay open), #294. Unmilestoned: #287, #293.
 
 **Process notes (new this session)**
@@ -35,7 +35,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - A stalled reviewer agent (600 s watchdog) leaves nothing usable; re-dispatch it.
 - The session's auto-mode classifier blocked the first attempt to write a decision row that claimed human ratification; the row was rewritten with an honest pending state.
 
-**Single next action:** the human pushes `docs/decisions-handoff-sweep`, merges its PR, then pushes `feat/s7-kernel-gate-classification`, opens the S7 PR and reads its CI.
+**Single next action:** the human reviews and merges PR #310, then PR #311.
 
 ## Prior entry (superseded above): S1 and S6 residuals SHIPPED, 2026-09-25
 
