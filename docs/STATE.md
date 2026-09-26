@@ -20,7 +20,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - Unmilestoned: #287 (deterministic scan matcher), #293 (intermittent Windows `EBUSY` in a test cleanup).
 - S7: #93, blocked on wiring `hooks/pretooluse-kernel-gate.mjs`; that story must satisfy the #288 precondition first.
 
-**Housekeeping owed:** the `docs/decisions.md` handoff sweep (move ratified, past-review-back rows to `docs/decisions-archive.md`) has not run; the session hook reports 17 rows due.
+**Housekeeping done 2026-09-26:** the `docs/decisions.md` handoff sweep moved 15 rows to `docs/decisions-archive.md` (byte-identical, branch `docs/decisions-handoff-sweep`). Two more rows are eligible but stay active: they quote a synthetic email literal that the secret scan exempts by path, so archiving them needs a reviewed allowlist entry (Issue #298).
 
 **Process notes (still apply)**
 - Reviewers post "closed" in a comment without closing the issue; verify against master and close.

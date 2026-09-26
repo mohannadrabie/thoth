@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — `decisions-handoff-sweep`: 15 ratified decision rows moved to the archive
+
+TRIVIAL tier (docs only, scripted). `node docs/decisions-archive.mjs --apply` moved 17 rows dated 2026-09-13 and 2026-09-14 from `docs/decisions.md` to `docs/decisions-archive.md`. Two were then put back, so the net move is 15 rows.
+
+- **Eligibility:** ratified Y and review-back date before 2026-09-26, none struck through or superseded.
+- **Two rows stay active.** Each quotes a synthetic email literal. The secret scan exempts that literal by path (`docs/decisions.md`), so the archive path would need a new allowlist entry. That file is the secret-scan exemption mechanism, a named sensitive area, so the entry needs its own reviewed change. Tracked in Issue #298.
+- **Verbatim:** the 15 removed lines and the 15 appended lines are byte-identical (checked with `cmp` on sorted extracts); no other line changed in either file.
+- **No dangling pointers:** a script compared every active row's neighbours before and after. Of the active rows with "row above" or "row below" wording, two had a neighbour change, and in both it was the row below. Neither refers to a row below.
+
 ### Added — `s6-policy-residuals-112-124` (issues 112, 124): a policy layer can declare its baseline posture, and the printer test bounds rejection messages
 
 CRITICAL tier (sensitive area: policy delivery/config surface). Issue #107 is recorded as a ratified residual (no code); Issues #112 and #124 are addressed.
