@@ -459,8 +459,8 @@ const CODE_CONTROLLED: Readonly<Record<string, string>> = {
   "rule.sourceLayer": "LayerName enum",
   "line": "a number from the tokenizer",
   "rule.mandatory ?? false": "boolean, validated by the schema",
-  "result.pin.digest": "sha256 hex digest",
-  "result.pin.computedAt": "ISO timestamp from Date",
+  "pin.digest": "sha256 hex digest",
+  "pin.computedAt": "ISO timestamp from Date",
 };
 
 /** Every `${...}` expression in `source`, brace-depth aware, comments (whole-line // only) skipped. */
@@ -483,21 +483,44 @@ function interpolations(source: string): string[] {
   return found;
 }
 
+/** True when `expr` is ONE `sanitizeForTerminal(...)` call spanning the whole expression: the call's own
+ * closing parenthesis is the last character, so `sanitizeForTerminal("") + String(raw)` is not accepted.
+ * String literals inside the call are not parsed (a heuristic, like the whole scan). */
+function isSingleSanitizeCall(expr: string): boolean {
+  const open = "sanitizeForTerminal(".length;
+  if (!expr.startsWith("sanitizeForTerminal(")) return false;
+  let depth = 1;
+  for (let i = open; i < expr.length; i++) {
+    if (expr[i] === "(") depth++;
+    else if (expr[i] === ")") {
+      depth--;
+      if (depth === 0) return i === expr.length - 1;
+    }
+  }
+  return false;
+}
+
 function unsanitized(exprs: readonly string[]): string[] {
-  return exprs.filter((e) => !/^sanitizeForTerminal\(.*\)$/s.test(e) && !(e in CODE_CONTROLLED));
+  return exprs.filter((e) => !isSingleSanitizeCall(e) && !(e in CODE_CONTROLLED));
 }
 
 test("the interpolation scan bites: it flags an unwrapped echo and accepts a wrapped one", () => {
   assert.deepEqual(unsanitized(interpolations("const a = `x ${message}`; const b = `y ${sanitizeForTerminal(message)}`;")), ["message"]);
   assert.deepEqual(unsanitized(interpolations("const a = `x ${failedLayer} ${rule.effect}`;")), []);
   assert.deepEqual(unsanitized(interpolations("const a = `${cond ? { a: 1 }.a : bad}`;")), ["cond ? { a: 1 }.a : bad"]);
+  // Issue #313: a sanitizer call followed by (or preceded by) the raw value is not a wrapped echo.
+  assert.deepEqual(unsanitized(interpolations("const a = `${sanitizeForTerminal('') + String(raw)}`;")), ["sanitizeForTerminal('') + String(raw)"]);
+  assert.deepEqual(unsanitized(interpolations("const a = `${sanitizeForTerminal(a) + raw + sanitizeForTerminal(b)}`;")), ["sanitizeForTerminal(a) + raw + sanitizeForTerminal(b)"]);
+  assert.deepEqual(unsanitized(interpolations("const a = `${sanitizeForTerminal(String(f(x)))}`;")), []);
 });
 
 test("every interpolation in the print modules is sanitized or allowlisted", () => {
   const used = new Set<string>();
+  // print-cli.ts builds no line of its own since Issue #313 (print-lines.test.ts guards that), so it
+  // is scanned for interpolations too but is no longer required to have any.
   for (const file of ["printer.ts", "print-cli.ts"]) {
     const exprs = interpolations(readFileSync(path.join(THIS_DIR, file), "utf8"));
-    assert.ok(exprs.length > 0, `${file}: the scan found no interpolations at all (scanner broken?)`);
+    if (file === "printer.ts") assert.ok(exprs.length > 0, `${file}: the scan found no interpolations at all (scanner broken?)`);
     assert.deepEqual(unsanitized(exprs), [], `${file}: unsanitized, non-allowlisted interpolation`);
     for (const e of exprs) if (e in CODE_CONTROLLED) used.add(e);
   }
