@@ -1,9 +1,45 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-25 (S1 residuals and S6 residuals merged; S1 milestone closed). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-09-26 (S7 built and reviewed, decisions sweep done; two PRs to open). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-25: S1 and S6 residuals SHIPPED
+## Resume point — 2026-09-26: S7 kernel-gate classification built and reviewed, sweep done; two PRs to open
+
+| Branch | Content | State |
+|---|---|---|
+| `docs/decisions-handoff-sweep` | 15 ratified decision rows moved to `docs/decisions-archive.md` (byte-identical); TRIVIAL | committed, not pushed |
+| `feat/s7-kernel-gate-classification` | the S7 story; contains the sweep branch by merge commit | committed, not pushed |
+
+**Human actions, in order:** push both branches; open and merge the sweep PR first (a merge commit, not a squash); then open the S7 PR, which then shows only the S7 changes. A squash merge of the sweep would make the S7 PR conflict in `CHANGELOG.md` and `docs/run-log.jsonl`; keep both sides in each.
+
+**S7 (Issues #93, #288, #107), CRITICAL, gate still UNWIRED**
+- **Built:** a tool-class normalizer (class is a marker verb kept out of the shell verb list, identity-only targets, exact-match name lookup), a gate module `src/policy/gate/`, the hook adapter (Bash and `mcp__` names only; a kernel allow emits nothing; anything not exactly allow or deny exits 2), the resolved posture on the print surface, and an additive locale-independent absent-detection fallback for the registry reader (#107).
+- **Option Y:** no shipped policy content. Class is rule data a rule can match; nothing denies by class from shipped data until baseline allow content ships (activation, Issue #308).
+- **Tests:** test-writer's 21 tests and the amended AC-2 were red first; the implementer's own tests were written failing first. Final run on the merged branch: 1219 tests, 1219 pass, 0 fail, 0 skipped. Typecheck, lint, every qa script I ran, the secret scan and QA-14 in diff mode (0 failed) pass.
+- **Reviews (9 reports in `docs/reviews/s7-kernel-gate-classification-*`, all read in full):** pre-build architecture REWORK then approve-with-conditions, design-challenger go twice; post-build `red-team` go, `app-security-reviewer` approve-with-conditions then approve on the fix-now delta, `cross-domain-reviewer` approve-with-conditions. No HIGH survived. `receipt-check` reports 7 of the 9 files because its filename parser drops the two `-reconfirm` files (Issue #213).
+
+**Human decisions and record-keeping (the S7 rulings are in `docs/decisions.md` as two rows marked pending)**
+- Ratify or reject those two rows, especially two readings only a human can give: the AC-2 amendment (one locked assertion replaced by a stricter empty-stdout one) under SE ADR-0005 and ADR-0010, and the routing-table reading under SE ADR-0021.
+- THOTH-ADR-0001 (fixture as an enforcement control, halt-state recording, the "PR diff is the approval" ruling, does test code count as hardcoding, the stale "inert" residual row): human-only, blocks activation, not the merge.
+- `CLAUDE.md` still names `hooks/report-subject-gate.mjs` and guard paths that do not exist; `src/policy/gate/` matches no named sensitive-area path. Human-owned, not edited.
+- One judgment call for you: two path-shaped mentions in the app-security and cross-domain reports (and one shifting line number) were reworded before the branch was ever pushed so the blocking QA-14 gate passes; each report carries an addendum naming the edit.
+
+**Open items (from `gh`, not hand-counted)**
+- S7: Issue #93 stays open (capability delivered, enforcement content is activation). Issue #308 owns activation (AP-1 to AP-14). Carried activation blockers: Issues #303 (hook exits 1 before its own try/catch and Claude Code proceeds), #304 (quadratic redirect scan outruns the timeout), #305, #306, #309.
+- Closed by the S7 PR (`Closes` lines): Issues #299, #300, #301, #302, #307 (closed in code; their residuals are carried to #306 and #308).
+- Unrun and needing CI or a human: the Linux and Node 22 run of the fail-open probe and latency check, the Node 22 raw-bytes assertion (Issue #288 precondition 3), a real non-English registry listing, and whether a settings env block reaches hooks.
+- S6: Issues #107, #288 (both stay open), #294. Unmilestoned: #287, #293.
+
+**Process notes (new this session)**
+- Agent worktrees under `.claude/worktrees/` make `qa:gate-manifest` and QA-14 fail (a second manifest, ambiguous basenames): remove them before verifying.
+- A stalled reviewer agent (600 s watchdog) leaves nothing usable; re-dispatch it.
+- The session's auto-mode classifier blocked the first attempt to write a decision row that claimed human ratification; the row was rewritten with an honest pending state.
+
+**Single next action:** the human pushes `docs/decisions-handoff-sweep`, merges its PR, then pushes `feat/s7-kernel-gate-classification`, opens the S7 PR and reads its CI.
+
+## Prior entry (superseded above): S1 and S6 residuals SHIPPED, 2026-09-25
+
+## Resume point — 2026-09-25 (details)
 
 | Story | PR | Issues closed |
 |---|---|---|

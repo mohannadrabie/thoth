@@ -98,7 +98,7 @@ No HIGH. Nothing here needs a code change before the review chain can close; the
 |---|---|---|
 | #93 | open, correct | at merge: comment "capability delivered; enforcement content = AP-1 (link the owner Issue, finding 1)"; do not close |
 | #288 | open | precondition 1 (posture on print surface): DISCHARGED in code (`printer.ts` `posture`/`postureLine`, `print-cli.ts`, P1 to P7). Precondition 2 (re-decide peer override): re-decided (plan 8a, draft row 1), decision UNRECORDED in `docs/decisions.md`. Precondition 3 (Node 22 raw-bytes assertion on CI): CARRIED to the PR's CI run (finding 2); master run 36219917467 is the baseline, not evidence for this branch. The Issue's other items (R7 disclosure, `defaultOutcomeMandatory`) stay deferred, so it stays open |
-| #107 | open, milestone S6 | additive fallback built; the 2026-09-24 ratified-residual row (`docs/decisions.md:82`) is not re-opened or superseded in the log (draft row 2); English text match keeps calendar backstop 2026-10-24; "not demonstrated on a real non-English host" (U-1) must survive into the comment |
+| #107 | open, milestone S6 | additive fallback built; the 2026-09-24 ratified-residual row (in `docs/decisions.md`, at line 82 before the handoff sweep moved rows to the archive) is not re-opened or superseded in the log (draft row 2); English text match keeps calendar backstop 2026-10-24; "not demonstrated on a real non-English host" (U-1) must survive into the comment |
 | #299 to #302 | open | pre-build findings; architect and design-challenger commented status; close as "closed-in-code" only after the Manager verifies against the built code |
 | #303 (AP-13), #304 (AP-14) | open, carried | unfixed activation blockers; the probe records them as PROCEEDS |
 | #305, #306, #307 | open | #305 not applicable under R-B (built-ins unrouted); #306 bound to AP-1 entry test PT-12; #307 addressed (drills X-3 done) |
@@ -187,3 +187,5 @@ report=docs/reviews/s7-kernel-gate-classification-cross-domain-2026-09-26.md
 ## Manager addendum (2026-09-26, PRINCIPLES rule 11: the evidence above is otherwise verbatim)
 
 Before this branch was ever pushed, the Manager made one wording substitution so that QA-14 (a blocking CI gate, which has no opt-out) could pass on this range. Meaning is unchanged. Substitution: the mention of the requirements file with a docs/ prefix in finding 9 now reads "REQUIREMENTS.md under docs/". The finding is that CLAUDE.md cites a path prefix the file does not have.
+
+The same wording pass also reworded one line citation: the 2026-09-24 ratified-residual row was cited by line number in `docs/decisions.md`, and the handoff sweep shortened that file so the number no longer resolves. It now names the row and says the number was its position before the sweep. Meaning unchanged.
