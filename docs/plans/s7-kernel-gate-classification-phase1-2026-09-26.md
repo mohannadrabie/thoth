@@ -225,6 +225,7 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 | N10 | `built-in names never yield a class record: Write, Edit, Bash, Task, Read, ToolSearch are unresolved even when the catalog lists them` |
 | N11 | `determinism: the same call and catalog twice give an identical record and verdict` |
 | N12 | STRUCTURAL CMD: `npm run qa:kernel-purity` PASS, `npm run qa:normalizer-registry-purity` PASS |
+| N13 | `the TOOL segment is as strict as the server segment: only [A-Za-z0-9_-] is admitted; a trailing space, NUL, line feed, zero-width character, a Cyrillic lookalike, a dot and an empty tool are unresolved and denied by POL-05` (fix-now, app-security 5, red-team attack 4) |
 
 ### G: gate module and shared assembly (IMPL). `src/policy/gate/*.test.ts`, `src/policy/tools/classification-catalog.test.ts`, `src/qa/gate-fail-open-probe.test.ts`
 
@@ -252,6 +253,8 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 | G18 | `no write path: neither the hook nor the gate directory imports a filesystem-write API` (R13; source scan, plus the existing no-halt-state-write property) |
 | G19 | `no literal fixture entry name in this story's new test files (PC-11): a source scan over the new test files, with the forbidden names derived from docs/qa/s5-central-classification.json at run time` |
 | G20 | `renderHookOutput is closed and fail-closed (PT-15): each of allow verdict (silent, exit 0), deny verdict and refusal (deny JSON), and the odd shapes outcome ask, undefined, null, unknown kind, refusal without a reason (exit 2, stderr, never silent)` |
+| G21 | `the unroutable-tool and malformed-input deny reasons cap the interpolated tool_name at 512 characters with a visible truncation marker` (fix-now, red-team attack 2) |
+| G22 | `exit-2 stderr is a fixed message plus the error name: invalid JSON, empty stdin and a malformed fixture reached through an MCP call carry no path, no stack frame and no parser text` (fix-now, app-security 4; test file hooks/pretooluse-kernel-gate-stderr.test.ts) |
 
 ### P: printer and CLI (TW). Additive amendment to `src/policy/config/printer.test.ts`; new `src/policy/config/print-cli.test.ts`
 
@@ -280,6 +283,7 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 | C9 | `listing classifier golden over the real captured parent-listing bytes (CRLF, no header line, S-7) and a with-values header shape` |
 | C10 | CMD `git diff -- src/policy/config/central-source.test.ts` shows no removed line; `node --test src/policy/config/central-source.test.ts` real counts |
 | C11 | CMD host smoke: `npm run policy:print` on this English host prints `central-channel status=absent` via the fast path |
+| C12 | `DOCUMENTING (Issue #309, AP-9): key present, value missing: English fast path resolves absent; a non-English host rethrows the ORIGINAL error (fail-closed), so an activated gate would deny every call until the value is written or the key removed` (fix-now, red-team attack 1; behavior deliberately unchanged) |
 
 ### L: latency and instrument (R12, R-I)
 
@@ -289,6 +293,7 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 | L2 | CMD bench (S-4 method) on the built hook for a Bash call and an MCP call, N at least 40: p99 below 2000 ms, numbers recorded |
 | L3 | CMD the PR's CI run of `qa:gate-latency-budget` (Linux, no registry spawn): PASS |
 | L4 | `latency instrument asserts the child's outcome: a pure assertHookOutcome accepts exit 0 with empty stdout, exit 0 with a parseable deny JSON, exit 2; throws on exit 1, null status (timeout), exit 0 with unparseable stdout; measureLatency fails when it throws` (large-input corpus entries belong to #304's activation story) |
+| L4b | `assertHookOutcome rejects exit 0 with an allow JSON, an empty object, null, a number, an array and a deny JSON missing its decision fields; accepts only empty stdout, exit 2, or a parseable deny JSON` (fix-now, cross-domain finding 6) |
 
 ### S: structural and regression
 
@@ -317,7 +322,7 @@ Prototype (scratchpad `additive-check.mjs`, not repo code): call 1 is the real `
 | ID | Named check |
 |---|---|
 | D1 | rows drafted for: #288(2) plus the scalar-only trust truth; #107 additive reading; S5 criterion 12 partly superseded (mcp__ names added, built-ins still refused); Q-B outcome; no-cache supersedes `docs/backlog.md` line 61; AP-13 and AP-14 bound as activation blockers |
-| D2 | `docs/backlog.md`: the #93 entry is reworded as CAPABILITY DELIVERED (a tool's class is rule-matchable data through the tool-class normalizer; the gate is unwired); ENFORCEMENT CONTENT is tracked by AP-1; #93 stays open, or closes only with an explicit link to AP-1's owner (PC-13). It does not say RESOLVED. Section 13 items added |
+| D2 | `docs/backlog.md`: the #93 entry is reworded as CAPABILITY DELIVERED (a tool's class is rule-matchable data through the tool-class normalizer; the gate is unwired); ENFORCEMENT CONTENT is tracked by AP-1; #93 stays open until Issue #308 (the owner of activation preconditions AP-1 to AP-14) lands (PC-13). It does not say RESOLVED. The section 13 backlog items live in THIS plan, not in the backlog file; the diff to the backlog file is that one #93 entry (cross-domain finding 1) |
 
 ### 7a. Counts, generated by script (design-challenger U-6). The counts in the receipt come from this command, not from hand counting
 
@@ -386,6 +391,7 @@ awk '/^## 7\. /{on=1;next} /^## 8\. /{on=0} on && /^\| [A-QS-Z]+[0-9]+[a-z]? \|/
 | non-blocking hook surface | runtime property, disclosed | G9 records it |
 | **process fails before the hook's own try/catch (three unnamed launch paths: node without TS type-stripping, missing import target, interpreter not on PATH)** | exit 1 is non-blocking on Claude Code 2.1.267 (design-challenger, real runtime): the call PROCEEDS. **NOT fixed in this story; bound as activation blocker AP-13 (Issue #303)** | G9 (probe records each as PROCEEDS with the AP) |
 | **input-size timeout (quadratic redirect scan; 2000 ms crossed near 16 KB)** | a timed-out hook proceeds. **NOT fixed here (`shell-scanner.ts` untouched); bound as AP-14 (Issue #304)** | G9 records it as not probed here, with the AP |
+| **discarded stdout write** (a decided deny written to a stdout the reader already closed is dropped; exit 0 with empty stdout means allow) | red-team attack 3, demonstrated with a destroyed stream, UNPROVEN in a real session. **NOT fixed here** (adapter behavior unchanged); recorded as the probe row `stdout-closed-before-write` under AP-13; activation adds a write-error listener and flips the row to BLOCKS | G9 records it as not probed here, with the AP |
 | loader failure | deny (Q4), layer and kind only | G1, H6, M4 |
 | **gate result the adapter does not recognise (outcome `ask`, undefined, null, unknown kind, refusal without a reason)** | under Q-B silence means allow, so the adapter is typed and closed: only an exact allow verdict is silent; every other shape exits 2 with stderr, never silent (PT-15, residual R-5 closed) | G20, H13 |
 | posture `bootstrap` allow | when no layer declares a posture (the case under Y); disclosed by the print line | P1, P2 |
@@ -434,7 +440,7 @@ None. Nothing blocks `test-writer`. Two items for the Manager and human:
 
 | # | Residual | Trigger / monitor | Note |
 |---|---|---|---|
-| R-4 | #107: format drift that affects only the Thoth line of a recognised listing (BOM, NBSP or an indent on that line) still resolves absent | first captured non-English listing (U-1) or any `reg.exe` output change | LOW, assumption. Optional PT-16 (a decorated Thoth line rethrows) stays OPTIONAL and is not in the count. Trailing decoration is a different key name and stays a C5 decision |
+| R-4 | #107 RESTATED (red-team and app-security editorial): `classifyParentListing` trims every line, so a BOM, NBSP, indent or trailing-space Thoth line is still read as listed and the ORIGINAL error is rethrown (the safe direction; the earlier examples were wrong). The drift that could still resolve absent is one where the Thoth line PATH TEXT itself differs (a redirected 32-bit view, another hive spelling); measured, that makes the whole listing unrecognised, which also rethrows | first captured non-English listing (U-1) or any `reg.exe` output change | LOW, assumption. Optional PT-16 (a decorated Thoth line rethrows) stays OPTIONAL. Trailing decoration is a different key name and stays a C5 decision |
 | R-6 | H checks spawn the real registry reader, so a Windows dev host with central policy deployed can flip verdicts | a dev host with central policy | The sandbox CAN pin the source: it overwrites the copy's `central-source.ts` default export with a fixed "absent" source (S-8), so H1-H13 are host-independent. Recorded fidelity limit: the real reader is covered by the C suite and C11 only. STILL host-dependent: the locked hook tests (AC-1, AC-2, AC-6, AC-19), P6 and L1/L2 |
 | R-5 | (closed by PT-15) adapter polarity | - | typed closed output, G20, H13 |
 | R-7 | both AWS MCP servers' tools are unresolved by the double-underscore rule (13 names counted) | AP-2, AP-3 classification work | availability only (S-6) |
@@ -453,7 +459,7 @@ None. Nothing blocks `test-writer`. Two items for the Manager and human:
 - R7 ignored-relaxation disclosure; per-tool MCP classification; verify sanitization for characters beyond space and dot; print allow-rule counts per layer (architecture F3 option).
 - `CLAUDE.md` sensitive-areas drift (human).
 
-## 14. Activation preconditions (a later, separate step)
+## 14. Activation preconditions (a later, separate step). Owner: Issue #308 (AP-1 to AP-14); Issue #93 stays open until it lands
 
 | # | Precondition | Evidence |
 |---|---|---|
@@ -465,12 +471,12 @@ None. Nothing blocks `test-writer`. Two items for the Manager and human:
 | AP-6 | decisions row for S5 criterion 12 | hook header |
 | AP-7 | Q-C ruling and ADR amendment | THOTH-ADR-0001 |
 | AP-8 | SessionStart and gate agree on one inventory (G14 shares the module; the gate reads the fixture module-relative, SessionStart via the project-dir seam, the same file in the real repo; the inventory refresh is AP-2) | G14, S-9 |
-| AP-9 | recovery when the policy load fails: every gated call denies, including Edit and Bash; an agent that can write the policy file can induce it; state the out-of-session repair step | architecture F9 |
-| AP-10 | deny rules protecting `.thoth/policy.json`, `shipped-defaults.json` and the fixture (they are the whole authority for allow) | F3, F9 |
+| AP-9 | recovery when the policy load fails: every gated call denies, including Edit and Bash; an agent that can write the policy file can induce it; state the out-of-session repair step. **Named trigger (Issue #309, red-team attack 1): on a non-English Windows host a half-provisioned central key (key present, value missing) rethrows the original error, so every gated call denies until the value is written or the key is removed; an English host resolves absent and proceeds. The fail-closed direction is the intended design; C12 pins it** | architecture F9; C12 |
+| AP-10 | deny rules protecting `.thoth/policy.json`, `shipped-defaults.json` and the fixture (they are the whole authority for allow), AND the gate's own code (`hooks/pretooluse-kernel-gate.mjs`, `src/policy/gate/**`, `src/policy/normalizer/tool-class*.ts`, `src/policy/tools/classification-catalog.ts`) and the settings files (`.claude/settings.json` and its local override file). **Checked-list activation test: `activation-preconditions: every path that decides or wires the gate is matched by a deny rule in the activation policy (list generated from the hook import graph)`** (app-security suspicion 2) | F3, F9 |
 | AP-11 | what Q-B means under `permission_mode` bypass, where "emit nothing" proceeds without a prompt | F9 |
 | AP-12 | no arbitrary-execution tool (PowerShell, Skill, Workflow, CronCreate, RemoteTrigger) may be classifiable read-only; checked mechanically over the inventory | F6 |
-| AP-13 | **Issue #303**: the hook exits 1 before its own try/catch and Claude Code 2.1.267 proceeds; three unnamed launch paths (old Node, missing import, interpreter off PATH). Not fixed here; `.claude/settings.json` untouched | design-challenger attack 2; G9 records them |
-| AP-14 | **Issue #304**: quadratic `extractRedirectTargets`; a timeout lets the call run; OPS-03 2000 ms crossed near 16 KB, 60 s near 90-105 KB (extrapolated). Not fixed here (`shell-scanner.ts` untouched) | design-challenger attack 3 |
+| AP-13 | **Issue #303**: the hook exits 1 before its own try/catch and Claude Code 2.1.267 proceeds; three unnamed launch paths (old Node, missing import, interpreter off PATH). **Also in this family: environment-induced launch failures** (`NODE_OPTIONS` with an unknown flag exits 9; `SYSTEMROOT` pointing at a nonexistent directory aborts Node on Windows, exit 134; app-security finding 1; whether a settings env block reaches the hook is unproven, U-9), injected by the probe and recorded as PROCEEDS, **and a discarded stdout write** (probe row `stdout-closed-before-write`, red-team attack 3, recorded not probed). Not fixed here; `.claude/settings.json` untouched. Fix at activation: a launcher that turns any launch failure into exit 2, and a write-error listener | design-challenger attack 2; app-security 1; red-team 3; G9 records them |
+| AP-14 | **Issue #304**: quadratic `extractRedirectTargets`; a timeout lets the call run. MEASURED by red-team through the real hook (redirect-dense command): the 2000 ms OPS-03 budget is crossed near 31 KB and 78.6 s is reached at 205 KB, so the planned 60 s entry timeout is crossed near 205 KB (this supersedes the earlier 90-105 KB extrapolation). Not fixed here (`shell-scanner.ts` untouched) | design-challenger attack 3; red-team finding 7 |
 
 ## 15. File-level change list
 
@@ -537,11 +543,11 @@ RECEIPT: verdict=PLAN-READY(no blocking questions; Q-C is a human activation blo
 
 ### 20a. X-3: mutation drills on the BUILT code, actual red set next to the predicted one
 
-Method: each mutant applied to the built file, the story's eight test files run (63 tests, baseline 63 pass), the file reverted with git checkout. Every predicted test went red; no predicted check survived.
+Method: each mutant applied to the built file, the story's eight test files run (tool-class.test.ts, tool-class-golden.test.ts, decide-tool-call.test.ts, render-hook-output.test.ts, gate-structure.test.ts, classification-catalog.test.ts, hooks/pretooluse-kernel-gate-classification.test.ts and hooks/pretooluse-kernel-gate.test.ts; every one passed before each mutant), the file reverted with git checkout. Every predicted test went red; no predicted check survived.
 
 | Drill | Mutant | Predicted red set | ACTUAL red set | Match |
 |---|---|---|---|---|
-| M1 | normalizer emits one marker for every class | G13, G4, G5, H7 | H7, H12, G4, G5, G13, G13b | superset (H12 and G13b also red) |
+| M1 | normalizer emits one marker for every class | G13, G4, G5, H7 | H7, H12, G4, G5, G13, G13b (red-team's independent run also reddened N1, the compile-shape test) | superset (H12, G13b and N1 also red) |
 | M2 | first committed fixture entry flipped to read-only | G13, H7 | H7, G13 | exact |
 | M3 | hook re-hardcodes the bootstrap outcome | H5, H11 (G3 green) | H5, H11 | exact; G3 stayed green as predicted |
 | M4 | load failure ignored by the gate | G1, H6 | H6, G1 | exact |
@@ -553,7 +559,7 @@ Findings from the drills: none unkilled. Two prediction understatements (M6: G11
 
 ### 20b. Other Phase 2 evidence (real output recorded in the hand-back receipt)
 
-- Full suite: 1213 tests, 1213 pass, 0 fail, 0 skipped (baseline at master was 1139).
+- Full suite (`npm test`, measured at the end of the fix-now round, section 22): 1219 tests, 1219 pass, 0 fail, 0 skipped.
 - G9 probe (real hook, injected faults): three PROCEEDS (node without type stripping, missing import target, interpreter not on PATH; all recorded as AP-13) and six BLOCKS (empty stdin, invalid JSON, numeric tool_name, unroutable tool_name, unclassified MCP tool, corrupt project policy). Not probed and recorded: input size (AP-14), hook timeout, lock timeout.
 - Latency with the loader in the path (Windows, N=40, shell-form spawn): qa gate-latency-budget p50 164.8 ms, p99 193.1 ms; Bash allow p50 165.8, p99 196.4; classified MCP allow p50 162.8, p99 189.0; unclassified MCP deny p50 167.1, p99 187.5. All far below the 2000 ms budget (p99 about 9.8 percent). CI runs Linux, no registry spawn.
 - Stale-comment grep (S3): the stale phrases are gone from every file this story may edit. Remaining hits are three recorded historical or accepted-record lines: the append-only backlog entry for the issue (with the S7 update appended), an unrelated S4 line in the same file, and the accepted ADR residual row (human, Q-C).
@@ -568,3 +574,27 @@ Findings from the drills: none unkilled. Two prediction understatements (M6: G11
 5. **No cache supersedes the S6 architecture pre-build recommendation in the backlog (compute once per session)**, on measured evidence (about 42 ms p50, 76 ms p99 added).
 6. **AP-13 and AP-14 bound as activation blockers** (issues 303 and 304); not fixed here.
 7. **Grammar version 1** of the tool-class markers and targets, with the rule-author facts in the grammar module header; a bump needs a decisions row and a central-rule migration note.
+
+## 22. Fix-now round (Stage 3 came back with no HIGH; appended 2026-09-26; docs only)
+
+Each row was written failing first; the new-guard mutants below were each killed by exactly the named test.
+
+| # | Source | Fix | Test |
+|---|---|---|---|
+| 1 | cross-domain 6 | assertHookOutcome accepts only empty stdout, exit 2, or a parseable deny JSON | L4b |
+| 2 | app-security 4 | exit-2 stderr is a fixed message plus the error name | G22 |
+| 3 | app-security 5, red-team 4 | tool segment restricted to [A-Za-z0-9_-] | N13 |
+| 4 | red-team 2 | interpolated tool_name capped at 512 characters with a visible marker | G21 |
+| 5 | red-team 1 (Issue 309) | behavior unchanged; documenting test; trigger added to the AP-9 row | C12 |
+| 6 | red-team 3 | recorded (not fixed): SUR-10 row, hook header line, AP-13 row, probe row stdout-closed-before-write | G9 |
+| 7 | app-security 1 | env-induced launch faults injected by the probe (NODE_OPTIONS everywhere, SYSTEMROOT on Windows), recorded PROCEEDS under AP-13 | G9 |
+| 8 | app-security 2 | AP-10 extended to the gate's own code and the settings files, as a checked-list activation test | AP-10 |
+| 9 | cross-domain 10 | projectDir export in the catalog module LEFT IN PLACE: its own test G14 imports it, so it is not dead code by the rule of this round | G14 |
+| 10 | cross-domain 8 | hand-typed counts removed from the changelog and this plan; only the section 7a script total and `npm test` totals remain | 7a |
+| 11 | cross-domain 1 | D2 reworded; Issue 308 owns AP-1 to AP-14 | D2 |
+| 12 | red-team editorial | R-4 restated; M1 row notes N1 | 12a, 20a |
+| 13 to 16 | Manager | changelog wording for Issue 288; settings comment phrase; eight test files named in 20a; AP-14 measured figures and owner Issues 308 and 309 | 14, 20a |
+
+New-guard mutants (run on the committed tree): removing the stderr redaction reddens G22 only; removing the tool charset guard reddens N13 only; removing the reason cap reddens G21 only; removing the latency deny check reddens L4b only. M1 to M7 re-run: the red sets are unchanged from section 20a. Lesson recorded: the drill driver reverts with git checkout, so run it only on a committed tree (an early attempt lost uncommitted edits, which were redone).
+
+Unrun or deferred, unchanged: X-1, X-2, U-1, U-3, U-5, U-7, U-8, L3 and S4 (the pull request's CI), and every AP item.

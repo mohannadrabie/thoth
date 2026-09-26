@@ -73,7 +73,7 @@
     "     (baseline allow content, activation precondition AP-1, is not built). Wiring this live in THIS repo, today, would make this",
     "     repo's own Claude Code sessions unable to run ordinary Bash commands -- discovered live,",
     "     mid-build, this same session (docs/backlog.md). Re-add the entry (see git history / the",
-    "     PR that built this file for the exact block) once S6 ships a real allow-policy, or once",
+    "     PR that built this file for the exact block) once baseline allow content (AP-1, Issue #308) ships, or once",
     "     you deliberately choose to accept the restriction. Until then this file makes NO live-gate",
     "     claim for Bash calls -- 0% exposure, honestly, not just in theory.",
     "     hooks/sessionstart-tool-enum.mjs   -- SUR-03's real half: classifies the session's",
