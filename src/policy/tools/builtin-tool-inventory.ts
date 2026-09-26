@@ -25,8 +25,8 @@
 // NOT a §0.4-compliance claim (same disclosure criterion 13 already makes for bootstrap-
 // ruleset.ts's placeholder RuleSet). SUR-03's own acceptance bar here is narrower than "is this
 // classification perfectly correct": it only asks whether a tool is CLASSIFIED AT ALL (unclassified
-// halts the session) — the specific bucket (read-only / workspace-mutating / remote-mutating) does
-// not itself gate anything: since S7 (GitHub Issue #93) the tool-class normalizer turns a CENTRAL
+// halts the session) — the specific bucket (read-only / workspace-mutating / remote-mutating)
+// gates no decision: since S7 (GitHub Issue #93) the tool-class normalizer turns a CENTRAL
 // layer entry's class into a rule-matchable marker verb for MCP tool calls, but the gate evaluates
 // only Bash and mcp__ names (plan R-B), so a BUILT-IN tool's class below still drives no enforcement
 // decision. Where a tool's
