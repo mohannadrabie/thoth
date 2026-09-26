@@ -5,6 +5,11 @@
 // S7-A (docs/plans/s7a-gate-hook-robustness-phase1-2026-09-26.md sections 6 and 8): two module-load paths
 // and the discarded-stdout-write path became BLOCKS, and the input-size path is now probed and BLOCKS. The
 // expected-PROCEEDS list below therefore LOST entries: a strengthening, not a weakening.
+//
+// S7-A fix-now round 1 (red-team attacks 1 to 3, cross-domain finding 2): the input-size class is recorded PER SHAPE
+// (a redirect-dense command and a trailing-whitespace command are different code paths), and two faults the first
+// enumeration missed are recorded as launcher-owned residuals: an allocation failure inside the hook (exit 134) and a
+// hook script that does not parse (exit 1). The expected-PROCEEDS list grew by exactly those two rows.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -52,8 +57,8 @@ test("G9: SUR-10 by script: every probed fault's observed outcome equals its rec
     if (r.expect === "BLOCKS") assert.equal(r.ap, undefined, `${r.id}: a BLOCKS path closes no activation precondition, so it carries no AP`);
   }
   const proceeds = observed.filter((o) => o.outcome === "PROCEEDS").map((o) => o.id).sort();
-  const expectedProceeds = ["interpreter-not-on-path", "node-options-bad-flag", ...(process.platform === "win32" ? ["systemroot-nonexistent"] : [])].sort();
-  assert.deepEqual(proceeds, expectedProceeds, "only the three launcher-level faults (AP-13, narrowed) remain probed fail-open paths");
+  const expectedProceeds = ["interpreter-not-on-path", "node-options-bad-flag", "memory-exhaustion", "hook-script-unparseable", ...(process.platform === "win32" ? ["systemroot-nonexistent"] : [])].sort();
+  assert.deepEqual(proceeds, expectedProceeds, "only the launcher-owned faults (AP-13: three that kill the process before the hook runs, the hook script that does not parse, and memory exhaustion) remain probed fail-open paths");
 });
 
 test("A4 module-load-rows-block: node-without-ts-type-stripping and import-target-missing are probed, expect BLOCKS and name no AP", () => {
@@ -65,8 +70,9 @@ test("A4 module-load-rows-block: node-without-ts-type-stripping and import-targe
   }
 });
 
-test("A5 residual-launch-faults-stay-proceeds-and-say-so: the three launcher-level rows stay probed PROCEEDS under AP-13 and their notes say residual and name the launcher as the owner", () => {
-  for (const id of ["interpreter-not-on-path", "node-options-bad-flag", "systemroot-nonexistent"]) {
+test("A5 residual-launch-faults-stay-proceeds-and-say-so: the launcher-owned rows stay probed PROCEEDS under AP-13 and their notes say residual and name the launcher as the owner", () => {
+  for (const id of ["interpreter-not-on-path", "node-options-bad-flag", "systemroot-nonexistent", "memory-exhaustion", "hook-script-unparseable"]) {
+    if (id === "systemroot-nonexistent" && process.platform !== "win32") continue;
     const r = row(id);
     assert.equal(r.expect, "PROCEEDS", `${id} stays PROCEEDS`);
     assert.equal(r.probed, true, `${id} stays probed`);
@@ -108,6 +114,63 @@ test("A17 input-size-timeout-is-probed-and-blocks: the padded 128 KB redirect-de
   assert.ok(observed !== undefined, "runProbe must probe the input-size row");
   assert.equal(observed.outcome, "BLOCKS", observed.detail);
   assert.match(observed.detail, /^exit=0 /, `a decided deny is exit 0 plus a deny JSON, not a timeout; ${observed.detail}`);
+});
+
+test("input-size-fail-open-is-recorded-per-shape: the input-size class is split per code path: a redirect-dense row and a trailing-whitespace row, each probed and recorded BLOCKS, each observed BLOCKS through a decided deny (red-team attack 2)", () => {
+  const redirect = row("input-size-timeout");
+  const trailing = row("input-size-timeout-trailing-whitespace");
+  for (const r of [redirect, trailing]) {
+    assert.equal(r.expect, "BLOCKS");
+    assert.equal(r.probed, true);
+    assert.equal(r.ap, undefined, `${r.id} closes no activation precondition`);
+    assert.match(r.note, /shape|redirect|whitespace/i, `${r.id}: the note names the shape it covers`);
+  }
+  assert.match(redirect.note, /redirect/i);
+  assert.match(trailing.note, /whitespace/i);
+  assert.match(trailing.note, /newline/i, "the trailing-whitespace row names the newline-dense shape that outran the timeout");
+  assert.match(trailing.note, /#321/, "the row names the Issue it closes");
+  const observed = runProbe(REPO_ROOT).find((o) => o.id === "input-size-timeout-trailing-whitespace");
+  assert.ok(observed !== undefined, "runProbe must probe the trailing-whitespace row");
+  assert.equal(observed.outcome, "BLOCKS", observed.detail);
+  for (const shape of ["newline-dense", "crlf", "mixed"]) assert.match(observed.detail, new RegExp(`${shape}: exit=(0|2)`), `the probe covers the ${shape} shape: ${observed.detail}`);
+});
+
+test("memory-exhaustion-is-a-recorded-fail-open: an allocation failure inside the hook (exit 134) is a recorded, probed PROCEEDS row owned by the launcher (AP-13, Issue #308) whose control run with the same heap cap decides normally", () => {
+  const r = row("memory-exhaustion");
+  assert.equal(r.expect, "PROCEEDS");
+  assert.equal(r.probed, true);
+  assert.equal(r.ap, "AP-13");
+  assert.match(r.note, /launcher/i);
+  assert.match(r.note, /#308/, "the row is routed to Issue #308");
+  assert.match(r.note, /134/, "the row records the observed exit code");
+  assert.match(r.note, /residual/i);
+  const observed = runProbe(REPO_ROOT).find((o) => o.id === "memory-exhaustion");
+  assert.ok(observed !== undefined, "runProbe must probe the memory-exhaustion row");
+  assert.equal(observed.outcome, "PROCEEDS", observed.detail);
+  assert.match(observed.detail, /control=ok/, `the control run (same heap cap, small command) must decide normally, else the abort is not input-driven: ${observed.detail}`);
+});
+
+test("hook-script-unparseable-is-a-recorded-fail-open: a hook script that does not parse exits 1 before any hook code runs: recorded PROCEEDS under AP-13, launcher-owned (cross-domain finding 2)", () => {
+  const r = row("hook-script-unparseable");
+  assert.equal(r.expect, "PROCEEDS");
+  assert.equal(r.probed, true);
+  assert.equal(r.ap, "AP-13");
+  assert.match(r.note, /launcher/i);
+  assert.match(r.note, /residual/i);
+  const observed = runProbe(REPO_ROOT).find((o) => o.id === "hook-script-unparseable");
+  assert.ok(observed !== undefined, "runProbe must probe the unparseable-script row");
+  assert.equal(observed.outcome, "PROCEEDS", observed.detail);
+  assert.match(observed.detail, /^exit=1 /, `Node exits 1 on a syntax error; ${observed.detail}`);
+});
+
+test("no-launcher-level-only-overclaim: the hook header and the probe header do not say the residual set is launcher-level only, and both name the memory-exhaustion and unparseable-script residuals (red-team attack 2, cross-domain finding 2)", () => {
+  for (const file of [join("hooks", "pretooluse-kernel-gate.mjs"), join("src", "qa", "gate-fail-open-probe.ts")]) {
+    const source = readFileSync(join(REPO_ROOT, file), "utf8");
+    assert.ok(!/launcher-level only/i.test(source), `${file} still says the residual set is launcher-level only`);
+    assert.match(source, /memory exhaustion|allocation failure/i, `${file} must name the memory-exhaustion residual`);
+    assert.match(source, /unparseable|does not parse|syntax error/i, `${file} must name the unparseable-script residual`);
+    assert.match(source, /trailing.whitespace|trailing newline|blank lines/i, `${file} must name the trailing-whitespace input-size shape`);
+  }
 });
 
 test("A11 no-stale-not-fixed-claims: neither the hook header nor the probe header carries the retired not-fixed sentences", () => {

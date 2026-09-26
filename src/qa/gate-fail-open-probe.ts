@@ -16,17 +16,30 @@
 //
 // S7-A (docs/plans/s7a-gate-hook-robustness-phase1-2026-09-26.md): the module-load paths, the discarded
 // stdout write and the input-size timeout are now fixed in the hook and the scanner and are probed here as
-// BLOCKS. What stays PROCEEDS is launcher-level only (AP-13, narrowed): faults that kill the process before
-// any hook code runs. The destroyed-stdout fault needs an ASYNC spawn (the parent destroys the child's stdout
+// BLOCKS. The input-size class is recorded PER SHAPE, because each shape is its own code path: a redirect-dense
+// command (Issue #304) and a benign command that ends in a long trailing-whitespace run, newline-dense (Issue #321,
+// found by the red-team review after the first probe recorded the whole class closed from one shape).
+//
+// What stays PROCEEDS is owned by the launcher (the future settings entry's command form, Issue #308, AP-13), and it
+// is NOT only "faults that kill the process before any hook code runs". Five rows, each probed:
+//   - an interpreter that is not on PATH, NODE_OPTIONS with an unknown flag, SYSTEMROOT pointing nowhere (Windows):
+//     the process dies before line one of the hook;
+//   - a hook script that does not parse (unparseable: corruption, a bad merge, tampering): Node prints a SyntaxError
+//     and exits 1 before any hook code runs;
+//   - memory exhaustion: an allocation failure inside the hook (a heap cap or a memory-limited runner combined with a
+//     very large command) aborts the process, exit 134 on Windows; the process ran, but no in-script code can catch a
+//     V8 abort. A launcher form that maps every exit other than 0 and 2 to 2 closes all five rows at once.
+// The destroyed-stdout fault needs an ASYNC spawn (the parent destroys the child's stdout
 // pipe before the child starts), so it has its own entry, runAsyncProbe.
 //
 // Still not probed, recorded with their AP: the hook timeout itself (a runtime property, AP-5) and the lock
 // timeout (no lock exists in this hook).
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRedirectShape } from "./redirect-shapes.ts";
+import { TRAILING_WHITESPACE_SHAPE_NAMES, buildTrailingWhitespaceShape } from "./trailing-whitespace-shapes.ts";
 
 export type FaultOutcome = "BLOCKS" | "PROCEEDS";
 
@@ -55,6 +68,8 @@ export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "interpreter-not-on-path", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (the future settings entry's command form, Issue #308): the command cannot start, shell exit 127 or 1, non-blocking; no code inside the hook can catch a process that never starts" },
   { id: "node-options-bad-flag", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): NODE_OPTIONS with an unknown flag makes Node exit 9 before any hook code runs, non-blocking (app-security finding 1; reach of a settings env block to the hook is unproven, U-9)" },
   { id: "systemroot-nonexistent", expect: "PROCEEDS", probed: true, platform: "win32", ap: "AP-13", note: "residual, owned by the launcher (Issue #308): SYSTEMROOT pointing at a nonexistent directory aborts Node at start-up on Windows (exit 134), non-blocking (app-security finding 1)" },
+  { id: "memory-exhaustion", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): an allocation failure inside the hook aborts the process (V8 heap limit, observed exit 134 on Windows with --max-old-space-size=40 and a 2 MB redirect-dense command; the same heap cap decides a small command normally), non-blocking. Not fixable in-script: no size cap leaves outputs unchanged for inputs that completed before. A launcher form that maps every exit other than 0 and 2 to 2 closes this row and the other AP-13 rows. The abort also writes a heap report to stderr, a runtime channel the hook's fixed-line rule does not cover (LOW)" },
+  { id: "hook-script-unparseable", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): a hook script that does not parse (corruption, a bad merge, tampering) makes Node print a SyntaxError and exit 1 before any hook code runs, non-blocking. Before merge CI catches it (the hook tests execute the script); after merge it is the launcher form plus the manifest and command-path checks, and the S7 self-protection milestone (cross-domain finding 2)" },
   { id: "stdout-closed-before-write", expect: "BLOCKS", probed: true, platform: "win32", note: "a destroyed or closed stdout: the write callback error or the stdout error event exits 2 instead of dropping a decided deny (red-team attack 3). Asserted in-process only: the parent destroys the child's stdout pipe before the child starts (reproduced on Windows, 5 of 5 runs exited 0 before the fix; Linux unmeasured, so the row is probed on Windows only, and the injected-write-failure tests in hooks/pretooluse-kernel-gate-launch.test.ts cover the code path on every platform). Reach in a real Claude Code session stays UNPROVEN (LOW)" },
   { id: "empty-stdin", expect: "BLOCKS", probed: true, note: "exit 2 with stderr" },
   { id: "invalid-json-stdin", expect: "BLOCKS", probed: true, note: "exit 2 with stderr" },
@@ -62,7 +77,8 @@ export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "unroutable-tool-name", expect: "BLOCKS", probed: true, note: "pre-kernel refusal: deny JSON" },
   { id: "unclassified-mcp-tool", expect: "BLOCKS", probed: true, note: "POL-05 deny" },
   { id: "corrupt-project-policy", expect: "BLOCKS", probed: true, note: "load failure: deny JSON (layer and kind only)" },
-  { id: "input-size-timeout", expect: "BLOCKS", probed: true, note: "a padded 128 KB redirect-dense command: S4's redirect scan is linear (Issue #304, fixed), so the hook decides in milliseconds and denies (many write targets) instead of outrunning the timeout" },
+  { id: "input-size-timeout", expect: "BLOCKS", probed: true, note: "shape: a padded 128 KB redirect-dense command. S4's redirect scan is linear (Issue #304, fixed), so the hook decides in milliseconds and denies (many write targets) instead of outrunning the timeout. Other input shapes have their own rows" },
+  { id: "input-size-timeout-trailing-whitespace", expect: "BLOCKS", probed: true, note: "shape: a benign command followed by 128 KB of trailing whitespace (newline-dense, CRLF, mixed). The separator scan was quadratic in a newline-dense run (Issue #321: 16 KB took 2294 ms and 64 KB never returned inside 30 s through the real hook, found by the red-team review); it is linear now, so the hook decides in milliseconds instead of outrunning the timeout. The probe runs all three shapes and the row is BLOCKS only if every one is" },
   { id: "hook-timeout-runtime-property", expect: "PROCEEDS", probed: false, ap: "AP-5", note: "a timed-out PreToolUse hook does not block: runtime property, declared timeout set at activation" },
   { id: "lock-timeout", expect: "BLOCKS", probed: false, note: "not applicable: no lock exists in this hook or the loader (the audit-log lock is S8)" },
 ];
@@ -152,6 +168,33 @@ export function runProbe(repoRoot: string): FaultResult[] {
     // Input size (Issue #304): a padded 128 KB redirect-dense command. The gate denies it (it assembles thousands
     // of write targets), so a decided deny is BLOCKS and a timeout or crash is PROCEEDS.
     record("input-size-timeout", run(process.execPath, [hook], payload("Bash", { command: buildRedirectShape("glued", 128 * 1024) }), good, false));
+
+    // Input size, trailing whitespace (Issue #321): a benign command then 128 KB of newline-dense, CRLF and mixed
+    // whitespace. One row, BLOCKS only when every shape ends in a decided deny or exit 2.
+    const trailing = TRAILING_WHITESPACE_SHAPE_NAMES.map((shape) => ({ shape, r: run(process.execPath, [hook], payload("Bash", { command: buildTrailingWhitespaceShape(shape, 128 * 1024) }), good, false) }));
+    results.push({
+      id: "input-size-timeout-trailing-whitespace",
+      outcome: trailing.every(({ r }) => classifyOutcome(r.status, r.stdout) === "BLOCKS") ? "BLOCKS" : "PROCEEDS",
+      detail: trailing.map(({ shape, r }) => `${shape}: exit=${String(r.status)} stdout=${r.stdout.length} bytes`).join("; "),
+    });
+
+    // Memory exhaustion (AP-13 residual): the hook under a 40 MB old-space cap. The control (a payload the gate denies,
+    // same cap) must decide normally, else the abort is the cap alone and not the input. The big run is a 2 MB glued
+    // redirect command; the abort is exit 134 on Windows. Recorded PROCEEDS: nothing in-script catches a V8 abort.
+    const capped = ["--max-old-space-size=40", hook];
+    const control = run(process.execPath, capped, denied, good, false);
+    const controlOk = classifyOutcome(control.status, control.stdout) === "BLOCKS";
+    const exhausted = run(process.execPath, capped, payload("Bash", { command: buildRedirectShape("glued", 2 * 1024 * 1024) }), good, false);
+    results.push({
+      id: "memory-exhaustion",
+      outcome: classifyOutcome(exhausted.status, exhausted.stdout),
+      detail: `exit=${String(exhausted.status)} stdout=${exhausted.stdout.length} bytes stderr=${JSON.stringify(exhausted.stderr.slice(0, 60))} control=${controlOk ? "ok" : "FAILED"} (small denied payload, same heap cap: exit=${String(control.status)})`,
+    });
+
+    // A hook script that does not parse: one stray closing brace appended to a copy of the hook, in the same tree.
+    const brokenHook = join(good, "hooks", "pretooluse-kernel-gate-unparseable.mjs");
+    writeFileSync(brokenHook, `${readFileSync(hook, "utf8")}\n}\n`, "utf8");
+    record("hook-script-unparseable", run(process.execPath, [brokenHook], denied, good, false));
 
     const corrupt = join(root, "corrupt");
     copyTree(repoRoot, corrupt);

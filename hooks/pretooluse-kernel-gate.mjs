@@ -47,13 +47,23 @@
 //     deny written to a closed pipe was dropped and the process exited 0 with empty stdout, which on
 //     this runtime means ALLOW: red-team attack 3, demonstrated with a destroyed stream on Windows,
 //     unproven in a real session).
-//   - input size (Issue #304): S4's redirect scan is linear (one token index per call), so a padded
-//     redirect-dense command finishes in milliseconds instead of outrunning the hook timeout.
+//   - input size (Issues #304 and #321): every scan on this path is linear, so a padded redirect-dense
+//     command (one token index per call) and a benign command that ends in a long trailing-whitespace
+//     run, newline-dense (the separator scan once re-walked the run per newline: 64 KB never returned),
+//     both finish in milliseconds instead of outrunning the hook timeout. The probe records the class
+//     per shape, not as one closed class.
 //   - RESIDUAL, owned by the launcher (the future settings entry's command form, Issue #308, AP-13
-//     narrowed): faults that kill the process BEFORE any of this script runs cannot be fixed inside
-//     it. Measured: an interpreter that is not on PATH (exit 127 or 1), `NODE_OPTIONS` with an
-//     unknown flag (exit 9), `SYSTEMROOT` pointing at a nonexistent directory on Windows (exit 134).
-//     The probe in src/qa/gate-fail-open-probe.ts injects each and records PROCEEDS.
+//     narrowed): faults this script cannot catch, three kinds, each probed and recorded PROCEEDS by
+//     src/qa/gate-fail-open-probe.ts:
+//       (a) the process dies BEFORE any of this script runs: an interpreter that is not on PATH (exit
+//           127 or 1), `NODE_OPTIONS` with an unknown flag (exit 9), `SYSTEMROOT` pointing at a
+//           nonexistent directory on Windows (exit 134);
+//       (b) the script itself does not parse or cannot be read (an unparseable hook: corruption, a bad
+//           merge, tampering): Node prints a syntax error and exits 1 before any hook code runs;
+//       (c) memory exhaustion: an allocation failure inside the hook (a heap cap or a memory-limited
+//           runner plus a very large command) aborts the process, exit 134 on Windows. The process ran,
+//           but no in-script code can catch a V8 abort. A launcher form that maps every exit other than
+//           0 and 2 to 2 would close all of (a), (b) and (c).
 //   - hook timeout / non-blocking hook surface: runtime properties, disclosed, not preventable here.
 //
 // TIMEOUT DISCLOSURE (SUR-12 / OPS-03 split-budget model): the declared entry timeout (60, set at
