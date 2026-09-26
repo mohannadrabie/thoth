@@ -26,17 +26,18 @@
 //       permissionDecision was produced — SUR-10's "hook timeout"/"non-blocking hook surface"
 //       fail-opens live exactly here, disclosed not mechanically testable black-box.
 //
-// AMBIGUITY FLAGGED (see this pass's persisted report / receipt): AC-2's "matches no deny rule
-// proceeds" case depends on `src/policy/config/bootstrap-ruleset.ts`'s defaultOutcome, which is an
-// EXPLICITLY UNDETERMINED disclosed placeholder per the plan's own criterion 13 ("story-implementer's
-// call, pending S6/S11a") — not yet built, and no prior reviewer round pinned its value. The test
-// below uses a cleanly-resolved, NON-mutating action (a "get", not a "delete") specifically because
-// POL-05 cannot fire on it BY CONSTRUCTION (kernel.ts's isMutating() gates POL-05 on mutating verbs
-// or unresolved fields only) — but the ASSERTION that a non-mutating, cleanly-resolved action is not
-// denied still assumes the bootstrap ruleset's defaultOutcome is "allow", not "deny". If
-// story-implementer's actual bootstrap ruleset instead applies a global default-deny (plausible
-// given the milestone's own name, "Deny-by-default"), this specific test will need a build-time
-// conversation, not a silent edit — flagged explicitly rather than guessed at.
+// AMENDED 2026-09-26 (S7 kernel-gate classification, Phase 1 plan revision 3, Manager ruling Q-B;
+// test-writer, per this project's DoD: only test-writer amends a locked answer key). The ORIGINAL
+// text of this block flagged AC-2's dependence on `bootstrap-ruleset.ts`'s then-undetermined
+// defaultOutcome. That is now settled: the outcome the kernel falls back to is the loader's RESOLVED
+// posture (`loadEffectivePolicy`'s `defaultOutcome`), which is the bootstrap "allow" when no policy
+// layer declares one, and this test's cleanly-resolved, NON-mutating action (a "get", not a
+// "delete") cannot trip POL-05 by construction (kernel.ts's isMutating() gates POL-05 on mutating
+// verbs or unresolved fields only). Q-B: a kernel ALLOW EMITS NOTHING (exit 0, empty stdout) — the
+// gate is not an auto-approver, only a deny is ever written; AC-2 therefore asserts the empty
+// stdout, replacing the old "an explicit permissionDecision is present" assertion (the exact
+// empty-stdout, empty-stderr property is also pinned by hooks/pretooluse-kernel-gate-
+// classification.test.ts, check H10).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runHook, preToolUseStdin, fakeSessionId } from "./test-support/spawn-hook.ts";
@@ -97,16 +98,17 @@ test("AC-2 (ambiguity flagged in this file's header comment — depends on boots
   });
   const result = runHook(SCRIPT, stdin);
 
-  // NOTE: asserting `code === 0` (not merely `code !== 2`) and that `permissionDecision` is
-  // actually PRESENT (not merely "not the string deny") is deliberate, not incidental strictness:
-  // a script that doesn't exist at all also satisfies "code !== 2" and "permissionDecision !==
-  // deny" (spawnSync fails with code 1 and empty/undefined stdout) -- a false-positive PASS that
-  // would hide a missing implementation instead of proving one. This positively confirms the
-  // script ran to a clean, successful, non-denying exit, per the documented contract's normal
-  // (non-fail-open) path.
+  // NOTE (amended 2026-09-26, Q-B): asserting `code === 0` (not merely `code !== 2`) is deliberate,
+  // not incidental strictness: a script that doesn't exist at all also satisfies "code !== 2" and
+  // "permissionDecision !== deny" (spawnSync fails with code 1 and empty/undefined stdout) -- a
+  // false-positive PASS that would hide a missing implementation instead of proving one. A clean
+  // exit 0 confirms the script ran to a successful, non-denying end. Under Q-B a kernel allow emits
+  // NOTHING, so the stdout is asserted EMPTY (this replaces the old "permissionDecision is present,
+  // not silence" assertion): an allow is the absence of output, and any stdout at all here would be
+  // either a deny or an auto-approve the gate must not issue.
   assert.equal(result.code, 0, `expected a clean exit 0 for a fully-resolved, non-mutating command; got code=${result.code} stdout=${result.stdout} stderr=${result.stderr}`);
+  assert.equal(result.stdout.trim(), "", `Q-B: a kernel allow must emit NOTHING on stdout (the gate is not an auto-approver); got stdout=${result.stdout}`);
   const decision = permissionDecision(result.json);
-  assert.notEqual(decision, undefined, `expected a real hookSpecificOutput.permissionDecision on stdout, not silence; got stdout=${result.stdout}`);
   assert.notEqual(decision, "deny", `expected non-deny for a clean, non-mutating command; got stdout=${result.stdout}`);
 });
 
@@ -143,8 +145,10 @@ test("AC-6 (SUR-10, internal exception): empty stdin -> exit 2 + non-empty stder
   assert.notEqual(result.stderr.trim(), "", "an internal exception must be disclosed on stderr, not swallowed silently");
 });
 
-// --- AC-19: stdin's tool_name is checked; any value other than "Bash" denies, never crashes,
-// never silently normalizes as shell ----------------------------------------------------------
+// --- AC-19: stdin's tool_name is checked; any value other than "Bash" and mcp__ names denies
+// (S7 wording, 2026-09-26: the gate now also evaluates mcp__ tool names, see hooks/pretooluse-
+// kernel-gate-classification.test.ts; every OTHER tool_name keeps this fail-closed deny), never
+// crashes, never silently normalizes as shell -----------------------------------------------------
 
 test("AC-19: tool_name \"Edit\" reaching this script denies -- fail-closed tool_name check, never a normalize-as-shell attempt", () => {
   const sessionId = fakeSessionId("ac19-edit");

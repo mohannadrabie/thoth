@@ -63,10 +63,10 @@
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateToolInventory } from "../src/policy/tools/classification.ts";
-import { mergeToolClassificationLayers } from "../src/policy/rule/precedence.ts";
-import { loadBuiltinToolClassificationLayer } from "../src/policy/tools/builtin-tool-inventory.ts";
 import { extractConnectorIdentities, extractMcpServerNames } from "../src/policy/tools/mcp-enumeration.ts";
-import { loadCentralClassificationFixture, DEFAULT_FIXTURE_PATH } from "../src/policy/tools/central-classification.ts";
+// S7 (PC-9, G14): the fixture LOCATION and the catalog ASSEMBLY are two separate exports of one shared module (also used by
+// hooks/pretooluse-kernel-gate.mjs). The location is still resolved by main() BEFORE stdin is read, so the catch path below can record it.
+import { assembleCatalog, resolveFixtureLocation } from "../src/policy/tools/classification-catalog.ts";
 
 const UNCLASSIFIED_REASON_KEY = "SUR-03-unclassified-tool";
 // Connector-identity schema decision (see src/policy/tools/mcp-enumeration.ts's own header comment
@@ -383,12 +383,8 @@ function readJsonFileIfExists(path) {
  * value never itself causes a file to be written; a session with nothing ever active still leaves no
  * file, and therefore no fixtureSource/fixturePath either -- there being nothing to attach them to is
  * not the same as being silent about a real load. */
-function resolveFixtureLocation() {
-  const projectRelativeFixturePath = join(projectDir(), "docs", "qa", "s5-central-classification.json");
-  return existsSync(projectRelativeFixturePath)
-    ? { fixtureSource: "project-relative", fixturePath: projectRelativeFixturePath }
-    : { fixtureSource: "fallback-default", fixturePath: DEFAULT_FIXTURE_PATH };
-}
+// (S7: the body of this resolution now lives in src/policy/tools/classification-catalog.ts as `resolveFixtureLocation(projectDir, exists)`,
+// imported above and called by main(); the comment block above describes its contract unchanged.)
 
 function isProjectMcpServerEnabled(serverName, projectSettings) {
   if (!projectSettings || typeof projectSettings !== "object") return false;
@@ -429,8 +425,6 @@ function computeSessionTools(fixtureLocation) {
   const connectorNames = homeClaudeJson ? extractConnectorIdentities(homeClaudeJson) : [];
   const homeMcpServerOnlyNames = homeAllNames.filter((name) => !connectorNames.includes(name));
 
-  const builtinLayer = loadBuiltinToolClassificationLayer();
-
   // Load the ONE committed, separately-reviewable fixture backing both disclosed interim
   // exemptions (see this file's own header comment and central-classification.ts's own header for
   // the full disclosure). A malformed fixture throws here — propagates to main()'s top-level
@@ -470,11 +464,9 @@ function computeSessionTools(fixtureLocation) {
   // in so this function and the halt-state writer agree on the exact same decision (S5 fix-now
   // condition: "record the resolved fixture path in halt-state, so a non-default load is never
   // silent" — see `resolveFixtureLocation`'s own header comment for the full citation).
-  const fixture = loadCentralClassificationFixture(fixtureLocation.fixturePath);
+  const { builtinLayer, fixture, merged } = assembleCatalog(fixtureLocation);
   // Both exemptions apply exactly as the JSON lists them — no date logic, no pin (GitHub Issue #217).
   const knownConnectors = new Set(fixture.knownConnectors);
-
-  const merged = mergeToolClassificationLayers(builtinLayer, fixture.centralLayer);
 
   const builtinNames = builtinLayer.tools.map((t) => t.name);
   const sessionTools = [...builtinNames, ...enabledProjectMcpNames, ...homeMcpServerOnlyNames];
@@ -531,7 +523,7 @@ async function main() {
   // only means THIS particular disclosure is degraded, never that a halt is suppressed.
   let fixtureLocation = { fixtureSource: "unknown", fixturePath: null };
   try {
-    fixtureLocation = resolveFixtureLocation();
+    fixtureLocation = resolveFixtureLocation(projectDir(), existsSync);
   } catch (locErr) {
     process.stderr.write(
       `sessionstart-tool-enum.mjs: failed to resolve fixture location (non-fatal, continuing): ${locErr?.stack ?? locErr}\n`,

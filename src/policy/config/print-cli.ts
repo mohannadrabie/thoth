@@ -26,9 +26,13 @@ function main(): void {
   if (result.pin) {
     process.stdout.write(`pin: sha256:${result.pin.digest} channel=${result.pin.channel} computedAt=${result.pin.computedAt}\n`);
   }
-  // Issue #109 [MED]: disclosure that this reflects S6's own resolved policy, not necessarily what
-  // hooks/pretooluse-kernel-gate.mjs enforces live today. Same "never touch printer.ts's tested
-  // stdout" reasoning as the pin line above.
+  // R4 / Issue #288 precondition 1 (S7): the resolved baseline posture and its source, exactly one
+  // line, taken from the tested PrinterResult.postureLine (never a second rendering). Same "never
+  // touch printer.ts's tested stdout" reasoning as the pin line above.
+  process.stdout.write(result.postureLine + "\n");
+  // Issue #109 [MED]: disclosure that this reflects S6's own resolved policy and that the kernel-gate
+  // hook, although it reads the same loader since S7, is not wired, so nothing is enforced live.
+  // Same reasoning as the pin line above.
   process.stdout.write(result.disclosure + "\n");
   // Issue #114 [HIGH] fix, loud-disclosure condition (Stage-3 round 3, 2026-09-08 council ruling,
   // Path B): a mandatory:true declaration with no real locking force is never silently dropped --

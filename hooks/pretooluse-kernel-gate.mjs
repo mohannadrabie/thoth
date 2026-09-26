@@ -1,53 +1,77 @@
 #!/usr/bin/env node
-// PreToolUse hook (ADR-0021 shape 4, "gate surfaces"): the live, in-session enforcement point that
-// calls S2's pure kernel (`decide()`) through S3's normalizer registry and S4's shell-command
-// detector — the first time any of that shipped mechanism is actually wired to a real Claude Code
-// session (0% -> real exposure, S5 Phase 1 plan v3, docs/plans/S5-phase1-2026-09-06.md).
+// PreToolUse hook (ADR-0021 shape 4, "gate surfaces"): the in-session enforcement point that calls
+// S2's pure kernel (`decide()`) through S3's normalizer registry, S4's shell-command detector and
+// S7's tool-class normalizer. It is a THIN ADAPTER: it reads stdin, builds the real ports for the
+// gate module (src/policy/gate/decide-tool-call.ts), and writes what renderHookOutput returns.
 //
-// Matcher scope: `Bash` ONLY (`.claude/settings.json`'s own `PreToolUse` entry for this script) —
-// criterion 12, DERIVED/load-bearing, already ratified (docs/decisions.md, 2026-09-06 S5-plan-
-// ratified row, finding 2): routing Claude Code's other mutating built-ins (Edit/Write/MultiEdit/
-// NotebookEdit) through today's registry would deny every one of them unconditionally (no
-// filesystem normalizer exists yet — docs/backlog.md). This script ALSO checks stdin's own
-// `tool_name` itself (criterion 19) and denies on anything other than "Bash", fail-closed, never
-// crashing and never silently normalizing non-Bash input as a shell call — a second, independent
-// check from the matcher string in .claude/settings.json, not a replacement for it.
+// ACTIVATION STATUS (docs/plans/s7-kernel-gate-classification-phase1-2026-09-26.md): this script is
+// built and tested but NOT WIRED. `.claude/settings.json` has no `hooks.PreToolUse` entry for it, so
+// nothing is enforced live from this policy today. Activation is a separate, human-owned step with
+// its own preconditions (plan section 14, AP-1 to AP-14), among them baseline allow content
+// (nothing denies by class from shipped data until then), a refreshed tool inventory, and the two
+// unfixed launch and size fail-open blockers below.
 //
-// SUR-10's nine named fail-open paths, as they apply to THIS script specifically (see this file's
-// own tests, hooks/pretooluse-kernel-gate.test.ts, for which of these are black-box observable):
-//   - missing configuration / unknown tool: SUR-02's terminal-fall-through-is-deny guarantee,
-//     already proven at the registry level (S3, src/policy/normalizer/registry.test.ts) — this
-//     script inherits it unchanged by calling `normalize()` directly.
-//   - internal exception / malformed input: the ENTIRE body below runs inside one try/catch. Any
-//     exception (unparseable stdin, an unexpected shape) exits 2 with a non-empty stderr message —
-//     the one exit code Claude Code's own documented PreToolUse contract guarantees BLOCKS the
-//     tool call regardless of any JSON on stdout. A bare non-blocking exit here would silently let
-//     the call proceed.
-//   - hook timeout / non-blocking hook surface: NOT mechanically preventable by this script's own
-//     code — these are Claude Code runtime properties, disclosed (criterion 18's own "SUR-10 gap
-//     G6 unchanged" and this same story's split-budget model, see below), not tested here.
+// SCOPE (plan R-B): the gate evaluates ONLY `tool_name == "Bash"` (S4 shell normalizer) and names of
+// the form `mcp__<server>__<tool>` (the tool-class normalizer, class carried on a marker verb, see
+// src/policy/normalizer/tool-class-format.ts). Every OTHER tool_name keeps the fail-closed refusal
+// this hook always had (locked test AC-19): no built-in tool is routed through classification.
 //
-// TIMEOUT DISCLOSURE (SUR-12 / OPS-03 split-budget model, S5 plan v3 section 5): this script's
-// entry in `.claude/settings.json` declares `"timeout": 60` — a FIXED, disclosed value chosen
-// directly from (a) this repo's own shipped precedent (the former `report-subject-gate.mjs` entry,
-// `"timeout": 10` against a disclosed few-millisecond real cost) and (b) Claude Code's own
-// documented 600-second default ceiling for command-type hooks — NOT derived from any measured
-// invocation-latency figure. The SEPARATE, measured, CI-regression-tested performance budget for
-// this same script's real-world latency lives entirely in src/qa/gate-latency-budget-check.ts;
-// its overrun is a CI-10 incident (a red build), never a change to this 60s enforcement ceiling,
-// and this ceiling is never derived from or checked against that measurement. See
-// docs/decisions.md's S5 build-time row for the full one-line justification of the "60" value.
+// POLICY SOURCE (R3, Issue #288 precondition): rules and the `defaultOutcome` posture come from the
+// loader (src/policy/config/loader.ts, three layers: shipped defaults, central, project), read on
+// EVERY call (no cache, plan S-4: about 40 ms measured against a 2000 ms budget; a cache is
+// session-writable state on a policy path). The shipped-defaults and project policy paths are
+// module-relative and the classification fixture is read module-relative too
+// (src/policy/tools/classification-catalog.ts): no environment variable and no working directory
+// decides which policy source this fail-closed gate trusts (Issue #99 principle). A load failure
+// denies (layer and kind only, never the raw message).
 //
-// EVIDENCE-TRAIL DISCLOSURE (criterion 23): this script's own deny/allow verdicts have NO durable
-// evidence trail yet. The former `.claude/settings.json` PreToolUse entry (`report-subject-
-// gate.mjs`) claimed a hash-chained audit log that never actually existed on this branch (Issue
-// #87) — this script makes no equivalent claim. The real audit-trail mechanism (hash-chained,
-// append-only, atomic-write, per INT-05/REL-02) is S8's job (Milestone #26, INT-05) — removing the
-// fictional claim is not building the real thing.
-import { normalize } from "../src/policy/normalizer/registry.ts";
-import "../src/policy/normalizer/shell.ts";
-import { decide } from "../src/policy/kernel/kernel.ts";
-import { BOOTSTRAP_DEFAULT_OUTCOME, loadBootstrapRuleSet } from "../src/policy/config/bootstrap-ruleset.ts";
+// OUTPUT (Q-B): a kernel ALLOW emits NOTHING. S-2 measured that `permissionDecision: "allow"` skips
+// the user's permission prompt, so an emitted allow would make this gate an auto-approver. Only a
+// deny is emitted (exit 0 plus a deny JSON). renderHookOutput is a typed, closed function: silence
+// only for an exact allow verdict; any other result shape exits 2 with stderr, never silent (PT-15).
+//
+// SUR-10 fail-open paths (REQUIREMENTS.md; enumerated by src/qa/gate-fail-open-probe.ts, recorded in
+// plan section 9):
+//   - missing configuration / unknown tool: a policy or fixture that cannot load denies; an
+//     unclassified, ambiguous or unparseable MCP name is opaque and POL-05 denies it.
+//   - internal exception: the body below runs inside main().catch: exit 2 with stderr.
+//     CORRECTION of an earlier claim that the WHOLE body ran in one try/catch: the static imports
+//     below run BEFORE that catch. A process that dies there (Node without TypeScript type
+//     stripping, a missing or renamed import target, an interpreter that is not on PATH) exits 1,
+//     which Claude Code treats as NON-BLOCKING: the call PROCEEDS (measured, design-challenger
+//     round 1, Claude Code 2.1.267). NOT fixed in this story; bound as activation blocker AP-13
+//     (Issue #303). The same family includes env-induced launch failures (NODE_OPTIONS with an
+//     unknown flag exits 9; SYSTEMROOT pointing at a nonexistent directory aborts Node on Windows),
+//     injected by the probe in src/qa/gate-fail-open-probe.ts and recorded as PROCEEDS.
+//   - discarded stdout write: a decided deny written to a stdout the reader has already closed is
+//     dropped and the process exits 0 with empty stdout, which on this runtime means ALLOW
+//     (red-team attack 3, demonstrated with a destroyed stream, unproven in a real session). The
+//     adapter has no write-error listener yet. NOT fixed in this story; recorded as the probe row
+//     `stdout-closed-before-write` under AP-13.
+//   - input size: a padded, redirect-dense command makes S4's redirect scan quadratic and can outrun
+//     the hook timeout, which proceeds. NOT fixed in this story (shell-scanner.ts untouched); bound
+//     as AP-14 (Issue #304).
+//   - hook timeout / non-blocking hook surface: runtime properties, disclosed, not preventable here.
+//
+// TIMEOUT DISCLOSURE (SUR-12 / OPS-03 split-budget model): the declared entry timeout (60, set at
+// activation) is a fixed value chosen from precedent and Claude Code's documented ceiling, NOT
+// derived from any latency measurement. The measured, CI-regression-tested budget lives in
+// src/qa/gate-latency-budget-check.ts (p99 2000 ms); its overrun is a CI-10 incident, never a change
+// to the enforcement ceiling.
+//
+// EVIDENCE-TRAIL DISCLOSURE (R13): this script's verdicts have NO durable evidence trail. The audit
+// trail (hash-chained, append-only) is S8's job (INT-05); this hook writes no file.
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { decideToolCall } from "../src/policy/gate/decide-tool-call.ts";
+import { renderHookOutput } from "../src/policy/gate/render-hook-output.ts";
+import { loadEffectivePolicy } from "../src/policy/config/loader.ts";
+import { defaultCentralPolicySource } from "../src/policy/config/central-source.ts";
+import { assembleCatalog, moduleRelativeFixtureLocation } from "../src/policy/tools/classification-catalog.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SHIPPED_DEFAULTS_PATH = join(HERE, "..", "src", "policy", "config", "shipped-defaults.json");
+const PROJECT_POLICY_PATH = join(HERE, "..", ".thoth", "policy.json");
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -61,23 +85,35 @@ function readStdin() {
   });
 }
 
-function emitDecision(decision, reason) {
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: decision,
-        permissionDecisionReason: reason,
-      },
-    }),
-  );
-  process.exit(0);
-}
+/** The gate's ports (src/policy/gate/decide-tool-call.ts owns their types, so the gate imports nothing
+ * from src/policy/config/): the real loader, adapted here to the gate's own layer-and-kind result
+ * (never the raw loader message), and the module-relative catalog. The gate returns a CLOSED result:
+ * a kernel verdict (allow or deny) or a refusal (malformed input, an unroutable tool_name, a policy
+ * load failure), and renderHookOutput maps it to what this script writes. A port that throws (for
+ * example a malformed fixture) propagates out of the gate to main().catch below: exit 2. */
+const PORTS = {
+  loadPolicy() {
+    const loaded = loadEffectivePolicy({
+      shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
+      projectPolicyPath: PROJECT_POLICY_PATH,
+      centralSource: defaultCentralPolicySource,
+    });
+    if (!loaded.ok) return { ok: false, failedLayer: loaded.failedLayer, reasonKind: loaded.reasonKind };
+    return {
+      ok: true,
+      ruleSet: { version: loaded.merged.version, rules: loaded.merged.rules },
+      defaultOutcome: loaded.defaultOutcome.outcome,
+    };
+  },
+  loadCatalog() {
+    return assembleCatalog(moduleRelativeFixtureLocation()).merged;
+  },
+};
 
-function denyFailClosed(reason) {
-  emitDecision("deny", reason);
-}
-
+// main(): read the payload, decide, render, exit. Anything thrown from here (empty stdin, unparseable
+// JSON, a port that throws) reaches main().catch at the bottom: exit 2 with a stderr message, the one
+// code the PreToolUse contract guarantees blocks the call. The imports above run BEFORE this catch
+// exists (see the SUR-10 note in the header: AP-13).
 async function main() {
   const raw = await readStdin();
 
@@ -86,44 +122,16 @@ async function main() {
   }
 
   const input = JSON.parse(raw);
-
-  // Criterion 19: fail-closed tool_name check, independent of .claude/settings.json's own matcher
-  // string. Any value other than "Bash" denies — never crashes, never silently normalizes as shell.
-  if (input.tool_name !== "Bash") {
-    denyFailClosed(
-      `pretooluse-kernel-gate.mjs only evaluates "Bash" calls; got tool_name=${JSON.stringify(input.tool_name)}`,
-    );
-    return;
-  }
-
-  const toolInput = input.tool_input;
-  const command = toolInput && typeof toolInput === "object" ? toolInput.command : undefined;
-  if (typeof command !== "string") {
-    denyFailClosed("tool_input.command is missing or not a string — fail-closed, cannot evaluate");
-    return;
-  }
-
-  const identity = typeof input.session_id === "string" ? input.session_id : "unknown";
-
-  const action = normalize("shell", {
-    command,
-    // No real environment/identity model exists yet (S6/S11a) — criterion 13's own disclosed-
-    // placeholder pattern, applied here identically to bootstrap-ruleset.ts's RuleSet.
-    environment: "unknown",
-    identity,
-    deferred: false,
-  });
-
-  const worldFacts = {
-    rules: loadBootstrapRuleSet(),
-    defaultOutcome: BOOTSTRAP_DEFAULT_OUTCOME,
-  };
-
-  const verdict = decide(worldFacts, action);
-  emitDecision(verdict.outcome, verdict.reason);
+  const output = renderHookOutput(decideToolCall(input, PORTS));
+  if (output.stderr !== "") process.stderr.write(output.stderr);
+  if (output.stdout !== "") process.stdout.write(output.stdout);
+  process.exit(output.exitCode);
 }
 
 main().catch((err) => {
-  process.stderr.write(`pretooluse-kernel-gate.mjs: internal exception, fail-closed (deny): ${err?.stack ?? err}\n`);
+  // A fixed message plus the error NAME only (S7 fix-now, app-security finding 4): err.stack carried
+  // absolute file paths and parser text (a fragment of a malformed fixture or payload) into a
+  // model-visible channel.
+  process.stderr.write(`pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2): ${typeof err?.name === "string" ? err.name : "Error"}\n`);
   process.exit(2);
 });

@@ -109,9 +109,11 @@ export interface LoadSuccess {
 
 /** POL-01 (Issue #112): the resolved baseline posture -- what a caller passes as
  * `WorldFacts.defaultOutcome`. `source` names the layer that supplied it, or "bootstrap" when no
- * layer declared one (the code-literal fallback stays "allow"). Exposed as a result field only --
- * not in printer stdout, and nothing consumes it until the kernel-gate hook is rewired (that hook
- * still reads its own bootstrap constant). */
+ * layer declared one (the code-literal fallback stays "allow"). Not in printer stdout (S7: the
+ * printer exposes it as PrinterResult.posture and postureLine, printed by print-cli.ts). Since S7 the
+ * kernel-gate hook (hooks/pretooluse-kernel-gate.mjs) passes it as WorldFacts.defaultOutcome instead
+ * of a bootstrap constant; that hook is built but NOT WIRED into .claude/settings.json, so nothing
+ * is enforced live from it today. */
 export interface ResolvedPosture {
   outcome: VerdictOutcome;
   source: LayerName | "bootstrap";

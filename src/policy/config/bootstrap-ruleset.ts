@@ -1,3 +1,9 @@
+// S7 NOTE (2026-09-26): hooks/pretooluse-kernel-gate.mjs no longer calls `loadBootstrapRuleSet()`. It
+// reads the loader's resolved rules and posture (src/policy/config/loader.ts) on every call.
+// `BOOTSTRAP_DEFAULT_OUTCOME` survives as the loader's code-literal FALLBACK posture when no layer
+// declares one ({ outcome: "allow", source: "bootstrap" }); `loadBootstrapRuleSet` is now called
+// only by its own tests. The text below is the original S5 record.
+//
 // S5 Phase 1 plan v3 (docs/plans/S5-phase1-2026-09-06.md), criterion 13 (DERIVED, load-bearing):
 // "the bootstrap RuleSet/environment/identity values are explicit, disclosed placeholders pending
 // S6/S11a — not a §0.4-compliance claim." With no real central-policy loader yet (S6, T10 still
