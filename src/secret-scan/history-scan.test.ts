@@ -14,6 +14,7 @@ import {
   isValidAllowlistEntry,
   loadAllowlist,
   partitionAllowlisted,
+  scanBlobText,
   scanHistory,
   SCAN_TIMEOUT_MS,
   SCAN_TIMEOUT_PATTERN_ID,
@@ -2093,7 +2094,8 @@ test("oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-pa
 
   // Round 1: scan blobA alone and build the allowlist grant a maintainer would actually add for its own
   // scan-timeout finding(s) -- one entry per (path, patternId) that timed out, each carrying blobA's OWN
-  // valueSha256 (never typed by hand: this is exactly what a real grant is built from).
+  // valueSha256, which is one hash per blob whichever pattern tripped (never typed by hand: this is
+  // exactly what a real grant is built from).
   let grantEntries: AllowlistEntry[] = [];
   await withPlumbingRepo({ [PATH]: blobA }, async (dir) => {
     const matches = await scanHistory(makeGitOps(realRunner, dir));
@@ -2135,6 +2137,110 @@ test("oss01-a-scan-timeout-grant-does-not-exempt-a-different-blob-at-the-same-pa
     await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson(grantEntries));
     const result = summarizeMatches(await scanHistory(makeGitOps(realRunner, dir)), await loadAllowlist(join(dir, ALLOWLIST_PATH)));
     assert.equal(result.ok, true, "control: the exact granted blob still passes at the same path");
+  });
+});
+
+// ================================================================================================
+// Issue 271 (red-team, s1-oss01-detection-residuals round 2, MED): the scan-timeout hash was keyed to WHICH
+// pattern timed out, and which pattern is slow on a blob near the budget is a wall-clock race (the same
+// input gave "none" and "internal-hostname" on one machine). So the grant a developer computed could differ
+// from the one CI needed. The hash is now a function of the scanned text alone. The blob below is far past
+// the budget for both patterns (tens of seconds unbounded against a 500 ms bound), so both really time out
+// on any machine and this test never sits in the boundary band. Named per red-team's own suggested test:
+// oss01-a-scan-timeout-grant-does-not-depend-on-which-pattern-was-slow.
+// ================================================================================================
+
+test("oss01-a-scan-timeout-grant-does-not-depend-on-which-pattern-was-slow", () => {
+  const hostile = "a-".repeat(100_000);
+  const only = (id: string) => SECRET_PATTERNS.filter((p) => p.id === id);
+  const timeoutHashes = (id: string) =>
+    scanBlobText(hostile, only(id))
+      .filter((f) => f.patternId === SCAN_TIMEOUT_PATTERN_ID)
+      .map((f) => f.valueSha256);
+
+  const viaHostname = timeoutHashes("internal-hostname");
+  const viaEmail = timeoutHashes("email-address");
+  assert.equal(viaHostname.length, 1, "control: internal-hostname really times out on this blob");
+  assert.equal(viaEmail.length, 1, "control: email-address really times out on this blob");
+  assert.deepEqual(viaHostname, viaEmail, "the grant hash must not change with which pattern was the slow one");
+  assert.equal(
+    viaHostname[0],
+    sha256(`${SCAN_TIMEOUT_PATTERN_ID}:${hostile}`),
+    "and it is the sha256 of the reserved id plus the scanned text, computed here independently",
+  );
+});
+
+// ================================================================================================
+// Issue 289 (red-team, s1-oss01-residuals-270-271, MED): with the pattern id out of the hash (Issue 271), ONE
+// scan-timeout grant covers every pattern's timeout on that blob, and a timed-out pattern's matches are
+// discarded (`scanBlobText` reports the timeout instead), so a granted blob passes even where a slow pattern
+// never looked at it. The Manager accepted that widening: the grant stays content-addressed and path-scoped.
+// This test pins the boundary of the widening against the real gate, so it can neither grow nor be mistaken
+// for a bug: the grant covers exactly (path P, the exact scanned text, every pattern's timeout there) and
+// nothing else. Named per red-team's own suggested test.
+// ================================================================================================
+
+test("oss01-a-scan-timeout-grant-covers-every-patterns-timeout-on-that-blob-and-nothing-more", async () => {
+  const P = "vendor-big.bin";
+  const Q = "elsewhere-big.bin";
+  const R = "real-secret.txt";
+  const hostile = "a-".repeat(100_000);
+  const different = "x-".repeat(100_000);
+  const H = sha256(`${SCAN_TIMEOUT_PATTERN_ID}:${hostile}`); // independent of production hashing
+  const real = novel("aws-access-key-id", 289);
+  const reason = "synthetic fixture: a maintainer reviewed this oversized asset and granted its scan-timeout";
+  const grant: AllowlistEntry = { path: P, patternId: SCAN_TIMEOUT_PATTERN_ID, valueSha256: [H], reason };
+  const timeoutsAt = (matches: HistoryMatch[], path: string) => matches.filter((m) => m.path === path && m.patternId === SCAN_TIMEOUT_PATTERN_ID);
+
+  await withPlumbingRepo({ [P]: hostile, [Q]: hostile, [R]: `${real.text}\n` }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson([grant]));
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const allowlist = await loadAllowlist(join(dir, ALLOWLIST_PATH));
+    const { blocking, allowlisted } = partitionAllowlisted(matches, allowlist);
+
+    // Leg 1: the one grant exempts EVERY pattern's timeout on that exact blob at that path.
+    const atP = timeoutsAt(matches, P);
+    const patternsAtP = new Set(atP.map((m) => /pattern=([a-z0-9-]+)/.exec(m.redacted)?.[1]));
+    assert.ok(patternsAtP.size >= 2, "control: at least two different patterns time out on this blob");
+    assert.equal(timeoutsAt(allowlisted, P).length, atP.length, "every timeout finding on the granted blob is exempted by the one grant");
+    assert.deepEqual(timeoutsAt(blocking, P), [], "none of them blocks");
+
+    // Leg 2: nothing else is exempted.
+    assert.equal(timeoutsAt(blocking, Q).length, timeoutsAt(matches, Q).length, "the same text at ANOTHER path still blocks (path scope)");
+    assert.ok(timeoutsAt(matches, Q).length >= 2, "control: the other path really has timeout findings");
+    const realBlocking = blocking.filter((m) => m.path === R && m.patternId === "aws-access-key-id");
+    assert.equal(realBlocking.length, 1, "a real pattern's match is never exempted by a scan-timeout grant");
+
+    // A grant under the reserved id that carries a REAL match's hash does not exempt that real match either.
+    const crossed = partitionAllowlisted(matches, [{ path: R, patternId: SCAN_TIMEOUT_PATTERN_ID, valueSha256: [sha256(real.match)], reason }]);
+    assert.equal(crossed.blocking.filter((m) => m.path === R && m.patternId === "aws-access-key-id").length, 1, "the pattern id is part of the key: no cross-id exemption");
+
+    // A grant under a REAL pattern id that carries the timeout hash does not exempt the timeout finding.
+    const wrongId = partitionAllowlisted(matches, [{ path: Q, patternId: "internal-hostname", valueSha256: [H], reason }]);
+    assert.equal(timeoutsAt(wrongId.blocking, Q).length, timeoutsAt(matches, Q).length, "a real pattern id carrying the timeout hash exempts nothing");
+  });
+
+  // A different text at the SAME path under the same grant still blocks (content scope).
+  await withPlumbingRepo({ [P]: different }, async (dir) => {
+    const matches = await scanHistory(makeGitOps(realRunner, dir));
+    const { blocking } = partitionAllowlisted(matches, [grant]);
+    assert.ok(timeoutsAt(matches, P).length >= 2, "control: the different text also times out");
+    assert.equal(timeoutsAt(blocking, P).length, timeoutsAt(matches, P).length, "the grant covers only the exact text it was computed from");
+  });
+
+  // Through the real CLI: the granted blob passes, and the passing run still names each skipped pattern --
+  // the one surviving signal that the granted blob was not fully scanned (red-team's third leg).
+  await withPlumbingRepo({ [P]: hostile }, async (dir) => {
+    await writeFile(join(dir, ...ALLOWLIST_PATH.split("/")), allowlistJson([grant]));
+    const cli = await runCli(HISTORY_SCAN_SCRIPT, dir);
+    assert.equal(cli.code, 0, `the granted blob passes the real gate:\n${cli.stdout}`);
+    for (const id of ["internal-hostname", "email-address"]) {
+      assert.match(cli.stdout, new RegExp(`ALLOWLISTED .*\\[${SCAN_TIMEOUT_PATTERN_ID}\\].*pattern=${id}\\b`), `the passing run still names ${id} as skipped`);
+    }
+  });
+  // And the same real gate, same blob, no grant: blocks.
+  await withPlumbingRepo({ [P]: hostile }, async (dir) => {
+    assert.notEqual((await runCli(HISTORY_SCAN_SCRIPT, dir)).code, 0, "control: without the grant the real gate blocks");
   });
 });
 
