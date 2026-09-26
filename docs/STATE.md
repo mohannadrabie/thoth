@@ -1,9 +1,24 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-26 (S7 built and reviewed, decisions sweep done; two PRs to open). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-09-26 (S6 close-out story built and reviewed; PR to open). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-26: S7 kernel-gate classification built and reviewed, sweep done; two PRs open, CI green
+## Resume point — 2026-09-26 (later): S6 close-out story `s6-294-echoed-key-sanitize` built and reviewed
+
+- **Prior work:** PRs #310 and #311 (decisions sweep, S7 kernel-gate classification) are merged; master CI on those merges was in progress at session start.
+- **S6 milestone:** its open issues were #107, #288, #294. #107 and #288 were re-homed to S7 by comment (their remaining work needs the gate hook wired, Issue #308). #294 is this story. S6 closes once this story's PR merges (human action); Issue #316 was taken out of S6 on purpose (its reporter half is Issue #223).
+- **Story (CRITICAL, policy delivery surface):** policy-derived text is stripped of terminal-active characters at the render boundary (printer and CLI); loader and schema keep raw text. New helper with a drift guard against the halt-relay hook's inline class, an enumerating-walk instrument as the completeness proof, and a labelled heuristic guard on the CLI's writes.
+- **Reviews (5 dated reports, all read in full):** `red-team` go (rounds 1 and 2), `app-security-reviewer` and `cross-domain-reviewer` approve-with-conditions; no HIGH. Round-2 findings (Issues #317, #318, one LOW) were fixed and mutation-proven without a third review round (disclosed; the exact fixes were pre-specified by `red-team`).
+- **Verified by the Manager on the branch tip:** typecheck and lint clean; 1344 tests, 1344 pass, 0 fail, 0 skipped; the qa gates, secret scan and QA-14 in diff mode (0 failed) pass.
+- **Human decisions pending:** two decisions.md rows (plus an addendum) marked pending, chiefly the reading of SE ADR-0005 and ADR-0010 for the two locked-test amendments by `test-writer`.
+- **Closes on merge:** Issues #294, #313, #314, #315, #317, #318. Issue #316 stays open (catalog restore lands with the PR; reporter half is #223), then closes.
+- **Follow-ups filed:** Issue #312 (kernel/hook deny text is still unsanitized; the gate cannot import the config helper, so its Phase 1 decides the helper home), linked from #308.
+- **Next story (not started):** S7-A gate-hook robustness, Issues #303 and #304 (intake READY; corrections: the quadratic scan is also in `findLiveRedirectMatches`; the env-fault probe rows already exist).
+- **Process notes:** reviewer worktrees must be removed before verification; a reviewer closing an Issue before the fix ships was reopened (close only on merge); the QA-14 diff gate flags relative-path shorthands in new reports.
+
+**Single next action:** the human merges the S6 close-out PR (after ratifying or noting the pending decision rows), then the Manager closes Issue #316 and the S6 milestone and continues S7-A.
+
+## Prior entry (superseded above): S7 kernel-gate classification built and reviewed, sweep done; two PRs open, CI green
 
 | Branch | Content | State |
 |---|---|---|

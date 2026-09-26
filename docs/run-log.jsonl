@@ -110,3 +110,4 @@
 {"at":"2026-09-26T14:35:28.774Z","event":"receipt-reopened","scope":"s7-kernel-gate-classification","agent":"app-security-reviewer","trigger":"reconfirm-file-not-parsed-issue-213","report":"docs/reviews/s7-kernel-gate-classification-app-security-reconfirm-2026-09-26.md"}
 {"at":"2026-09-26T14:36:49.401Z","event":"story-shipped","scope":"s7-kernel-gate-classification","rounds":"1","reports":"9","findings":"59","adrTokensSaved":"146400","councilFired":"false"}
 {"at":"2026-09-26T15:33:20.944Z","event":"tier-ratified","scope":"s6-294-echoed-key-sanitize","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"policy delivery surface is a named sensitive area"}
+{"at":"2026-09-26T17:48:17.742Z","event":"story-shipped","scope":"s6-294-echoed-key-sanitize","rounds":"0","reports":"5","findings":"16","adrTokensSaved":"18300","councilFired":"false"}
