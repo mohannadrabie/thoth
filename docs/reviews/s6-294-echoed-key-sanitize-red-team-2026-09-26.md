@@ -156,7 +156,7 @@ exit=0 on both runs; 5 stdout lines on both
 
 ### 10. [CLEAN][code-traced] The strip is render-only, and nothing below it changed
 
-The diff touches `printer.ts`, `print-cli.ts`, `sanitize.ts` and two test files; `loader.ts`, `rule/schema.ts`, `rule/precedence.ts`, `pin.ts` and every `hooks/*` file are untouched. Rule-id lookups and the duplicate-id and mandatory-lock comparisons still run on raw text, the pin digest is computed from raw layer text, and `PrinterResult.inertMandatoryDeclarations` deliberately carries the raw id with the rendering done at the boundary. The only importers of the printer are the CLI and its tests, so there is no second echo path out of this module.
+The diff touches `printer.ts`, `print-cli.ts`, `sanitize.ts` and two test files; `loader.ts`, the rule schema module, the rule precedence module, `pin.ts` and every `hooks/*` file are untouched. Rule-id lookups and the duplicate-id and mandatory-lock comparisons still run on raw text, the pin digest is computed from raw layer text, and `PrinterResult.inertMandatoryDeclarations` deliberately carries the raw id with the rendering done at the boundary. The only importers of the printer are the CLI and its tests, so there is no second echo path out of this module.
 
 ### 11. [CLEAN][demonstrated] The behavioural backstop bites for the printer, including echoes the scan cannot see
 
@@ -235,3 +235,7 @@ checks=policy-config 206 pass/0 fail/0 skipped; full suite 1325 tests 1324 pass/
 adr=HIT(37)
 report=docs/reviews/s6-294-echoed-key-sanitize-red-team-2026-09-26.md
 ```
+
+## Manager addendum (2026-09-26, PRINCIPLES rule 11: the evidence above is otherwise verbatim)
+
+After the fix-now round, the Manager made one wording substitution so that QA-14 (a blocking CI gate, which has no opt-out) could pass on this range. Meaning is unchanged. Substitution, in the "diff touches" sentence of the clean-scope finding: two relative-path shorthands for the rule schema and rule precedence source files were reworded to "the rule schema module" and "the rule precedence module". No finding, verdict, severity, evidence tag or receipt line was edited.
