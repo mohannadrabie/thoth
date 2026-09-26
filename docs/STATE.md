@@ -1,9 +1,22 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-26 (S7 built and reviewed, decisions sweep done; two PRs to open). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-09-26 (S7-A gate-hook robustness built and reviewed; PR to open). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-26: S7 kernel-gate classification built and reviewed, sweep done; two PRs open, CI green
+## Resume point — 2026-09-26 (latest): S7-A `s7a-gate-hook-robustness` (Issues #303, #304) built and reviewed
+
+- **Story (CRITICAL; session-gate hook and the shell normalizer):** the still-unwired PreToolUse gate hook now fails closed for module-load faults (dynamic imports inside its try; fixed stderr line, error type only) and for a dropped stdout write; the redirect scan and the trailing-separator scan are linear with identical output. Hook stays unwired (activation is Issue #308).
+- **Reviews (4 dated reports, all read in full):** round 1 `red-team` no-go on one demonstrated HIGH (Issue #321: a benign command ending in a long newline run never returned; the plan had scoped the function out on a code read that was wrong), `app-security-reviewer` approve, `cross-domain-reviewer` approve-with-conditions. One fix-now round fixed the HIGH, three MED findings (Issues #322, #323, #324) and the LOW findings. Round 2 `red-team` go (the fix proven output-identical by two independent instruments, no other superlinear site found). Review counters: one rework-class round, since-clean 1, total 1.
+- **Verified by the Manager on a clean tree:** typecheck and lint clean; 1324 tests, 1324 pass, 0 fail, 0 skipped; mutation run kills every shipped mutant (59); the differential instrument reports 0 mismatches; the qa gates, latency budget (p99 300 ms against 2000 ms), secret scan and QA-14 diff mode (0 failed) pass.
+- **Recorded, not fixed (AP-13 residual set for Issue #308):** five launcher-owned faults that a launcher form mapping every exit other than 0 and 2 to 2 would close (interpreter off PATH, bad NODE_OPTIONS, bad SYSTEMROOT, an unparseable hook script, memory exhaustion). That mapping does not close a tampered module that exits 0 (checkout integrity, S7 self-protection).
+- **Deferred with owners:** Issue #325 (meter self-test), Issue #326 (deny text length), Issue #320 (Node-version-sensitive probe row). Human ratification pending on two decisions rows plus addenda (chiefly the reading of the locked test AC-H13, satisfied by a documenting comment in the hook).
+- **To read on the first CI run:** the real-hook wall-clock durations (about 3x margin under full-suite load, Linux unmeasured).
+- **Closes on merge:** Issues #303, #304, #321, #322, #323, #324.
+- **Merge order:** the S6 close-out PR (#319) first; this branch merges it in so the second merge stays clean.
+
+**Single next action:** the human merges PR #319 (S6 close-out), then the S7-A PR; the Manager then closes Issue #316 and the S6 milestone.
+
+## Prior entry (superseded above): S7 kernel-gate classification built and reviewed, sweep done; two PRs open, CI green
 
 | Branch | Content | State |
 |---|---|---|
