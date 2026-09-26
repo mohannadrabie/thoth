@@ -21,7 +21,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 **Human decisions and record-keeping (the S7 rulings are in `docs/decisions.md` as two rows marked pending)**
 - Ratify or reject those two rows, especially two readings only a human can give: the AC-2 amendment (one locked assertion replaced by a stricter empty-stdout one) under SE ADR-0005 and ADR-0010, and the routing-table reading under SE ADR-0021.
 - THOTH-ADR-0001 (fixture as an enforcement control, halt-state recording, the "PR diff is the approval" ruling, does test code count as hardcoding, the stale "inert" residual row): human-only, blocks activation, not the merge.
-- `CLAUDE.md` still names `hooks/report-subject-gate.mjs` and guard paths that do not exist; `src/policy/gate/` matches no named sensitive-area path. Human-owned, not edited.
+- `CLAUDE.md` still names the deleted report-subject gate hook and guard paths that do not exist; `src/policy/gate/` matches no named sensitive-area path. Human-owned, not edited.
 - One judgment call for you: two path-shaped mentions in the app-security and cross-domain reports (and one shifting line number) were reworded before the branch was ever pushed so the blocking QA-14 gate passes; each report carries an addendum naming the edit.
 
 **Open items (from `gh`, not hand-counted)**
