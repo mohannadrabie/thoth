@@ -144,6 +144,33 @@ for (const sizeKb of [16, 64, 128]) {
   }
 }
 
+// --- S7-A fix-now round 1 (Issue #321, written failing first): the same ceiling for a benign command that ends in a
+// long whitespace run. The separator scan was quadratic in a newline-dense run: 16 KB took 2294 ms through the real
+// hook and 64 KB never returned inside the 30 s spawn timeout (red-team attack 1). Real spawns, cold process. The
+// 2000 ms ceiling assertions stay; under full-suite load the measured margin is about 3x, not 7x, so these wall-clock
+// cases are the SECOND guard: the deterministic work meter (src/policy/normalizer/shell-scanner-work.test.ts) is the
+// primary proof of linearity.
+import { TRAILING_WHITESPACE_SHAPE_NAMES, buildTrailingWhitespaceShape } from "./trailing-whitespace-shapes.ts";
+
+for (const sizeKb of [16, 64, 128]) {
+  for (const shape of TRAILING_WHITESPACE_SHAPE_NAMES) {
+    test(`A15b real-hook-trailing-whitespace-under-2000ms: shape=${shape} size=${sizeKb} KB finishes under the OPS-03 ceiling with a valid gate outcome`, () => {
+      const command = buildTrailingWhitespaceShape(shape, sizeKb * 1024);
+      assert.ok(command.length >= sizeKb * 1024, "the builder must reach the requested size");
+      const elapsedMs = REAL_SHELL_FORM_TIMER(HOOK_PATH, bashStdin(command));
+      assert.ok(elapsedMs < OPS03_CEILING_MS, `${shape} at ${sizeKb} KB took ${elapsedMs.toFixed(0)} ms; the ceiling is ${OPS03_CEILING_MS} ms`);
+    });
+  }
+}
+
+test("A16b latency-corpus-has-trailing-whitespace-entries: the exported corpus holds a 128 KB entry of every trailing-whitespace shape", () => {
+  const corpus = (latencyModule as { CORPUS?: readonly string[] }).CORPUS;
+  assert.ok(corpus !== undefined, "the corpus must be exported");
+  for (const shape of TRAILING_WHITESPACE_SHAPE_NAMES) {
+    assert.ok(corpus.includes(buildTrailingWhitespaceShape(shape, 128 * 1024)), `no 128 KB ${shape} entry in the corpus`);
+  }
+});
+
 test("A16 latency-corpus-has-a-128KB-entry: the exported corpus holds a command of 131072 characters or more", () => {
   const corpus = (latencyModule as { CORPUS?: readonly string[] }).CORPUS;
   assert.ok(corpus !== undefined, "the corpus must be exported");

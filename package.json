@@ -21,6 +21,7 @@
     "qa:mutation-selftest": "node src/qa/mutation-harness.ts",
     "qa:mutation-shell": "node src/qa/shell-detector-mutants.ts",
     "qa:redirect-differential": "node src/qa/redirect-scan-differential.ts",
+    "qa:gate-path-sweep": "node src/qa/gate-path-scaling-sweep.ts",
     "qa:recurring-findings": "node src/qa/recurring-findings-registry.ts",
     "qa:reference-resolver": "node src/qa/reference-resolver.ts",
     "qa:completeness-claims": "node src/qa/completeness-claim-checker.ts",
