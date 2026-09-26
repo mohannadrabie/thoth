@@ -78,8 +78,12 @@ function readStdin() {
   });
 }
 
-/** The gate's ports: the real loader (adapted to the gate's own layer-and-kind result) and the
- * module-relative catalog. */
+/** The gate's ports (src/policy/gate/decide-tool-call.ts owns their types, so the gate imports nothing
+ * from src/policy/config/): the real loader, adapted here to the gate's own layer-and-kind result
+ * (never the raw loader message), and the module-relative catalog. The gate returns a CLOSED result:
+ * a kernel verdict (allow or deny) or a refusal (malformed input, an unroutable tool_name, a policy
+ * load failure), and renderHookOutput maps it to what this script writes. A port that throws (for
+ * example a malformed fixture) propagates out of the gate to main().catch below: exit 2. */
 const PORTS = {
   loadPolicy() {
     const loaded = loadEffectivePolicy({
@@ -99,6 +103,10 @@ const PORTS = {
   },
 };
 
+// main(): read the payload, decide, render, exit. Anything thrown from here (empty stdin, unparseable
+// JSON, a port that throws) reaches main().catch at the bottom: exit 2 with a stderr message, the one
+// code the PreToolUse contract guarantees blocks the call. The imports above run BEFORE this catch
+// exists (see the SUR-10 note in the header: AP-13).
 async function main() {
   const raw = await readStdin();
 
