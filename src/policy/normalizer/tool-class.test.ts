@@ -264,3 +264,19 @@ test("N11: determinism: the same call and catalog twice give an identical record
   assert.ok(isActionRecord(a));
   assert.equal(GRAMMAR_VERSION, "1");
 });
+
+// --- N13 (fix-now, app-security 5 and red-team attack 4) ---------------------------------------
+
+test("N13: the TOOL segment is as strict as the server segment: only [A-Za-z0-9_-] is admitted; a trailing space, NUL, line feed, zero-width character, a Cyrillic lookalike, a dot and an empty tool are unresolved", () => {
+  const cat = catalogOf([["docs", "read-only"]]);
+  const bad = ["mcp__docs__x ", "mcp__docs__x\u0000", "mcp__docs__x\n", "mcp__docs__x\u200b", "mcp__docs__x\u0435", "mcp__docs__\u0445", "mcp__docs__x.y", "mcp__docs__x y", "mcp__docs__", "mcp__docs__\t"];
+  for (const name of bad) {
+    assert.equal(parseMcpToolName(name), undefined, `parse ${JSON.stringify(name)}`);
+    const rec = callTool(name, cat);
+    assert.equal(rec.source, "opaque", JSON.stringify(name));
+    assert.equal(decide(worldOf([{ id: "allow-all", effect: "allow" }], "allow"), rec).ruleId, "POL-05", `${JSON.stringify(name)} is denied by POL-05`);
+  }
+  // controls: a runtime-shaped tool name (letters, digits, underscore, hyphen) still resolves
+  assert.deepEqual(parseMcpToolName("mcp__docs__echo_tool-X9"), { server: "docs", tool: "echo_tool-X9" });
+  assert.equal(callTool("mcp__docs__echo_tool-X9", cat).source, "structured");
+});

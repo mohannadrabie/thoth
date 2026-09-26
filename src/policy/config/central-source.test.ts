@@ -360,3 +360,20 @@ test("C9: listing classifier golden over the real captured parent-listing bytes 
   assert.equal(classifyParentListing(""), "unrecognised");
   assert.equal(classifyParentListing("\r\n"), "unrecognised");
 });
+
+test("C12: DOCUMENTING (Issue #309, plan AP-9): key present, value missing. The English fast path resolves absent; on a non-English host the same state rethrows the ORIGINAL error (fail-closed). At activation a half-provisioned central key therefore denies every gated call on a non-English host until the value is written or the key is removed", () => {
+  // English host: value-not-found text, exit 1: absent in ONE call (ratified 2026-09-08 behaviour)
+  const english = readWith([{ fail: { status: 1, stderr: REAL_CAPTURED_ABSENT_STDERR } }]);
+  assert.deepEqual(english.result(), { status: "absent" });
+  assert.equal(english.calls.length, 1);
+  // non-English host, same state: the parent listing SHOWS the Thoth key, so the downgrade is refused
+  const localized = readWith([{ fail: { status: 1, stderr: FIRST_NON_ENGLISH, message: "value not found (localized)" } }, { stdout: REAL_PARENT_LISTING + "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Thoth\r\n" }]);
+  let caught: unknown;
+  try {
+    localized.result();
+  } catch (e) {
+    caught = e;
+  }
+  assert.equal(caught, localized.errors[0], "the ORIGINAL error is rethrown (a loader read-error, then a deny for every gated call)");
+  assert.equal(localized.calls.length, 2);
+});

@@ -52,6 +52,13 @@ export type GateResult =
   | { kind: "verdict"; verdict: GateVerdict; record: ActionRecord }
   | { kind: "refusal"; category: RefusalCategory; reason: string };
 
+/** The untrusted tool_name is reflected into a model-visible deny reason, so it is bounded (red-team
+ * attack 2: a 400 KB name produced a 400 KB deny). The cap is VISIBLE in the reason. */
+const REASON_NAME_CAP = 512;
+function bounded(text: string): string {
+  return text.length <= REASON_NAME_CAP ? text : `${text.slice(0, REASON_NAME_CAP)}[truncated, ${text.length} characters in all]`;
+}
+
 function refuse(category: RefusalCategory, reason: string): GateResult {
   return { kind: "refusal", category, reason };
 }
@@ -63,11 +70,11 @@ export function decideToolCall(input: unknown, ports: GatePorts): GateResult {
   const payload = input as Record<string, unknown>;
   const toolName = payload.tool_name;
   if (typeof toolName !== "string" || toolName.length === 0) {
-    return refuse("malformed-input", `tool_name is missing or not a non-empty string (got ${JSON.stringify(toolName) ?? "undefined"}); fail-closed`);
+    return refuse("malformed-input", `tool_name is missing or not a non-empty string (got ${bounded(JSON.stringify(toolName) ?? "undefined")}); fail-closed`);
   }
   const route = routeToolName(toolName);
   if (route === undefined) {
-    return refuse("unroutable-tool", `the gate evaluates only Bash and mcp__ tool names; got tool_name=${JSON.stringify(toolName)}; fail-closed`);
+    return refuse("unroutable-tool", `the gate evaluates only Bash and mcp__ tool names; got tool_name=${bounded(JSON.stringify(toolName))}; fail-closed`);
   }
   const identity = typeof payload.session_id === "string" ? payload.session_id : "unknown";
   const catalog = route.needsCatalog ? ports.loadCatalog() : undefined;

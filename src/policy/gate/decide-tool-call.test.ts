@@ -239,3 +239,30 @@ test("G17: unroutable names are refused whatever the catalog holds, before any p
   assert.equal(p.policyCalls, 0);
   assert.equal(p.catalogCalls, 0);
 });
+
+// --- G21 (fix-now, red-team attack 2): an untrusted tool_name is never reflected unbounded ------
+
+test("G21: the unroutable-tool and malformed-input deny reasons cap the interpolated tool_name at 512 characters with a visible truncation marker (a 400 KB name gave a 400 KB deny)", () => {
+  const huge = "Z".repeat(400_000);
+  const p = ports({});
+  const cases: [string, unknown][] = [
+    ["unroutable string", huge],
+    ["object tool_name", { k: huge }],
+    ["array tool_name", [huge]],
+  ];
+  for (const [label, name] of cases) {
+    const r = call(name, {}, p);
+    assert.equal(r.kind, "refusal", label);
+    if (r.kind !== "refusal") continue;
+    assert.ok(r.reason.length <= 900, `${label}: the reason must be bounded (got ${r.reason.length} chars)`);
+    assert.match(r.reason, /\[truncated/, `${label}: the cap is visible in the reason`);
+    assert.ok(!r.reason.includes("Z".repeat(600)), `${label}: no long run of the untrusted name survives`);
+  }
+  // controls: a short name is reflected whole, with no marker
+  const short = call("Write", {}, p);
+  assert.equal(short.kind, "refusal");
+  if (short.kind === "refusal") {
+    assert.ok(short.reason.includes('"Write"'));
+    assert.ok(!short.reason.includes("[truncated"));
+  }
+});

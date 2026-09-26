@@ -76,6 +76,7 @@ const STORY_TEST_FILES = [
   "src/policy/gate/gate-structure.test.ts",
   "src/policy/tools/classification-catalog.test.ts",
   "src/qa/gate-fail-open-probe.test.ts",
+  "hooks/pretooluse-kernel-gate-stderr.test.ts",
 ];
 
 test("G19: no literal fixture entry name in this story's new test files (PC-11): the forbidden names are derived from the committed fixture at run time", () => {

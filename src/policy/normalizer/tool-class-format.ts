@@ -34,6 +34,9 @@
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
 //      version. A bump needs a decisions row and a central-rule migration note.
 //
+// The TOOL segment is admitted only if it consists solely of [A-Za-z0-9_-] (no leading or embedded
+// "__", no "/"); anything else is unresolved.
+//
 // NAME MAPPING (injective-or-unresolved). The runtime reports an MCP tool as
 // mcp__<server>__<tool> with every character of the configured server name outside [A-Za-z0-9_-]
 // replaced by "_" (observed for space and dot, plan S-1; other characters are unmeasured, X-2).
@@ -56,6 +59,7 @@ export const CLASS_MARKER_VERBS: Readonly<Record<ToolClass, string>> = {
 
 const MCP_PREFIX = "mcp__";
 const ADMISSIBLE_SERVER_NAME = /^[A-Za-z0-9-]+$/;
+const ADMISSIBLE_TOOL_NAME = /^[A-Za-z0-9_-]+$/;
 
 /** The runtime's spelling of a configured server or tool name: every character outside
  * [A-Za-z0-9_-] becomes "_" (observed for space and dot; plan S-1). */
@@ -81,6 +85,11 @@ export function parseMcpToolName(name: string): ParsedMcpToolName | undefined {
   const tool = rest.slice(at + 2);
   if (tool.length === 0 || tool.startsWith("_") || tool.includes("__")) return undefined;
   if (server.includes("/") || tool.includes("/")) return undefined;
+  // The TOOL segment is as strict as the server segment (S7 fix-now, app-security 5 / red-team 4): the
+  // runtime's tool names consist of [A-Za-z0-9_-] only (S-1), so anything else (whitespace, NUL, a
+  // zero-width or lookalike character, a dot) cannot be a real tool name and would land verbatim in the
+  // identity target, letting an exact per-tool rule be evaded by a same-server tool spelled differently.
+  if (!ADMISSIBLE_TOOL_NAME.test(tool)) return undefined;
   return { server, tool };
 }
 
