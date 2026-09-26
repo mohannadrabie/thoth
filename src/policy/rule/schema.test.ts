@@ -240,3 +240,87 @@ test("validateRuleSet (Issue #115): the tokenizer/parser-agreement invariant hol
     assert.deepEqual(new Set(findTopLevelKeys(text)), new Set(Object.keys(parsed as Record<string, unknown>)), `scanner/parser key-set disagreement for: ${text}`);
   }
 });
+
+// --- Issue #112 (test-writer, 2026-09-24, written before the production change): `defaultOutcome`, ---
+// the baseline posture, as an optional top-level RuleSet key (POL-01: no operator-tunable value in a
+// code literal). Enum is exactly "allow" | "deny" (VerdictOutcome) -- there is no "ask" outcome.
+// Ruling D1 (Manager): NO separate "mandatory" flag key for the posture; central's declaration is
+// locked implicitly by trust rank (see mandatory-lock-conformance.test.ts Part E/F).
+
+// B1 (Issue #112)
+test('validateRuleSet (Issue #112 B1): defaultOutcome "allow" and "deny" are accepted (0 errors)', () => {
+  for (const outcome of ["allow", "deny"] as const) {
+    assert.deepEqual(validateRuleSet({ version: "1.0.0", rules: [validRule], defaultOutcome: outcome }), [], `defaultOutcome=${outcome}`);
+  }
+});
+
+// B2 (Issue #112): the error must be the field's own enum error -- not the generic "unknown key"
+// error, which is what an implementation without this key produces (same field name, wrong reason).
+test('validateRuleSet (Issue #112 B2): a non-enum defaultOutcome ("ask", "DENY", true, null, 1) is rejected by name with expected \'"allow" | "deny"\', not as an unknown key', () => {
+  for (const bad of ["ask", "DENY", "Allow", "", true, null, 1] as const) {
+    const errors = validateRuleSet({ version: "1.0.0", rules: [], defaultOutcome: bad });
+    assert.equal(errors.length, 1, `defaultOutcome=${JSON.stringify(bad)} must yield exactly one error; got ${JSON.stringify(errors)}`);
+    const err = errors[0];
+    assert.equal(err?.field, "defaultOutcome", `defaultOutcome=${JSON.stringify(bad)}`);
+    assert.equal(err?.expected, '"allow" | "deny"', `defaultOutcome=${JSON.stringify(bad)}: expected shape must be the enum, got ${JSON.stringify(err)}`);
+    assert.doesNotMatch(err?.message ?? "", /unknown key/, `defaultOutcome=${JSON.stringify(bad)} is a KNOWN key with a bad value, never an unknown key`);
+  }
+});
+
+// B3 (Issue #112): back-compat. Green at HEAD by construction (the key is optional and absent).
+test("validateRuleSet (Issue #112 B3): a rule set with no defaultOutcome still validates (0 errors) -- the key is optional", () => {
+  assert.deepEqual(validateRuleSet({ version: "1.0.0", rules: [validRule] }), []);
+  assert.deepEqual(validateRuleSet({ version: "1.0.0", rules: [] }), []);
+});
+
+// B4 (Issue #112): relax-by-duplicate. JSON.parse keeps only the LAST duplicate key, so a document
+// declaring deny then allow parses as allow; only the raw-text scan can see it. Expected to pass at
+// HEAD through the generic duplicate-key scan; kept as a named regression for the new key.
+test('validateRuleSet (Issue #112 B4): a duplicate top-level "defaultOutcome" key (deny then allow) is rejected when rawText is supplied, literal and \\u-escaped alike', () => {
+  const literal = `{
+  "version": "1.0.0",
+  "rules": [],
+  "defaultOutcome": "deny",
+  "defaultOutcome": "allow"
+}`;
+  const escaped = `{
+  "version": "1.0.0",
+  "rules": [],
+  "defaultOutcome": "deny",
+  "defaultOutcom\\u0065": "allow"
+}`;
+  for (const text of [literal, escaped]) {
+    const errors = validateRuleSet(JSON.parse(text) as unknown, text);
+    assert.ok(
+      errors.some((e) => e.field === "defaultOutcome" && /duplicate top-level key "defaultOutcome"/.test(e.message)),
+      `expected a duplicate-top-level-key error naming defaultOutcome for:\n${text}\ngot ${JSON.stringify(errors)}`,
+    );
+  }
+});
+
+// B5 (Issue #112): "defaultOutcome" belongs to the RuleSet, not to a single rule.
+test('validateRule (Issue #112 B5): "defaultOutcome" inside a single rule is still an unknown-key error -- it is a RuleSet key only', () => {
+  const errors = validateRule({ ...validRule, defaultOutcome: "deny" });
+  const unknown = errors.find((e) => e.field === "defaultOutcome");
+  assert.ok(unknown, "a per-rule defaultOutcome must be reported, not silently accepted");
+  assert.match(unknown.message, /unknown key "defaultOutcome"/);
+});
+
+// B5b (Issue #112, derived from D1): there is no companion lock-flag key; declaring one is an
+// unknown-key error, not a silent no-op (POL-06). Green at HEAD by construction.
+test('validateRuleSet (Issue #112 B5b, ruling D1): a "defaultOutcomeMandatory" key does not exist -- it is rejected as an unknown key, so central cannot be led to believe a flag protects the posture', () => {
+  const errors = validateRuleSet({ version: "1.0.0", rules: [], defaultOutcome: "deny", defaultOutcomeMandatory: true });
+  const unknown = errors.find((e) => e.field === "defaultOutcomeMandatory");
+  assert.ok(unknown, "an unknown companion key must be reported by name");
+  assert.match(unknown.message, /unknown key "defaultOutcomeMandatory"/);
+});
+
+// B5c (Issue #112, derived from POL-06): the unknown-key error names the expected shape; the new
+// key must be listed, and LAST -- the older unknown-key test above asserts /version, rules/ and
+// must keep passing untouched, which fixes the order as version, rules, defaultOutcome.
+test('validateRuleSet (Issue #112 B5c): the unknown-key error lists defaultOutcome as an allowed top-level key, after "version, rules"', () => {
+  const errors = validateRuleSet({ version: "1.0.0", rules: [], mystery: true });
+  const unknown = errors.find((e) => e.field === "mystery");
+  assert.ok(unknown);
+  assert.match(unknown.expected, /version, rules, defaultOutcome/);
+});

@@ -193,3 +193,161 @@ test("mandatory-lock conformance (Part D): central is NEVER voided, across all 8
     );
   }
 });
+
+// ====================================================================================================
+// Issue #112 -- `defaultOutcome` (the baseline posture) resolved through the SAME trust rank the lock
+// check above uses (test-writer, 2026-09-24, written BEFORE the production change; the implementer
+// does not edit these hunks -- a test believed wrong is flagged back, never edited).
+//
+// Rulings encoded (Manager, Phase 1 plan s6-policy-residuals-112-124, section 4):
+//   D1 -- no separate "mandatory" flag for the posture. Central's declaration is locked against
+//         lower-trust layers implicitly, by TRUST_RANK (central is the only rank-1 layer).
+//   D2 -- a lower-trust layer (one whose rank is strictly below the layer currently holding the
+//         posture) may change it only by TIGHTENING allow -> deny. A relaxing declaration is ignored
+//         (the layer is NOT voided). Peers (same rank) override each other, exactly as their rules do.
+//   D3 -- the result is `MandatoryLockResult.defaultOutcome?: { outcome, source: LayerName }`,
+//         undefined when no accepted layer declares one. The bootstrap "allow" fallback is applied by
+//         the LOADER, never here (src/policy/rule/ must not import src/policy/config/).
+//
+// Interface these tests specify (does not exist yet -- expected RED at HEAD, for that reason only):
+//   NamedRuleLayer.defaultOutcome?: VerdictOutcome
+//   MandatoryLockResult.defaultOutcome?: { outcome: VerdictOutcome; source: LayerName }
+// ====================================================================================================
+
+type PostureOutcome = "allow" | "deny";
+type ExpectedPosture = { outcome: PostureOutcome; source: LayerName };
+const POSTURE_OUTCOMES: readonly PostureOutcome[] = ["allow", "deny"];
+
+/** A layer carrying an optional declared posture. Conditional spread: exactOptionalPropertyTypes is
+ * on, so an absent declaration must be an absent key, never `defaultOutcome: undefined`. */
+function postureLayer(name: LayerName, defaultOutcome: PostureOutcome | undefined, items: readonly Rule[] = []): NamedRuleLayer {
+  return defaultOutcome === undefined ? layer(name, items) : { ...layer(name, items), defaultOutcome };
+}
+
+/** A 3-layer call where only the layers named in `declared` declare a posture, no rules anywhere. */
+function postureCall(declared: Partial<Record<LayerName, PostureOutcome>>): NamedRuleLayer[] {
+  return PRECEDENCE_ORDER.map((name) => postureLayer(name, declared[name]));
+}
+
+/** Expectation for two layers that BOTH declare, `earlier` walked before `later`, derived from the
+ * same TRUST_RANK the implementation uses (never a second hand-typed table). */
+function expectedPosture(earlier: LayerName, earlierOut: PostureOutcome, later: LayerName, laterOut: PostureOutcome): ExpectedPosture {
+  if (TRUST_RANK[later] >= TRUST_RANK[earlier]) return { outcome: laterOut, source: later };
+  if (earlierOut === "allow" && laterOut === "deny") return { outcome: "deny", source: later };
+  return { outcome: earlierOut, source: earlier };
+}
+
+// --- Part E (B6): every ordered layer pair x every (declared, declared) outcome pair, enumerated ----
+// mechanically from TRUST_RANK / forwardPairs, so a future 4th layer cannot leave a cell unchecked.
+
+const postureMatrixCells: { earlier: LayerName; later: LayerName; earlierOut: PostureOutcome; laterOut: PostureOutcome }[] = [];
+for (const { declaring: earlier, colliding: later } of forwardPairs) {
+  for (const earlierOut of POSTURE_OUTCOMES) {
+    for (const laterOut of POSTURE_OUTCOMES) postureMatrixCells.push({ earlier, later, earlierOut, laterOut });
+  }
+}
+
+// B6 (Issue #112): enumeration self-check -- the cell count is derived, not hand-typed.
+test("mandatory-lock conformance (Part E self-check, Issue #112 B6): the defaultOutcome matrix has one cell per forward layer pair per (declared, declared) outcome pair, derived from TRUST_RANK", () => {
+  const n = Object.keys(TRUST_RANK).length;
+  assert.equal(postureMatrixCells.length, ((n * (n - 1)) / 2) * POSTURE_OUTCOMES.length ** 2);
+});
+
+for (const { earlier, later, earlierOut, laterOut } of postureMatrixCells) {
+  const expected = expectedPosture(earlier, earlierOut, later, laterOut);
+  const rel = TRUST_RANK[later] >= TRUST_RANK[earlier] ? "later layer overrides" : "lower-trust later layer, tighten-only";
+  // B6 (Issue #112)
+  test(`mandatory-lock conformance (Part E, Issue #112 B6, derived from TRUST_RANK): ${earlier}=${earlierOut} then ${later}=${laterOut} (${rel}) -> ${expected.outcome} from ${expected.source}`, () => {
+    const result = mergeLayersWithMandatoryLock(postureCall({ [earlier]: earlierOut, [later]: laterOut }));
+    assert.deepEqual(result.defaultOutcome, expected);
+    assert.deepEqual(result.voidedLayers, [], "a declared posture never voids a layer -- only a mandatory-id collision does");
+  });
+}
+
+// --- Part F (B7, B8): ground truth, hand-written and independent of TRUST_RANK's own values ---------
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): central deny, project allow -> deny from central -- a project layer can NEVER relax central's posture", () => {
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ central: "deny", project: "allow" })).defaultOutcome, { outcome: "deny", source: "central" });
+});
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): central allow, project deny -> deny from project -- a lower-trust layer MAY tighten (D2)", () => {
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ central: "allow", project: "deny" })).defaultOutcome, { outcome: "deny", source: "project" });
+});
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): central deny, project deny -> deny from central -- a redundant lower-trust declaration changes nothing", () => {
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ central: "deny", project: "deny" })).defaultOutcome, { outcome: "deny", source: "central" });
+});
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): shipped-defaults deny, central allow -> allow from central -- central outranks the git-tracked shipped layer, so its posture stands", () => {
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "deny", central: "allow" })).defaultOutcome, { outcome: "allow", source: "central" });
+});
+
+// B7 (Issue #112) -- D2's disclosed peer behavior, asserted so it cannot change silently.
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): shipped-defaults deny, project allow -> allow from project -- PEERS (same rank) override each other, exactly as their rules already do (disclosed residual, D2)", () => {
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "deny", project: "allow" })).defaultOutcome, { outcome: "allow", source: "project" });
+});
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): no accepted layer declares a posture -> defaultOutcome is undefined (the bootstrap fallback is the loader's job, never this function's)", () => {
+  assert.equal(mergeLayersWithMandatoryLock(postureCall({})).defaultOutcome, undefined);
+});
+
+// B7 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): a single declaring layer is adopted with itself as the source, for each layer and each outcome", () => {
+  for (const name of PRECEDENCE_ORDER) {
+    for (const outcome of POSTURE_OUTCOMES) {
+      assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ [name]: outcome })).defaultOutcome, { outcome, source: name }, `${name} alone declaring ${outcome}`);
+    }
+  }
+});
+
+// B7 (Issue #112): three-layer chains, hand-computed.
+test("mandatory-lock conformance (Part F, Issue #112 B7 ground truth): three-layer chains resolve as the trust model says", () => {
+  // central's deny survives a project allow that follows a shipped allow.
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "allow", central: "deny", project: "allow" })).defaultOutcome, { outcome: "deny", source: "central" });
+  // central allow, then project tightens to deny: the tightening wins over a shipped deny that preceded central.
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "deny", central: "allow", project: "deny" })).defaultOutcome, { outcome: "deny", source: "project" });
+  // no central posture: shipped allow then project deny -> peers, project overrides.
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "allow", project: "deny" })).defaultOutcome, { outcome: "deny", source: "project" });
+  // no central posture: shipped deny alone stands when project is silent.
+  assert.deepEqual(mergeLayersWithMandatoryLock(postureCall({ "shipped-defaults": "deny" })).defaultOutcome, { outcome: "deny", source: "shipped-defaults" });
+});
+
+// --- B8: a layer voided by a mandatory-id collision contributes NOTHING, its posture included -------
+
+/** central holds a mandatory rule `SHARED_ID`; project redefines it (so project is voided) and also
+ * declares `projectPosture`. `centralPosture` is central's own declaration, if any. */
+function voidedProjectCall(centralPosture: PostureOutcome | undefined, projectPosture: PostureOutcome, projectCollides: boolean): NamedRuleLayer[] {
+  return [
+    layer("shipped-defaults", []),
+    postureLayer("central", centralPosture, [rule(SHARED_ID, "deny", true)]),
+    postureLayer("project", projectPosture, [rule(projectCollides ? SHARED_ID : "project-only-id", "allow")]),
+  ];
+}
+
+// B8 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B8): a project layer voided by a mandatory-id collision does not tighten central's posture (its declaration is ignored with the rest of its content)", () => {
+  const result = mergeLayersWithMandatoryLock(voidedProjectCall("allow", "deny", true));
+  assert.deepEqual(result.voidedLayers, [{ layer: "project", ruleId: SHARED_ID }]);
+  assert.deepEqual(result.defaultOutcome, { outcome: "allow", source: "central" });
+});
+
+// B8 (Issue #112)
+test("mandatory-lock conformance (Part F, Issue #112 B8): a voided project layer's posture alone never becomes the result -- with no other declaration the result is undefined", () => {
+  const result = mergeLayersWithMandatoryLock(voidedProjectCall(undefined, "deny", true));
+  assert.deepEqual(result.voidedLayers, [{ layer: "project", ruleId: SHARED_ID }]);
+  assert.equal(result.defaultOutcome, undefined);
+});
+
+// B8 (Issue #112): the control -- identical except the project layer does NOT collide, so it is
+// accepted and its tightening counts. Proves the two tests above are decided by the void, not by
+// something else in the fixture.
+test("mandatory-lock conformance (Part F, Issue #112 B8 control): the same project posture, without a collision, IS accepted -- so the void is what suppressed it above", () => {
+  const result = mergeLayersWithMandatoryLock(voidedProjectCall(undefined, "deny", false));
+  assert.deepEqual(result.voidedLayers, []);
+  assert.deepEqual(result.defaultOutcome, { outcome: "deny", source: "project" });
+});

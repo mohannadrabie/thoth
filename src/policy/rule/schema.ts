@@ -10,7 +10,9 @@
 import type { ValidationError } from "../kernel/rule-types.ts";
 
 const RULE_KEYS = ["id", "effect", "verbs", "targets", "environments", "rationale", "mandatory"] as const;
-const RULE_SET_KEYS = ["version", "rules"] as const;
+// `defaultOutcome` (Issue #112, POL-01) is deliberately LAST: the older unknown-key test asserts the
+// expected-shape text matches /version, rules/.
+const RULE_SET_KEYS = ["version", "rules", "defaultOutcome"] as const;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -267,6 +269,12 @@ export function validateRuleSet(input: unknown, rawText?: string): ValidationErr
 
   if (typeof input.version !== "string" || input.version.length === 0) {
     errors.push({ message: "version is required and must be a non-empty string", field: "version", expected: "non-empty string" });
+  }
+
+  // POL-01 (Issue #112): the layer's optional baseline posture. A bad value gets the field's own
+  // enum error (never the generic unknown-key one, since the key itself is known).
+  if ("defaultOutcome" in input && input.defaultOutcome !== undefined && input.defaultOutcome !== "allow" && input.defaultOutcome !== "deny") {
+    errors.push({ message: 'defaultOutcome must be "allow" or "deny"', field: "defaultOutcome", expected: '"allow" | "deny"' });
   }
 
   if (!Array.isArray(input.rules)) {

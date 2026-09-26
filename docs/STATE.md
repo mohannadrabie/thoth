@@ -1,9 +1,48 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-24 (PR #281 merged; master now has branch protection via a ruleset, Issue #282 closed). Entry below covers the 2026-09-23 continuation session: the four PRs from the prior entry were merged, a real CI-red regression on master was diagnosed and fixed, and the merge gap behind it was closed.
+**Last updated:** 2026-09-24 (two stories built, reviewed and verified; PRs #295 (S1) and #296 (S6) open, awaiting green CI and the human merge). Entries below this one are superseded but kept for continuity.
 
-## Last session: four PRs merged, master CI found red, fix merged, master protected
+## Resume point — 2026-09-24: S1 residuals and S6 residuals ready for two PRs
+
+Base: `origin/master` at `ae6b4f1` (PR #286 merged; master CI green on the last completed run; master is protected by a ruleset since Issue #282, so each PR needs the required check green). Tier for both stories: CRITICAL, ratified unchanged.
+
+| Story | Issues | Branch | Verdicts (stage 3) |
+|---|---|---|---|
+| `s1-oss01-residuals-270-271` | #270, #271 | `fix/s1-oss01-residuals-270-271` | red-team go, app-security APPROVE, cross-domain APPROVE-WITH-CONDITIONS |
+| `s6-policy-residuals-112-124` | #112, #124 built; #107 ratified residual | `feat/s6-policy-centralization` (contains the S1 branch by merge commit) | red-team go, app-security APPROVE-WITH-CONDITIONS, cross-domain APPROVE-WITH-CONDITIONS |
+
+**Verified on the combined tip (real runs):** `npm test` 1139 tests, 1139 pass, 0 fail, 0 skipped; typecheck and lint clean; `oss:secret-scan` PASS, 0 blocking; QA-14 in diff mode (`ae6b4f1..HEAD`) PASS, 0 failed; QA-15, kernel-purity, gate-manifest and the other `qa:*` gates PASS (several report a disclosed vacuous pass). The S1 branch alone also passes QA-14 (0 failed).
+
+**What changed**
+- **#271:** the `oss01-scan-timeout` grant hash no longer includes the pattern id; the unlock prints the same hash on every machine without scanning. The gate's red/green outcome near the 500ms boundary stays a wall-clock race, ratified as a disclosed residual (Issue #287).
+- **#270:** test-only. Every catalog pattern must be classified for the high-byte sweep; the byte replaces each value character in turn; a mechanical cross-check covers `ascii-only` declarations (Issues #289, #290, both fixed and closed).
+- **#112:** `defaultOutcome` is an optional per-layer policy key. Central's value is locked against lower-trust layers; a lower-trust layer may only tighten allow to deny; voided layers contribute nothing. Exposed as `LoadSuccess.defaultOutcome` only. The hook is untouched and nothing consumes the field yet.
+- **#124:** test-only. `printer.test.ts` bounds the rejection tail by exact equality (Issue #291, fixed and closed).
+- **#107:** no code. Ratified residual (no verified non-English `reg.exe` sample exists); review-back is tied to the hook-rewiring story, backstop 2026-10-24.
+
+**Human actions, in order**
+1. Open the S1 PR from `fix/s1-oss01-residuals-270-271`; the body carries `Closes #270` and `Closes #271`. Merge it first.
+2. Open the S6 PR from `feat/s6-policy-centralization`; the body carries `Closes #112` and `Closes #124`. Do not close #107.
+3. Ratify or overrule the pending `docs/decisions.md` rows dated 2026-09-24 (review-back 2026-10-08). The one that needs a real decision: the reading that dropping the pattern id from the timeout grant hash is not a broadening under devops ADR-0008 and SE ADR-0010 (ADR-0008 has no waiver path).
+4. Confirm CI is green on each PR. The cross-domain run measured `printer.test.ts` passing on Node 22.18.0, CI's version.
+
+**Open items after both merge (from `gh`, not hand-counted)**
+- S1 milestone: no open issue once #270 and #271 close on merge.
+- S6 milestone: #107 (ratified residual), #288 (deferred surface; now `severity:med` with a precondition for the hook-rewiring story), #294 (pre-existing LOW: escape characters in an echoed policy key).
+- Unmilestoned: #287 (deterministic scan matcher), #293 (intermittent Windows `EBUSY` in a test cleanup).
+- S7 has one open issue (#93), blocked on wiring `hooks/pretooluse-kernel-gate.mjs`; that story must satisfy the #288 precondition first.
+
+**Process notes from this session**
+- Reviewers post "closed" in a comment without closing the issue. Eight issues (#108, #110, #263, #264, #266, #267, #268, #269) were fixed and still open; the Manager verified each fix against master and closed them. The entry below described the S1 residuals as older; they came from PR #273's own review.
+- Agent worktrees under `.claude/worktrees/` break `qa:gate-manifest` (each carries a `settings.json`). Remove them before the final verification.
+- A worktree needs `git submodule update --init` before QA-14 can resolve ADR citations; without it the check reports dozens of false failures.
+- QA-14 in diff mode flags example or shorthand paths inside new review reports (same class as Issue #280). Four such tokens were reworded before merge, wording only, no finding text changed.
+- Two stories on separate branches conflict at four append points (`CHANGELOG.md`, `docs/decisions.md`, `docs/REVIEW_LOG.md`, `docs/run-log.jsonl`). The combined branch resolves them once, keeping both sides.
+
+**Single next action:** the human merges PR #295 (S1) once its required check is green, then PR #296 (S6). PRs were opened by the Manager on 2026-09-24 under the human's preapproval. The five 2026-09-24 decisions.md rows are ratified (human blanket preapproval, not itemised). Merging #295 closes #270 and #271 and leaves the S1 milestone with no open issue; close the milestone after that.
+
+## Prior entry: four PRs merged, master CI found red, fix merged, master protected (superseded above)
 
 **All four PRs from the prior entry are merged**: [#261](https://github.com/mohannadrabie/thoth/pull/261), [#262](https://github.com/mohannadrabie/thoth/pull/262), [#273](https://github.com/mohannadrabie/thoth/pull/273), [#279](https://github.com/mohannadrabie/thoth/pull/279). Their issues closed with the merges; Issue #275 (already fixed by PR #279, never closed) closed with evidence; the **S5 milestone is now closed** (0 open issues remained under it). S1 stays open (8 genuine residual issues, none from this session).
 
