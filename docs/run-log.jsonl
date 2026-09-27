@@ -128,3 +128,4 @@
 {"at":"2026-09-27T01:30:05.749Z","event":"receipt-reopened","scope":"s7b-policy-authoring-safety","agent":"red-team","trigger":"clean-verdict-with-issues","report":"docs/reviews/s7b-policy-authoring-safety-red-team-round2-2026-09-26.md"}
 {"at":"2026-09-27T01:30:05.861Z","event":"receipt-reopened","scope":"s7b-policy-authoring-safety","agent":"test-writer","trigger":"receipt-form","report":"docs/reviews/s7b-policy-authoring-safety-test-writer-2026-09-26.md"}
 {"at":"2026-09-27T01:30:05.969Z","event":"story-shipped","scope":"s7b-policy-authoring-safety","rounds":"0","reports":"5","findings":"18","adrTokensSaved":"18300","councilFired":"false"}
+{"at":"2026-09-27T04:28:10.413Z","event":"tier-ratified","scope":"s7c-reachability-residuals","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"policy delivery surface; whole-load rejections; closes allow-widening"}
