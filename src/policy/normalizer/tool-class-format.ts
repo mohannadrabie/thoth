@@ -48,8 +48,8 @@
 //      rule keyed on a presentable server target: it must carry the marker verb (an allow without one is
 //      not rejected there, Issue #338). The legacy mutating verbs plus an MCP target still load and never
 //      match a class record (they match only shell-emitted records); PT-12 is satisfied for the marker-
-//      verb shapes only, and this shape is a disclosed residual routed to the activation story (Issue
-//      #329).
+//      verb shapes only, and this shape is a disclosed residual routed to the activation story
+//      (Issue #329).
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
 //      version. A bump needs a decisions row and a central-rule migration note.
 //
