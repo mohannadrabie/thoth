@@ -20,10 +20,29 @@
 // (a dot or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a real
 // emitted record and the kernel matches a deny rule on it. Only a marker verb is unreachable from the
 // shell (the markers are not in KNOWN_VERBS), so only a marker-only rule provably cannot match a
-// shell-emitted record. A rule with no verbs, a legacy verb, or a mix can, and is never rejected by V2
-// or V3. R2-13 (loader-reachability.test.ts) proves both halves against the real shell normalizer and
-// kernel. Accepted cost: an operator's inert target-only or legacy-verb rule on a mistyped server target
-// loads silently (the residual of Issues #328 and #329, routed to the activation story).
+// shell-emitted record. A rule with no verbs, a legacy verb, or a mix can, PROVIDED the legacy verb, or
+// a verb in the mix, is one a normalizer actually emits; such a rule is never rejected by V2 or V3.
+// R2-13 (loader-reachability.test.ts) proves both halves against the real shell normalizer and kernel.
+//
+// Verbs reading, stated: an absent `verbs` field and an empty array both match EVERY verb in the kernel,
+// so both are reachable (schema.ts accepts both; the red-team round-2 report, finding 10, demonstrated it).
+//
+// Round-2 corrections to the reasoning above (docs/reviews/s7b-policy-authoring-safety-red-team-round2-2026-09-26.md,
+// Issues #334 and #335):
+//   - A list that mixes a class marker with a verb NO normalizer emits (a stray empty string, a mistyped
+//     legacy verb) is not all markers, so V2 and V3 are skipped, yet the kernel requires the record's
+//     verbs to intersect the rule's, so the rule can match only a class record, and its mistyped target
+//     is one no class record carries. It loads clean and is inert (demonstrated: it matched none of the
+//     two thousand two hundred seventy-four records in the red-team probe corpus). So "a mix can match"
+//     holds only for a mix containing a verb some normalizer emits. Residual, disclosed, not natural
+//     authoring; deferred to Issue #334 (the fix is to skip only when a verb is one a normalizer emits).
+//   - Accepted cost, worded exactly: for a DENY rule with no verbs or a legacy verb on a server target
+//     the runtime never presents, the result is inert (it denies nothing on a class record; it can only
+//     match a shell-emitted redirect record). For an ALLOW rule the same shape is a silent WIDENING, not
+//     merely inert: it loads, and the kernel returns allow for a real shell-emitted redirect record
+//     under that path (demonstrated through the real loader and kernel). Before the narrowing that shape
+//     was a loud rejection. Accepted cost, deferred to Issue #335 (a precondition for Issue #308).
+// (Residuals of Issues #328 and #329, routed to the activation story.)
 //
 // NOT rejected, on purpose: the bare MCP prefix (matches every MCP target), a server plus trailing "/",
 // a server plus tool, and the legacy mutating verbs plus an MCP target (shape c: matches only

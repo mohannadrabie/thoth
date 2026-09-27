@@ -357,6 +357,20 @@ test("R1-6 single-merge-site: the only production files naming the merge or the 
 // that only COPIES the fixture into a scratch tree (B). The self-test proves a synthetic bypass fails the leg
 // built for it and the controls pass; the red-team mutant (a production module reading DEFAULT_FIXTURE_PATH)
 // is killed through the mutation-harness engine (recorded in the build report, not committed).
+//
+// RESIDUAL, DISCLOSED (red-team round 2, Issue #332; this scan is a labelled heuristic, not a proof). Legs B
+// and D key on token spellings: the names of the file-read primitives (FILE_READ_PRIMITIVE) and the two
+// literal spellings of a module-loading call (import(...) and require(...)). So ANY loading or reading call
+// whose token spelling this scan does not enumerate is invisible to it, and the round-2 red-team demonstrated
+// four production modules reading the fixture with every leg green: (1) the standard-library module-loading
+// helper, aliased to a short local name, invoked with a specifier assembled from string pieces; (2) the same
+// helper invoked on a PLAIN, unsplit literal path to the fixture (it needs no read primitive and no parse call,
+// so leg B never fires, and a literal specifier never fires leg D); (3) a read through the promise-based
+// file-handle API with a file name assembled from string pieces; (4) a synchronous read with a file name
+// assembled from string pieces. A path literal split across string pieces is one instance, not the class.
+// Deferred to Issue #332 (named proof test R1-6d loader-helper-and-alias-legs). Also open, Issue #332's
+// sibling suspicion R1-6c one-catalog-source: nothing pins that every catalog handed to the gate came from
+// assembleCatalog; a hand-built catalog needs neither the merge nor the fixture and satisfies R1-6 and R1-6b.
 import * as fixtureModule from "./central-classification.ts";
 import { DEFAULT_FIXTURE_PATH } from "./central-classification.ts";
 import { basename, dirname, posix } from "node:path";

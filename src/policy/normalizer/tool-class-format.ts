@@ -39,8 +39,13 @@
 //      reachability.ts): a misspelled marker, and, ONLY for a rule whose verbs are all class markers
 //      (Issue #328, because of fact 3), a server target with no trailing slash and a server segment that
 //      is not an admitted name. A target-only or legacy-verb rule on those targets loads, because it can
-//      match a shell-emitted record. The legacy mutating verbs plus an MCP target still load and never
-//      match a class record (they match only shell-emitted records); PT-12 is satisfied for the marker-
+//      match a shell-emitted record. Accepted cost, worded exactly (red-team round 2, Issues #334 and
+//      #335): for a DENY rule that shape is inert on a class record; for an ALLOW rule it is a silent
+//      widening (the kernel returns allow for a real shell-emitted redirect record under that path), which
+//      is why fact 3 requires the marker verb on an allow. A verb list that mixes a marker with a verb no
+//      normalizer emits also skips the check and loads inert (Issue #334). The legacy mutating verbs
+//      plus an MCP target still load and never match a class record (they match only shell-emitted
+//      records); PT-12 is satisfied for the marker-
 //      verb shapes only, and this shape is a disclosed residual routed to the activation story (Issue
 //      #329).
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
