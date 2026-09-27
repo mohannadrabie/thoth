@@ -16,7 +16,9 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Human decisions pending:** a 2026-09-27 decisions row plus addendum for S7-C (the Q1/Q2/Q3 rulings, the R2-12 replacement); plus the S7-B and S7-A rows already listed below.
 - **Next (not started):** remaining S7 items are Issue #93 (capability delivered, enforcement content is activation), #107 and #288 (need the hook wired), and Issue #308 itself (activation, blocked on human rulings AP-7 and Q-C(a), baseline allow content, and now Issues #338/#339/#340).
 
-**Single next action:** the human merges PR #337 (S7-B carried to master), then PR #342 (S7-C) once its CI is green; the Manager then reviews what is left of the S7 milestone.
+**Both merged.** PR #337 (S7-B recovery) and PR #342 (S7-C) are on master; Issues #334, #335 closed by the merge. S7 milestone stays open (16 issues remain).
+
+**Single next action:** start the next S7 story — Issue #308's activation preconditions now include #338, #339, #340 alongside the earlier ones; or pick up Issue #252 (REQUIREMENTS.md's 29 stale citations) first, since it blocks T17's own write-up (Issue #343 / Milestone S16).
 
 ## Prior entry (superseded above): S7-B `s7b-policy-authoring-safety` (Issues #305, #306) built and reviewed; S6 is shipped and closed
 
