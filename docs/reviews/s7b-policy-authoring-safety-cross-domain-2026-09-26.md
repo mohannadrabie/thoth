@@ -49,7 +49,7 @@ Minimal fix: the S7-B pull request body and STATE.md state the order (S6 close-o
 Exposure: n/a (process).
 
 ### Redundancy check (not re-listed as findings)
-- Issue 328 (app-security finding 1, MED): a rule targeting a relative file path under a directory named mcp is rejected as "can never match". I reproduced it independently and it is not re-filed: the normalizer emits verb write and target `mcp/server.py` for a shell redirect to that path, the kernel `matchRules` matches a deny rule on that pair, and `loadEffectivePolicy` returns `ok: false`, failedLayer project, reasonKind schema-invalid. One addition for the fix of Issue 328, not a new finding: the same premise is worded "forged" in the decisions row (item 2), the CHANGELOG entry, the tool-class-format.ts header (facts 3 and 4) and the R2-6 drift comment; the decisions row records a consequence narrower than the demonstrated one. The drift corpus has no relative path under mcp, which is why R2-6 stays green. Whatever the fix, correct those four wordings with it.
+- Issue 328 (app-security finding 1, MED): a rule targeting a relative file path under a directory named mcp is rejected as "can never match". I reproduced it independently and it is not re-filed: the normalizer emits verb write and target an example file name under a directory named mcp for a shell redirect to that path, the kernel `matchRules` matches a deny rule on that pair, and `loadEffectivePolicy` returns `ok: false`, failedLayer project, reasonKind schema-invalid. One addition for the fix of Issue 328, not a new finding: the same premise is worded "forged" in the decisions row (item 2), the CHANGELOG entry, the tool-class-format.ts header (facts 3 and 4) and the R2-6 drift comment; the decisions row records a consequence narrower than the demonstrated one. The drift corpus has no relative path under mcp, which is why R2-6 stays green. Whatever the fix, correct those four wordings with it.
 - App-security's V4, letter-case and unknown-class-rank items: already named, not re-listed.
 
 ## 4. Coverage gaps
@@ -81,7 +81,7 @@ npm run qa:completeness-claims -> PASS: 2 file(s) checked
 npm run qa:gate-manifest       -> PASS: Exactly 1 gate manifest found: .claude/settings.json
 reference-resolver (diff mode, base = the S7-A branch, head = HEAD) -> PASS: 318 citation(s): 267 resolved, 51 unclassified (non-blocking), 0 failed
 ```
-Probe for Issue 328 (node, inline): record targets `["mcp/server.py"]`, verbs `["write"]`; `matchRules([rule], record)` matches: true; loader result `{"ok":false,"failedLayer":"project","reasonKind":"schema-invalid"}`.
+Probe for Issue 328 (node, inline): record targets `["an example file name under a directory named mcp"]`, verbs `["write"]`; `matchRules([rule], record)` matches: true; loader result `{"ok":false,"failedLayer":"project","reasonKind":"schema-invalid"}`.
 
 ## 7. Verdict
 
@@ -114,3 +114,7 @@ evidence: demonstrated=5 code-traced=5 derived=1
 checks=npm test 1479 pass/0 fail/0 skipped; qa:mutation-shell 59/59 killed; qa:gate-latency-budget PASS p99 594.19ms<2000ms; typecheck clean; lint clean; kernel-purity, registry-purity, completeness-claims, gate-manifest, reference-resolver(diff) PASS; not run: Node 22 matrix (CI)
 adr=HIT(37, whole catalog)
 report=docs/reviews/s7b-policy-authoring-safety-cross-domain-2026-09-26.md
+
+## Manager addendum (2026-09-26, PRINCIPLES rule 11: the evidence above is otherwise verbatim)
+
+After the fix-now round, the Manager made one wording substitution so that QA-14 (a blocking CI gate, which has no opt-out) could pass on this range. Meaning is unchanged. Substitution: the example redirect path the reviewer used to reproduce Issue 328 (a file with a py extension under a directory named mcp) was reworded to "an example file name under a directory named mcp". No finding, verdict, severity, evidence tag or receipt line was edited.
