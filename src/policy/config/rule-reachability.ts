@@ -14,41 +14,40 @@
 //       server name (empty, or outside the pattern the server index admits with): the runtime never
 //       presents such a name to a class record.
 //
-// V2 AND V3 APPLY ONLY TO A RULE WITH AT LEAST ONE VERB WHOSE VERBS ARE ALL CLASS MARKERS (S7-B fix-now
-// H1, Issue #328, Manager ruling). The target namespace under the MCP prefix is SHARED with the shell
-// normalizer, which emits a redirect target verbatim: a redirect into a directory named like the prefix
-// (a dot or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a real
-// emitted record and the kernel matches a deny rule on it. Only a marker verb is unreachable from the
-// shell (the markers are not in KNOWN_VERBS), so only a marker-only rule provably cannot match a
-// shell-emitted record. A rule with no verbs, a legacy verb, or a mix can, PROVIDED the legacy verb, or
-// a verb in the mix, is one a normalizer actually emits; such a rule is never rejected by V2 or V3.
-// R2-13 (loader-reachability.test.ts) proves both halves against the real shell normalizer and kernel.
-//
-// Verbs reading, stated: an absent `verbs` field and an empty array both match EVERY verb in the kernel,
-// so both are reachable (schema.ts accepts both; the red-team round-2 report, finding 10, demonstrated it).
-//
-// Round-2 corrections to the reasoning above (docs/reviews/s7b-policy-authoring-safety-red-team-round2-2026-09-26.md,
-// Issues #334 and #335):
-//   - A list that mixes a class marker with a verb NO normalizer emits (a stray empty string, a mistyped
-//     legacy verb) is not all markers, so V2 and V3 are skipped, yet the kernel requires the record's
-//     verbs to intersect the rule's, so the rule can match only a class record, and its mistyped target
-//     is one no class record carries. It loads clean and is inert (demonstrated: it matched none of the
-//     two thousand two hundred seventy-four records in the red-team probe corpus). So "a mix can match"
-//     holds only for a mix containing a verb some normalizer emits. Residual, disclosed, not natural
-//     authoring; deferred to Issue #334 (the fix is to skip only when a verb is one a normalizer emits).
-//   - Accepted cost, worded exactly: for a DENY rule with no verbs or a legacy verb on a server target
-//     the runtime never presents, the result is inert (it denies nothing on a class record; it can only
-//     match a shell-emitted redirect record). For an ALLOW rule the same shape is a silent WIDENING, not
-//     merely inert: it loads, and the kernel returns allow for a real shell-emitted redirect record
-//     under that path (demonstrated through the real loader and kernel). Before the narrowing that shape
-//     was a loud rejection. Accepted cost, deferred to Issue #335 (a precondition for Issue #308).
-// (Residuals of Issues #328 and #329, routed to the activation story.)
+// V2 AND V3 APPLY TO A RULE IN EXACTLY TWO CASES (S7-B Issue #328 narrowed them; S7-C Issues #334 and #335,
+// Manager rulings, closed the two residuals). The target namespace under the MCP prefix is SHARED with the
+// shell normalizer, which emits a redirect target verbatim: a redirect into a directory named like the
+// prefix (a dot or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a real
+// emitted record and the kernel matches a deny rule on it. So V2 and V3 may reject a rule only when no
+// record a normalizer emits can match it, or when accepting it is a silent allow widening:
+//   (i)  CLASS-ONLY: the rule's verbs are non-empty, hold at least one class marker, and hold no verb a
+//        normalizer emits. The kernel requires the record's verbs to intersect the rule's, and a marker is
+//        carried only by a class record (the markers are not in KNOWN_VERBS, so no shell or cluster record
+//        has one), so such a rule can match only a class record, and no class record carries a target V2 or
+//        V3 rejects. This covers a list of markers only and a marker plus a stray verb (an empty string, a
+//        case-variant or a near-miss of a catalog verb, a marker-free stray): the stray verb matches nothing.
+//   (ii) ALLOW-WIDENING: the rule's effect is allow and it has no verbs (an absent field or an empty array;
+//        both match EVERY verb in the kernel, and schema.ts accepts both). Such a rule CAN match a shell
+//        redirect record into a directory of that name (a file write, verb write), so it is not
+//        unreachable; it is rejected as a safety rule, because it loads clean and silently widens allow
+//        beyond a class record (demonstrated through the real loader and kernel: R2-17 in
+//        rule-reachability.test.ts measures that only the write verb widens). A deny rule with no verbs is
+//        never checked here: for a deny the same shape only denies more, which fails closed.
+// The emitted set is `KNOWN_VERBS` (the action catalog), imported and never retyped: the shell normalizer
+// emits a catalog verb plus the write verb (also in the catalog), the cluster normalizer a catalog verb, and
+// the tool-class normalizer only a marker. R2-8 scans this file for a retyped verb and R2-19 enumerates the
+// verbs the real normalizers emit at run time and fails if one is outside the catalog, so a normalizer that
+// someday emits a new verb fails a test instead of silently making this check unsound. Case is exact,
+// matching the kernel's verb comparison, so a case-variant of a catalog verb is a stray verb.
+// R2-13 (loader-reachability.test.ts) proves the shared-namespace half against the real shell normalizer
+// and kernel.
 //
 // NOT rejected, on purpose: the bare MCP prefix (matches every MCP target), a server plus trailing "/",
 // a server plus tool, and the legacy mutating verbs plus an MCP target (shape c: matches only
 // shell-emitted records and never a class record; documented in tool-class-format.ts, rule-author fact 4,
-// and a disclosed residual, Issue #329). A verb that does not start with the marker prefix is out of scope
-// (docs/backlog.md).
+// and a disclosed residual, Issue #329). A verb list with no class marker (only stray verbs, none a verb a
+// normalizer emits) is out of scope (docs/backlog.md), as is an allow rule keyed on a presentable server
+// target without a marker verb (Issue #338).
 //
 // LAYER-AWARE UNLOCK (S7-B fix-now H6, Issue #333). Every message ends with an `Unlock:` clause naming what the
 // person who is BLOCKED can do. A shipped-defaults or project rule lives in a file the operator can edit, so
@@ -62,7 +61,8 @@
 // The vocabulary (marker prefix, marker table, target prefix, server-name pattern) is IMPORTED from the
 // grammar file, never retyped: rule-reachability.test.ts scans this file for a retyped literal and
 // drift-checks the check against the vocabulary the normalizers emit. Pure, no I/O.
-import type { RuleSet } from "../kernel/rule-types.ts";
+import type { Rule, RuleSet } from "../kernel/rule-types.ts";
+import { KNOWN_VERBS } from "../normalizer/action-catalog.ts";
 import { ADMISSIBLE_SERVER_NAME, CLASS_MARKER_PREFIX, CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
 
 /** Which layer holds the rules being checked, and, for a file-backed layer, the file the operator edits. */
@@ -106,30 +106,50 @@ function checkVerb(ruleId: string, verb: string, field: string, source: Reachabi
   ];
 }
 
-/** True when the rule has at least one verb and every verb is a class marker: the only kind of rule that
- * cannot match a record a shell (or cluster) normalizer emits. No verbs field, or an empty array, matches
- * EVERY verb and is therefore reachable from the shell. */
-function hasOnlyMarkerVerbs(verbs: readonly string[] | undefined): boolean {
-  return verbs !== undefined && verbs.length > 0 && verbs.every((v) => MARKERS.includes(v));
+/** Why V2 and V3 apply to a rule (they never apply to a rule that can match a shell-emitted record through a
+ * verb a normalizer emits, and never to a deny rule with no verbs). */
+type TargetScope = "markers-only" | "marker-and-stray" | "allow-widening";
+
+/** The V2/V3 scope of a rule, or undefined when V2 and V3 do not apply. */
+function targetScope(rule: Rule): TargetScope | undefined {
+  const verbs = rule.verbs;
+  if (verbs === undefined || verbs.length === 0) return rule.effect === "allow" ? "allow-widening" : undefined;
+  if (verbs.some((v) => KNOWN_VERBS.has(v))) return undefined;
+  if (!verbs.some((v) => MARKERS.includes(v))) return undefined;
+  return verbs.every((v) => MARKERS.includes(v)) ? "markers-only" : "marker-and-stray";
 }
 
-function checkTarget(ruleId: string, target: string, field: string, source: ReachabilitySource): ReachabilityError[] {
+/** The clause of a V2 or V3 message that says why the rule is rejected for this scope. */
+function whyRejected(scope: TargetScope): string {
+  if (scope === "markers-only") return "this rule's verbs are class markers only, so it can never match a record";
+  if (scope === "marker-and-stray") return "this rule's verbs hold a class marker and no verb any normalizer emits, so it can match only a class record and can never match a record";
+  return "the rule has no verbs, so it matches every verb and, as an allow rule, can match only a shell redirect into a directory of that name (a file write the baseline may deny), which silently widens allow";
+}
+
+/** The fix clause: an allow rule with no verbs needs a class marker verb as well as the corrected target. */
+function withMarkerFix(scope: TargetScope, fix: string): string {
+  return scope === "allow-widening" ? `add a class marker verb (one of ${MARKERS.join(", ")}) and ${fix}` : fix;
+}
+
+function checkTarget(ruleId: string, target: string, field: string, source: ReachabilitySource, scope: TargetScope): ReachabilityError[] {
   if (!target.startsWith(MCP_TARGET_PREFIX)) return [];
   const rest = target.slice(MCP_TARGET_PREFIX.length);
   if (rest.length === 0) return [];
   const errors: ReachabilityError[] = [];
   const slash = rest.indexOf("/");
   if (slash < 0) {
+    const fix = withMarkerFix(scope, `write ${quote(`${target}/`)} for every tool of the server, or ${quote(`${target}/<tool>`)} for one tool`);
     errors.push({
       field,
-      message: `rule ${quote(ruleId)}: target ${quote(target)} has no "/" after the server name; a target without a trailing "/" matches exactly and no class record's target is a server alone and this rule's verbs are class markers only, so it can never match. ${unlock(source, `write ${quote(`${target}/`)} for every tool of the server, or ${quote(`${target}/<tool>`)} for one tool`)}`,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has no "/" after the server name; a target without a trailing "/" matches exactly and no class record's target is a server alone and ${whyRejected(scope)}. ${unlock(source, fix)}`,
     });
   }
   const server = slash < 0 ? rest : rest.slice(0, slash);
   if (!ADMISSIBLE_SERVER_NAME.test(server)) {
+    const fix = withMarkerFix(scope, 'use the sanitized runtime name (letters, digits and hyphens only) followed by "/"');
     errors.push({
       field,
-      message: `rule ${quote(ruleId)}: target ${quote(target)} has server segment ${quote(server)}, which is not an admitted server name (${ADMISSIBLE_SERVER_NAME.source}) and this rule's verbs are class markers only, so it can never match a record. ${unlock(source, "use the sanitized runtime name (letters, digits and hyphens only)")}`,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has server segment ${quote(server)}, which is not an admitted server name (${ADMISSIBLE_SERVER_NAME.source}) and ${whyRejected(scope)}. ${unlock(source, fix)}`,
     });
   }
   return errors;
@@ -141,8 +161,9 @@ export function checkRuleReachability(ruleSet: RuleSet, source: ReachabilitySour
   const errors: ReachabilityError[] = [];
   ruleSet.rules.forEach((rule, i) => {
     (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`, source)));
-    if (hasOnlyMarkerVerbs(rule.verbs)) {
-      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`, source)));
+    const scope = targetScope(rule);
+    if (scope !== undefined) {
+      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`, source, scope)));
     }
   });
   return errors;
