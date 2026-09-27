@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Issue #252 (partial: citation-cleanup half only) — stale predecessor-era path citations in REQUIREMENTS.md
+
+STANDARD tier, docs-only. Progresses #252; does not close it. Twenty-five of the file's stale/broken citations (a `docs/` prefix that no longer matches this file's own location, a removed hook wrongly described as shipped, two uncommitted spike notes cited as if they were in the tree, a hyphenated `ADR-0029` matching the resolver's ADR-id pattern for an ADR that does not exist under that id, and backtick-fenced paths to files that live in the predecessor/adapter repos, not this one) are reworded or de-backticked in place — no lines added or removed. Line 570 (QA-14's acceptance-criteria wording) is untouched; that is a separate future story. `SECURITY.md` and `hooks/report-subject-gate.mjs` are not created.
+
+- **Known gap found by the verification instrument, not yet fixed here.** `node src/qa/reference-resolver.ts` still reports one unresolved `[file: REQUIREMENTS.md]` citation after this commit: `docs/spikes/2026-08-25-agt-docs-recheck.md`, backtick-fenced at two locations the ratified plan for this story did not list (line 99's "upstream AGT (`docs/spikes/2026-08-25-agt-docs-recheck.md`)" and line 205's "no shape-stability guarantee (`docs/spikes/2026-08-25-agt-docs-recheck.md` §4)"). The plan only addressed the same string's third occurrence, at line 573. This citation-cleanup half is therefore not fully green yet; PR opened as draft pending a ratified wording for those two lines.
+
 ### Fixed — `s7c-reachability-residuals` (issues 334 and 335): a marker plus a stray verb, and an allow rule with no verbs, no longer load on a server target the runtime cannot present
 
 CRITICAL tier (sensitive area: the policy delivery and config surface). The gate hook stays UNWIRED: activation is issue 308, so live exposure is zero today (the committed policy files hold no rules). Plan: `docs/plans/s7c-reachability-residuals-phase1-2026-09-27.md`. Decisions row: `docs/decisions.md`, 2026-09-27, pending human ratification.
