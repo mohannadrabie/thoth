@@ -31,11 +31,27 @@
 // and a disclosed residual, Issue #329). A verb that does not start with the marker prefix is out of scope
 // (docs/backlog.md).
 //
+// LAYER-AWARE UNLOCK (S7-B fix-now H6, Issue #333). Every message ends with an `Unlock:` clause naming what the
+// person who is BLOCKED can do. A shipped-defaults or project rule lives in a file the operator can edit, so
+// the clause names that file. A central rule lives at an out-of-session source that no session can edit, so
+// the clause says the central policy owner must correct it and that a session cannot repair it. Availability
+// caveat, stated: a schema-valid central rule the check rejects fails the WHOLE load (parseLayerText's
+// central failure is a whole-load rejection, as before), so every governed call is denied until the owner
+// corrects the source; the message says which layer failed, and the gate's own line is a separate,
+// activation-time matter (Issue #308). Ruled by the Manager: keep the whole-load rejection.
+//
 // The vocabulary (marker prefix, marker table, target prefix, server-name pattern) is IMPORTED from the
 // grammar file, never retyped: rule-reachability.test.ts scans this file for a retyped literal and
 // drift-checks the check against the vocabulary the normalizers emit. Pure, no I/O.
 import type { RuleSet } from "../kernel/rule-types.ts";
 import { ADMISSIBLE_SERVER_NAME, CLASS_MARKER_PREFIX, CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
+
+/** Which layer holds the rules being checked, and, for a file-backed layer, the file the operator edits. */
+export interface ReachabilitySource {
+  layer: "central" | "shipped-defaults" | "project";
+  /** The layer's file path (shipped-defaults, project). Absent for central (an out-of-session source). */
+  file?: string;
+}
 
 export interface ReachabilityError {
   /** Dotted path to the offending element, e.g. "rules[2].verbs[1]" (the loader prints `field: message`). */
@@ -52,12 +68,21 @@ function quote(text: string): string {
   return JSON.stringify(text.length > MAX_QUOTED ? `${text.slice(0, MAX_QUOTED)}...` : text);
 }
 
-function checkVerb(ruleId: string, verb: string, field: string): ReachabilityError[] {
+/** The `Unlock: ...` clause: who acts, then the fix. Central: the out-of-session owner (a session cannot edit
+ * that source). File-backed layers: the file edit. */
+function unlock(source: ReachabilitySource, fix: string): string {
+  if (source.layer === "central") {
+    return `Unlock: the central policy owner must correct the out-of-session source (a session cannot repair it): ${fix}`;
+  }
+  return `Unlock: edit ${source.file ?? `the ${source.layer} policy file`}: ${fix}`;
+}
+
+function checkVerb(ruleId: string, verb: string, field: string, source: ReachabilitySource): ReachabilityError[] {
   if (!verb.startsWith(CLASS_MARKER_PREFIX) || MARKERS.includes(verb)) return [];
   return [
     {
       field,
-      message: `rule ${quote(ruleId)}: verb ${quote(verb)} starts with ${quote(CLASS_MARKER_PREFIX)} but is not a class marker, so it can never match a record. Unlock: use one of ${MARKERS.join(", ")}`,
+      message: `rule ${quote(ruleId)}: verb ${quote(verb)} starts with ${quote(CLASS_MARKER_PREFIX)} but is not a class marker, so it can never match a record. ${unlock(source, `use one of ${MARKERS.join(", ")}`)}`,
     },
   ];
 }
@@ -69,7 +94,7 @@ function hasOnlyMarkerVerbs(verbs: readonly string[] | undefined): boolean {
   return verbs !== undefined && verbs.length > 0 && verbs.every((v) => MARKERS.includes(v));
 }
 
-function checkTarget(ruleId: string, target: string, field: string): ReachabilityError[] {
+function checkTarget(ruleId: string, target: string, field: string, source: ReachabilitySource): ReachabilityError[] {
   if (!target.startsWith(MCP_TARGET_PREFIX)) return [];
   const rest = target.slice(MCP_TARGET_PREFIX.length);
   if (rest.length === 0) return [];
@@ -78,26 +103,27 @@ function checkTarget(ruleId: string, target: string, field: string): Reachabilit
   if (slash < 0) {
     errors.push({
       field,
-      message: `rule ${quote(ruleId)}: target ${quote(target)} has no "/" after the server name; a target without a trailing "/" matches exactly and no record's target is a server alone, so it can never match. Unlock: write ${quote(`${target}/`)} for every tool of the server, or ${quote(`${target}/<tool>`)} for one tool`,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has no "/" after the server name; a target without a trailing "/" matches exactly and no class record's target is a server alone and this rule's verbs are class markers only, so it can never match. ${unlock(source, `write ${quote(`${target}/`)} for every tool of the server, or ${quote(`${target}/<tool>`)} for one tool`)}`,
     });
   }
   const server = slash < 0 ? rest : rest.slice(0, slash);
   if (!ADMISSIBLE_SERVER_NAME.test(server)) {
     errors.push({
       field,
-      message: `rule ${quote(ruleId)}: target ${quote(target)} has server segment ${quote(server)}, which is not an admitted server name (${ADMISSIBLE_SERVER_NAME.source}), so it can never match a record. Unlock: use the sanitized runtime name (letters, digits and hyphens only)`,
+      message: `rule ${quote(ruleId)}: target ${quote(target)} has server segment ${quote(server)}, which is not an admitted server name (${ADMISSIBLE_SERVER_NAME.source}) and this rule's verbs are class markers only, so it can never match a record. ${unlock(source, "use the sanitized runtime name (letters, digits and hyphens only)")}`,
     });
   }
   return errors;
 }
 
-/** Returns one error per element that can never match. Empty means every rule's verbs and targets pass. */
-export function checkRuleReachability(ruleSet: RuleSet): ReachabilityError[] {
+/** Returns one error per element that can never match. Empty means every rule's verbs and targets pass.
+ * `source` shapes the Unlock clause only (never which rules are rejected); the default is the project layer. */
+export function checkRuleReachability(ruleSet: RuleSet, source: ReachabilitySource = { layer: "project" }): ReachabilityError[] {
   const errors: ReachabilityError[] = [];
   ruleSet.rules.forEach((rule, i) => {
-    (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`)));
+    (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`, source)));
     if (hasOnlyMarkerVerbs(rule.verbs)) {
-      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`)));
+      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`, source)));
     }
   });
   return errors;
