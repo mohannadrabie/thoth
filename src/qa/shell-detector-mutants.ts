@@ -37,6 +37,8 @@ const policySourceDir = join(here, "..", "policy");
 const TEST_FILES = [
   "policy/normalizer/shell.test.ts",
   "policy/normalizer/shell-scanner.test.ts",
+  "policy/normalizer/shell-scanner-linear.test.ts",
+  "policy/normalizer/shell-scanner-work.test.ts",
   "policy/normalizer/flag-catalog.test.ts",
   "policy/normalizer/wrapper-catalog.test.ts",
   "policy/normalizer/registry.test.ts",
@@ -416,8 +418,56 @@ const MUTANTS: Mutant[] = [
     "multi-redirect-collection-disabled",
     "Issue #74: stopping at the first live redirect again would under-report a command with more than one live '>'/'>>'",
     SCANNER,
-    "    const [target] = tokenize(rest);\n    if (target) targets.push(target);\n  }\n  return targets;",
-    "    const [target] = tokenize(rest);\n    if (target) return [target];\n  }\n  return targets;",
+    "    const target = firstTokenFrom(index, idx + length);\n    if (target) targets.push(target);\n  }\n  return targets;",
+    "    const target = firstTokenFrom(index, idx + length);\n    if (target) return [target];\n  }\n  return targets;",
+  ),
+  // --- S7-A (Issue #304): mutants for the branches the linear redirect scan introduced. The pin table in
+  // policy/normalizer/shell-scanner-linear.test.ts (and the existing scanner tests) must kill each one; the
+  // wider equivalence proof is the differential instrument (src/qa/redirect-scan-differential.ts).
+  textMutant(
+    "redirect-target-suffix-offset-ignored",
+    "Issue #304: returning the WHOLE token value instead of the suffix from the redirect's own offset would make every glued target ('echo >a>b' -> 'a>b', 'b') carry the operator and the text before it, changing the write targets the deny rules see",
+    SCANNER,
+    "return token.value.slice(valueOffsetAt[offset] ?? 0);",
+    "return token.value;",
+  ),
+  textMutant(
+    "fd-dup-word-read-from-whole-token",
+    "Issue #304: reading the fd-dup word from the whole token that spans the ampersand (not the text after it) makes '2>&1' read as '2>&1', which is not all digits, so the fd-dup is mis-taken for a file redirect and fabricates the target '1'",
+    SCANNER,
+    "const fdWord = firstTokenFrom(index, idx + length + 1);",
+    "const fdWord = index.tokens.find((t) => t.end > idx + length + 1)?.value;",
+  ),
+  textMutant(
+    "token-index-search-boundary-inclusive",
+    "Issue #304: an inclusive token-end comparison in the index search selects the token that ENDS at the redirect's offset (the operator token of a spaced '> a'), so the target reads as '>' instead of 'a'",
+    SCANNER,
+    "if ((tokens[mid]?.end ?? 0) > offset) hi = mid;",
+    "if ((tokens[mid]?.end ?? 0) >= offset) hi = mid;",
+  ),
+  // --- S7-A fix-now round 1 (Issues #321, app-security LOW 2): mutants that put a quadratic walk back. The work-meter
+  // tests in policy/normalizer/shell-scanner-work.test.ts (which count EVERY quote walk and tokenizer pass through the
+  // active meter) must kill each one; none of them changes an output, so no output test can.
+  textMutant(
+    "fd-dup-word-per-match-tokenize-reintroduced",
+    "Issue #304 / app-security LOW 2: reading the fd-dup word with a public tokenize of the whole remainder once per match (the pre-change shape, mutant M8 of the app-security review) is quadratic on word-form and fd-dup runs; the output is identical, so only a meter that counts every tokenizer call can see it",
+    SCANNER,
+    "const fdWord = firstTokenFrom(index, idx + length + 1);",
+    "const fdWord = tokenize(liveText.slice(idx + length + 1))[0];",
+  ),
+  textMutant(
+    "redirect-target-per-match-tokenize-reintroduced",
+    "Issue #304 / app-security LOW 2: reading each redirect target with a public tokenize of the whole remainder once per match is quadratic on glued runs; the output is identical, so only a meter that counts every tokenizer call can see it",
+    SCANNER,
+    "const target = firstTokenFrom(index, idx + length);",
+    "const target = tokenize(liveText.slice(idx + length))[0];",
+  ),
+  textMutant(
+    "separator-scan-whitespace-run-rewalked-per-newline",
+    "Issue #321: resuming the outer separator loop after a whitespace run that reached the end of the text (instead of stopping) re-walks the same run once per newline: quadratic in a trailing newline-dense run (64 KB of blank lines outran the 30 s spawn timeout through the real hook); the output is identical, so only the work meter can see it",
+    SCANNER,
+    "break; // the whitespace run reached the end of the text: nothing later can find live content",
+    "continue; // the whitespace run reached the end of the text: nothing later can find live content",
   ),
   // --- Round 3, council-approved path (docs/reviews/s4-shell-semantic-detector-council-path-
   // forward-2026-09-03.md): mutants for the new/changed branches Issues #80/#81/#82 introduced,

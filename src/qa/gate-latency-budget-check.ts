@@ -53,6 +53,11 @@ import {
   shellEquivalentDeleteCall,
   shellMultiTargetTwoRedirectsCall,
 } from "../policy/fixtures/normalizer-calls.ts";
+import { buildRedirectShape } from "./redirect-shapes.ts";
+import { TRAILING_WHITESPACE_SHAPE_NAMES, buildTrailingWhitespaceShape } from "./trailing-whitespace-shapes.ts";
+
+export { REDIRECT_SHAPE_NAMES, buildRedirectShape } from "./redirect-shapes.ts";
+export { TRAILING_WHITESPACE_SHAPE_NAMES, buildTrailingWhitespaceShape } from "./trailing-whitespace-shapes.ts";
 
 export const OPS03_CEILING_MS = 2000;
 
@@ -78,7 +83,9 @@ export type CallTimer = (scriptPath: string, stdinPayload: string) => number;
  * "passed" the latency budget. An acceptable hook outcome under the PreToolUse contract is: exit 2
  * (blocks), or exit 0 with EMPTY stdout (a kernel allow emits nothing, Q-B) or with a parseable deny JSON
  * (permissionDecision "deny", S7 L4b). Anything else (exit 1, a null status from a timeout or spawn failure, exit 0 with
- * unparseable stdout) throws. Large-input corpus entries belong to Issue #304's own story.
+ * unparseable stdout) throws. The corpus carries 128 KB redirect-dense entries (Issue #304) and 128 KB
+ * trailing-whitespace entries (Issue #321), so a crash, a timeout or an out-of-memory exit on a large input
+ * fails here, not just a slow one.
  */
 export function assertHookOutcome(status: number | null, stdout: string): void {
   if (status === null) throw new Error("gate-latency-budget-check: the hook run has no exit status (timeout or spawn failure)");
@@ -153,11 +160,21 @@ function buildStdin(command: string): string {
  * multi-command heredoc, plus one clean allow-path baseline) — not the FULL ~50-fixture set (that
  * would multiply real subprocess spawns for marginal signal; every shape-class this corpus is
  * meant to catch drift in is represented at least once). */
-const CORPUS: readonly string[] = [
+/** S7-A (Issues #304 and #321): the size of the large corpus entries. The old redirect scan was quadratic (a 128 KB
+ * command outran the 30 s spawn timeout or exhausted the heap) and so was the separator scan on a trailing
+ * newline-dense run (64 KB never returned); the linear scans clear the ceiling. The large entries are the three
+ * redirect shapes and the three trailing-whitespace shapes: they are NOT coverage of large inputs in general. */
+export const LARGE_INPUT_CHARS = 128 * 1024;
+
+export const CORPUS: readonly string[] = [
   shellEquivalentDeleteCall.command, // clean allow-shaped baseline
   shellDepthCapExactCall.command, // depth-cap-5 wrapper nesting (worst-case recursion)
   shellMultiTargetTwoRedirectsCall.command, // multi-redirect assembly
   shellAtHeredocMultiCommandCall.command, // long, multi-line heredoc-wrapped construction
+  buildRedirectShape("glued", LARGE_INPUT_CHARS), // 128 KB, every target the rest of one long token (worst measured shape)
+  buildRedirectShape("fd-dup", LARGE_INPUT_CHARS), // 128 KB, 2>&1 repeated
+  buildRedirectShape("word-form", LARGE_INPUT_CHARS), // 128 KB, >&w repeated (fd-dup word check on every match)
+  ...TRAILING_WHITESPACE_SHAPE_NAMES.map((shape) => buildTrailingWhitespaceShape(shape, LARGE_INPUT_CHARS)), // 128 KB of newlines, CRLF pairs, mixed whitespace after a benign command (Issue #321)
 ];
 
 /** Real measurement: `iterationsPerCommand` fresh cold-process invocations per corpus entry, via
