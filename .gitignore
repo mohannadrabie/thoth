@@ -11,3 +11,6 @@ docs/qa/history-scan-report.json
 # from secrets-adjacent config (criterion 16's MCP-declaration input files).
 .thoth/halt-state/
 
+# Personal, machine-local Claude Code permission overrides — never shared with the team.
+.claude/settings.local.json
+

@@ -79,7 +79,7 @@ Scenario (run): for `allow, no verbs, targets ["mcp/servers.json"]` the loader m
 Unlock: edit the project policy file: add a class marker verb (one of tool-class:read-only, tool-class:workspace-mutating, tool-class:remote-mutating) and write "mcp/servers.json/" for every tool of the server, or "mcp/servers.json/<tool>" for one tool
 ```
 
-`mcp/servers.json` is a plausible real repository path, not only a mistyped server name. An author whose intent is allow writes to that FILE is told to add a class marker verb (which makes the rule match classified MCP tool calls, not files) and to rewrite the target as a server prefix (which changes which paths it covers). The fix that actually preserves the intent — naming the verbs, for example `verbs: ["write"]` — is the one thing the message does not mention, and it is finding 1.
+`"mcp/servers.json"` is a plausible real repository path, not only a mistyped server name. An author whose intent is allow writes to that FILE is told to add a class marker verb (which makes the rule match classified MCP tool calls, not files) and to rewrite the target as a server prefix (which changes which paths it covers). The fix that actually preserves the intent — naming the verbs, for example `verbs: ["write"]` — is the one thing the message does not mention, and it is finding 1.
 
 Current defense: `R2-17 part 2` asserts the unlock names the marker fix and the trailing slash; nothing asserts the unlock is achievable for a path-shaped target. Verdict: **BREAKS** (rule 2), narrowly.
 
@@ -195,3 +195,7 @@ evidence: demonstrated=8 code-traced=2 derived=1
 checks=npm test 1496 pass / 0 fail / 0 skipped; typecheck clean; reachability pair 24 pass / 0 fail (baseline) and 7 mutants run; qa:reference-resolver 8 of 8; qa:completeness-claims PASS
 adr=HIT(37)
 report=docs/reviews/s7c-reachability-residuals-red-team-2026-09-27.md
+
+## Addendum (Manager, same session, before this branch was ever pushed — original evidence unaltered in substance; human approved this specific edit in real time)
+
+Line 82's standalone backtick citation `` `mcp/servers.json` `` was quoted as `` `"mcp/servers.json"` `` (inner quote marks added, nothing else) so QA-14's `reference-resolver` no longer parses it as a bare repo-relative path citation (it flagged `unresolved-authority: mcp/servers.json — path does not exist in this repository`, since this string is a hypothetical example target used in an attack scenario, not a real path). This is a precedent already used once in this project (the S7 kernel-gate-classification close-out, two path-shaped mentions in the app-security and cross-domain reports). No number, verdict, finding, or scenario value changed; the three other occurrences of the same string elsewhere in this report (lines 31, 48, 76, each inside a larger backtick span that does not match the resolver's bare-path pattern) were left as written. Tracked generally as a QA-14 precision gap (adversarial-report example paths that read as real repo paths): Issue #341.
