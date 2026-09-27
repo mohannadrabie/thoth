@@ -25,12 +25,29 @@
 //   2. A marker-paired deny follows the fixture (flip the class and it stops matching). An
 //      identity-keyed deny (a target like mcp/<server>/, no marker) survives the flip. "This server
 //      is always denied" is an identity-keyed deny; "this class is denied" is a marker rule.
-//   3. A shell redirect can forge an identity TARGET string, so an ALLOW rule keyed on identity MUST
-//      also carry the marker verb. A deny rule may be target-only: a forged match only denies.
-//   4. The rule schema accepts any string, so a typo loads clean and never matches. The four natural
-//      inert deny shapes: a misspelled marker; a server target without the trailing slash (the
-//      kernel matches a target exactly unless the pattern ends in "/"); the legacy mutating verbs
-//      plus the mcp target prefix; the DECLARED server name instead of the sanitized runtime name.
+//   3. The shell normalizer's redirect targets share the "mcp/" namespace: it emits a redirect target
+//      verbatim, so a redirect into a directory named "mcp" (any relative path under it, including a dot
+//      or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a REAL emitted
+//      record with a target that looks like an identity target. So an ALLOW rule keyed on identity MUST
+//      also carry the marker verb (only a class record carries one). A deny rule may be target-only: a
+//      match on such a shell record only denies.
+//   4. The rule schema accepts any string, so it cannot see the four natural inert deny shapes: a
+//      misspelled marker; a server target without the trailing slash (the kernel matches a target
+//      exactly unless the pattern ends in "/"); the legacy mutating verbs plus the mcp target prefix;
+//      the DECLARED server name instead of the sanitized runtime name. Since S7-B (Issue #306) the
+//      loader rejects three of them as `schema-invalid` load errors (src/policy/config/rule-
+//      reachability.ts): a misspelled marker, and, ONLY for a rule whose verbs are all class markers
+//      (Issue #328, because of fact 3), a server target with no trailing slash and a server segment that
+//      is not an admitted name. A target-only or legacy-verb rule on those targets loads, because it can
+//      match a shell-emitted record. Accepted cost, worded exactly (red-team round 2, Issues #334 and
+//      #335): for a DENY rule that shape is inert on a class record; for an ALLOW rule it is a silent
+//      widening (the kernel returns allow for a real shell-emitted redirect record under that path), which
+//      is why fact 3 requires the marker verb on an allow. A verb list that mixes a marker with a verb no
+//      normalizer emits also skips the check and loads inert (Issue #334). The legacy mutating verbs
+//      plus an MCP target still load and never match a class record (they match only shell-emitted
+//      records); PT-12 is satisfied for the marker-
+//      verb shapes only, and this shape is a disclosed residual routed to the activation story (Issue
+//      #329).
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
 //      version. A bump needs a decisions row and a central-rule migration note.
 //
@@ -58,7 +75,15 @@ export const CLASS_MARKER_VERBS: Readonly<Record<ToolClass, string>> = {
 };
 
 const MCP_PREFIX = "mcp__";
-const ADMISSIBLE_SERVER_NAME = /^[A-Za-z0-9-]+$/;
+/** Every marker verb starts with this. Exported so rule-reachability.ts (which rejects a verb that
+ * starts with it but is not a marker) does not retype it; a change is a grammar change (G13). */
+export const CLASS_MARKER_PREFIX = "tool-class:";
+/** Every classified MCP tool call's target starts with this (`mcp/<server>/<tool>`). Exported for the
+ * same reason as CLASS_MARKER_PREFIX; a change is a grammar change (G13). */
+export const MCP_TARGET_PREFIX = "mcp/";
+/** The admitted server-name pattern. Exported so rule-reachability.ts uses the very pattern the
+ * server index admits with, never a retyped copy. */
+export const ADMISSIBLE_SERVER_NAME = /^[A-Za-z0-9-]+$/;
 const ADMISSIBLE_TOOL_NAME = /^[A-Za-z0-9_-]+$/;
 
 /** The runtime's spelling of a configured server or tool name: every character outside
@@ -97,7 +122,7 @@ export function parseMcpToolName(name: string): ParsedMcpToolName | undefined {
  * ambiguous longer target; the Issue #66 discipline of target-format.ts). */
 export function buildMcpTarget(parts: ParsedMcpToolName): string | undefined {
   if (parts.server.includes("/") || parts.tool.includes("/")) return undefined;
-  return `mcp/${parts.server}/${parts.tool}`;
+  return `${MCP_TARGET_PREFIX}${parts.server}/${parts.tool}`;
 }
 
 export interface RejectedServerEntry {

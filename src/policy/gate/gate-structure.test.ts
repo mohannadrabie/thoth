@@ -77,6 +77,12 @@ const STORY_TEST_FILES = [
   "src/policy/tools/classification-catalog.test.ts",
   "src/qa/gate-fail-open-probe.test.ts",
   "hooks/pretooluse-kernel-gate-stderr.test.ts",
+  // S7-B (plan S-2): the test files this story adds, so none types a committed fixture entry name.
+  "hooks/pretooluse-kernel-gate-builtin-override.test.ts",
+  "hooks/sessionstart-tool-enum-builtin-override.test.ts",
+  "src/policy/tools/classification-builtin-override.test.ts",
+  "src/policy/config/rule-reachability.test.ts",
+  "src/policy/config/loader-reachability.test.ts",
 ];
 
 test("G19: no literal fixture entry name in this story's new test files (PC-11): the forbidden names are derived from the committed fixture at run time", () => {

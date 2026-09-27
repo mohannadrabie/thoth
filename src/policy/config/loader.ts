@@ -39,6 +39,7 @@
 import { readFileSync } from "node:fs";
 import type { RuleSet } from "../kernel/rule-types.ts";
 import { validateRuleSet } from "../rule/schema.ts";
+import { checkRuleReachability, type ReachabilitySource } from "./rule-reachability.ts";
 import {
   mergeLayersWithMandatoryLock,
   type InertMandatoryDeclaration,
@@ -130,7 +131,7 @@ export interface LoadEffectivePolicyInput {
 type ParsedLayer = { ruleSet: RuleSet; ruleLines: number[] };
 type ParseFailure = { error: "json-parse-error" | "schema-invalid"; message: string };
 
-function parseLayerText(origin: string, text: string): ParsedLayer | ParseFailure {
+function parseLayerText(origin: string, text: string, source: ReachabilitySource): ParsedLayer | ParseFailure {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -145,6 +146,19 @@ function parseLayerText(origin: string, text: string): ParsedLayer | ParseFailur
     };
   }
   const ruleSet = parsed as RuleSet;
+  // S7-B (Issue #306): a rule that provably cannot match any record a normalizer emits (a misspelled
+  // class marker, a server target with no trailing slash, a server name the runtime never presents) is a
+  // load error, not a silent no-op. Runs only on a schema-valid rule set and reports under the same
+  // `schema-invalid` kind, so the failing layer is attributed exactly like a schema error.
+  // `source` only shapes the Unlock clause per layer (S7-B fix-now H6, Issue #333): the central layer has no
+  // file the operator can edit, the other two do.
+  const unreachable = checkRuleReachability(ruleSet, source);
+  if (unreachable.length > 0) {
+    return {
+      error: "schema-invalid",
+      message: `${origin}: ${unreachable.map((e) => `${e.field}: ${e.message}`).join("; ")}`,
+    };
+  }
   const positions = findRulePositions(tokenize(text));
   const ruleLines = ruleSet.rules.map((_, i) => positions[i]?.line ?? -1);
   return { ruleSet, ruleLines };
@@ -177,7 +191,7 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
   if (centralResult.status === "present") {
     centralChannel = centralResult.channel;
     centralRawForPin = centralResult.raw;
-    const parsed = parseLayerText(centralResult.channel, centralResult.raw);
+    const parsed = parseLayerText(centralResult.channel, centralResult.raw, { layer: "central" });
     if (isParseFailure(parsed)) {
       return {
         ok: false,
@@ -211,7 +225,7 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
       centralChannel,
     };
   }
-  const shippedParsed = parseLayerText(input.shippedDefaultsPath, shippedText);
+  const shippedParsed = parseLayerText(input.shippedDefaultsPath, shippedText, { layer: "shipped-defaults", file: input.shippedDefaultsPath });
   if (isParseFailure(shippedParsed)) {
     return { ok: false, reasonKind: shippedParsed.error, message: shippedParsed.message, failedLayer: "shipped-defaults", centralStatus: centralResult.status, centralChannel };
   }
@@ -229,7 +243,7 @@ export function loadEffectivePolicy(input: LoadEffectivePolicyInput): LoadResult
       centralChannel,
     };
   }
-  const projectParsed = parseLayerText(input.projectPolicyPath, projectText);
+  const projectParsed = parseLayerText(input.projectPolicyPath, projectText, { layer: "project", file: input.projectPolicyPath });
   if (isParseFailure(projectParsed)) {
     return { ok: false, reasonKind: projectParsed.error, message: projectParsed.message, failedLayer: "project", centralStatus: centralResult.status, centralChannel };
   }
