@@ -1,9 +1,22 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-26 (S7-A gate-hook robustness built and reviewed; PR to open). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-09-26 (S7-B policy-authoring safety built and reviewed; PR to open; S6 shipped and closed). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-26 (latest): S7-A `s7a-gate-hook-robustness` (Issues #303, #304) built and reviewed
+## Resume point — 2026-09-26 (newest): S7-B `s7b-policy-authoring-safety` (Issues #305, #306) built and reviewed; S6 is shipped and closed
+
+- **Shipped and merged:** PR #319 (S6 close-out, Issue #294 and its review findings). The S6 milestone is closed with no open issues. Issue #316 closed (catalog restore confirmed on master); its reporter half stays with Issue #223.
+- **Open PRs, merge order matters (merge commits, not squash):** PR #327 (S7-A gate-hook robustness; required check green, mergeable) first, then the S7-B PR (this branch is stacked on it, based on the S7-A branch).
+- **S7-B (CRITICAL; policy delivery surface, the classification fixture reader, the loader):** a central fixture entry can no longer lower a built-in tool's class (load error in the one catalog funnel; SessionStart halts, the gate exits 2), and policy rules that provably cannot match any emitted record are load errors (marker typo; server target with no trailing slash or a non-admitted server name, the last two only when every verb is a class marker, because the shell normalizer shares the target namespace). Issue #309 closed as an accepted fail-closed divergence (no code).
+- **Reviews (5 dated reports, all read in full):** `red-team` go (round 1 with six MED findings, round 2 with the fix delta), `app-security-reviewer` and `cross-domain-reviewer` approve-with-conditions, `test-writer` PT-7 RED-CONFIRMED. No HIGH, no rework-class verdict, review counters 0 and 0. One code fix round (six MED findings) plus one records-only round.
+- **Verified by the Manager on a clean tree:** typecheck and lint clean; 1489 tests, 1489 pass, 0 fail, 0 skipped; every qa gate, the mutation run (59 of 59), the secret scan and QA-14 diff mode (0 failed) pass; the records-only commits change comments only (measured).
+- **Deferred with owners (Issues):** #332 (single-funnel instrument is a heuristic, demonstrated bypasses), #334 (mixed marker plus non-emitted verb loads inert), #335 (an allow rule on an unpresentable server target silently widens), #325, #326, #320, #312, #223. All are activation preconditions or hardening on Issue #308.
+- **Human decisions pending:** three decisions rows plus addenda for S7-B, chiefly the reading of SE ADR-0005 for the G13b replacement and that R1 narrows THOTH-ADR-0001 (a loader validity rule, not a review requirement); plus the S7-A and S6 rows already listed below.
+- **Next (not started):** remaining S7 items are Issue #93 (capability delivered, enforcement content is activation), #107 and #288 (need the hook wired), and Issue #308 itself (activation, blocked on human rulings AP-7 and Q-C(a) and on baseline allow content).
+
+**Single next action:** the human merges PR #327, then the S7-B PR; the Manager then reviews what is left of the S7 milestone.
+
+## Prior entry (superseded above): S7-A `s7a-gate-hook-robustness` (Issues #303, #304) built and reviewed
 
 - **Story (CRITICAL; session-gate hook and the shell normalizer):** the still-unwired PreToolUse gate hook now fails closed for module-load faults (dynamic imports inside its try; fixed stderr line, error type only) and for a dropped stdout write; the redirect scan and the trailing-separator scan are linear with identical output. Hook stays unwired (activation is Issue #308).
 - **Reviews (4 dated reports, all read in full):** round 1 `red-team` no-go on one demonstrated HIGH (Issue #321: a benign command ending in a long newline run never returned; the plan had scoped the function out on a code read that was wrong), `app-security-reviewer` approve, `cross-domain-reviewer` approve-with-conditions. One fix-now round fixed the HIGH, three MED findings (Issues #322, #323, #324) and the LOW findings. Round 2 `red-team` go (the fix proven output-identical by two independent instruments, no other superlinear site found). Review counters: one rework-class round, since-clean 1, total 1.
