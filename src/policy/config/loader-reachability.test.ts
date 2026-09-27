@@ -5,8 +5,13 @@
 //
 // The inert deny shapes (a: misspelled marker, b: server target without the trailing slash, d: declared
 // server name instead of the sanitized one) must be `schema-invalid` load failures naming the layer that
-// actually holds the rule (never misattributed, Issue #108), the rule id and the field path. Shape c
-// (legacy mutating verbs plus an MCP target) still loads. Valid deny rules load.
+// actually holds the rule (never misattributed, Issue #108), the rule id and the field path. Shapes b and d
+// are rejected ONLY for a rule whose verbs are all class markers (S7-B fix-now H1, Issue #328: the target
+// namespace under mcp/ is shared with shell redirect targets, so a rule that can match a shell record is
+// reachable and loads; R2-13 proves it against the real shell normalizer and kernel). PT-12 is therefore
+// satisfied for the marker-verb shapes a, b and d only. Shape c (legacy mutating verbs plus an MCP target)
+// still loads and never matches a class record: a disclosed residual routed to the activation story
+// (Issue #329, plan AP-1). Valid deny rules load.
 //
 // The case counts are computed from the tables below at run time and printed; none is typed as a claim.
 // NAMES. Stand-in server names only (G19).
@@ -20,7 +25,11 @@ import { loadEffectivePolicy, type FailedLayerName, type LoadResult } from "./lo
 import { printEffectivePolicy } from "./printer.ts";
 import type { CentralPolicySource } from "./central-source.ts";
 import type { Rule } from "../kernel/rule-types.ts";
-import { CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
+import { ADMISSIBLE_SERVER_NAME, CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
+import { normalize } from "../normalizer/registry.ts";
+import "../normalizer/shell.ts";
+import { decide } from "../kernel/kernel.ts";
+import { mcpRedirectCalls } from "../fixtures/mcp-redirect-commands.ts";
 
 const LAYERS: readonly FailedLayerName[] = ["central", "shipped-defaults", "project"];
 const EMPTY = JSON.stringify({ version: "0.0.0-empty", rules: [] });
@@ -35,11 +44,14 @@ interface Shape {
 }
 const REJECTED: Shape[] = [
   { label: "a: misspelled marker verb", rule: { id: "rej-typo", effect: "deny", verbs: [RM.slice(0, -1)] }, field: "rules[0].verbs[0]" },
-  { label: "b: server target without the trailing slash", rule: { id: "rej-noslash", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}`] }, field: "rules[0].targets[0]" },
-  { label: "d: declared server name instead of the sanitized runtime name", rule: { id: "rej-declared", effect: "deny", targets: [`${MCP_TARGET_PREFIX}standin x/`] }, field: "rules[0].targets[0]" },
+  { label: "b: marker verb plus a server target without the trailing slash", rule: { id: "rej-noslash", effect: "deny", verbs: [RM], targets: [`${MCP_TARGET_PREFIX}${SERVER}`] }, field: "rules[0].targets[0]" },
+  { label: "d: marker verb plus the declared server name instead of the sanitized runtime name", rule: { id: "rej-declared", effect: "deny", verbs: [RM], targets: [`${MCP_TARGET_PREFIX}standin x/`] }, field: "rules[0].targets[0]" },
 ];
 const LOADED: Shape[] = [
   { label: "c: legacy mutating verbs plus an MCP server prefix (documented, never matches a class record)", rule: { id: "ok-legacy", effect: "deny", verbs: ["write", "execute"], targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
+  { label: "b without a marker verb (target-only: can match a shell redirect record, Issue #328)", rule: { id: "ok-b-target-only", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}`] }, field: "" },
+  { label: "d without a marker verb (target-only: can match a shell redirect record, Issue #328)", rule: { id: "ok-d-target-only", effect: "deny", targets: [`${MCP_TARGET_PREFIX}standin x/`] }, field: "" },
+  { label: "b with a legacy verb", rule: { id: "ok-b-legacy", effect: "deny", verbs: ["write"], targets: [`${MCP_TARGET_PREFIX}${SERVER}`] }, field: "" },
   { label: "marker only", rule: { id: "ok-marker", effect: "deny", verbs: [RM] }, field: "" },
   { label: "marker plus server prefix", rule: { id: "ok-marker-server", effect: "deny", verbs: [RM], targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
   { label: "server prefix only", rule: { id: "ok-server", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
@@ -153,7 +165,7 @@ test("R2-9 rejection-through-printer: the real printer prints the layer, the sch
     assert.ok(lines[1]!.startsWith("REJECTED: project policy load failed (schema-invalid): "), lines[1]);
     assert.ok(lines[1]!.includes("rej-typo") && lines[1]!.includes("rules[0].verbs[0]"));
 
-    const hostile = print([{ id: "x".repeat(2000), effect: "deny", targets: [`${MCP_TARGET_PREFIX}bad\u001b[31m\u2028name`] }]);
+    const hostile = print([{ id: "x".repeat(2000), effect: "deny", verbs: [RM], targets: [`${MCP_TARGET_PREFIX}bad\u001b[31m\u2028name`] }]);
     assert.equal(hostile.exitCode, 1);
     assert.equal(hostile.stdout.split("\n").length, 2, "a control or line-separator character in a rejected target cannot forge a line");
     assert.ok(!/[\p{Cc}\p{Zl}\p{Zp}]/u.test(hostile.stdout.replaceAll("\n", "")), "no control character reaches the terminal");
@@ -162,6 +174,65 @@ test("R2-9 rejection-through-printer: the real printer prints the layer, the sch
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("R2-13 reachability-accepts-every-shell-emitted-target (Issue #328): for redirect commands whose targets land under mcp/ (dot, underscore, no slash, trailing slash, nested), a deny rule authored from the record the REAL shell normalizer emits loads on every layer and the REAL kernel denies on it; a marker-verb-only rule with the same target is the only shape the check may reject, and it never matches that record", () => {
+  const calls = mcpRedirectCalls();
+  const RM_VERB = CLASS_MARKER_VERBS["remote-mutating"];
+  interface Emitted {
+    command: string;
+    verbs: string[];
+    target: string;
+  }
+  const emitted: Emitted[] = [];
+  for (const call of calls) {
+    const record = normalize("shell", call);
+    assert.equal(record.targets.length, 1, `${call.command}: the shell normalizer emits exactly one target`);
+    const target = record.targets[0] as string;
+    assert.ok(target.startsWith(MCP_TARGET_PREFIX), `${call.command}: the emitted target ${JSON.stringify(target)} sits under the MCP prefix (the instrument must be able to fail)`);
+    assert.ok(record.verbs.length > 0, `${call.command}: the record carries a verb`);
+    emitted.push({ command: call.command, verbs: [...record.verbs], target });
+  }
+  // the rules authored from each emitted record: verb+target, target-only, a legacy verb list, a marker plus the emitted verb
+  const authored: { rule: Rule; from: Emitted; reachable: boolean }[] = [];
+  emitted.forEach((e, i) => {
+    authored.push({ rule: { id: `emit-vt-${String(i)}`, effect: "deny", verbs: e.verbs, targets: [e.target] }, from: e, reachable: true });
+    authored.push({ rule: { id: `emit-t-${String(i)}`, effect: "deny", targets: [e.target] }, from: e, reachable: true });
+    authored.push({ rule: { id: `emit-mixed-${String(i)}`, effect: "deny", verbs: [RM_VERB, ...e.verbs], targets: [e.target] }, from: e, reachable: true });
+  });
+  const problems: string[] = [];
+  for (const layer of LAYERS) {
+    const r = load(layer, authored.map((a) => a.rule));
+    if (!r.ok) problems.push(`${layer}: the layer failed to load over rules the kernel matches: ${r.message}`);
+  }
+  for (const a of authored) {
+    const shellRecord = normalize("shell", { command: a.from.command, environment: "unknown", identity: "s7b-issue-328" });
+    const verdict = decide({ rules: { version: "1.0.0", rules: [a.rule] }, defaultOutcome: "allow" }, shellRecord);
+    if (verdict.outcome !== "deny") problems.push(`${a.rule.id} (${a.from.command}): the real kernel says ${verdict.outcome}, expected deny`);
+  }
+  // a marker-only rule with the same target: rejected exactly when V2 or V3 applies to it, and never matching the shell record
+  let markerOnlyRejected = 0;
+  let markerOnlyLoaded = 0;
+  for (const e of emitted) {
+    const rest = e.target.slice(MCP_TARGET_PREFIX.length);
+    const server = rest.includes("/") ? rest.slice(0, rest.indexOf("/")) : rest;
+    const unreachableForClass = !rest.includes("/") || !ADMISSIBLE_SERVER_NAME.test(server);
+    const markerRule: Rule = { id: "marker-only", effect: "deny", verbs: [RM_VERB], targets: [e.target] };
+    const r = load("project", [markerRule]);
+    if (unreachableForClass) {
+      markerOnlyRejected += 1;
+      if (r.ok) problems.push(`marker-only + ${JSON.stringify(e.target)}: loaded, expected a rejection (no class record can match it)`);
+    } else {
+      markerOnlyLoaded += 1;
+      if (!r.ok) problems.push(`marker-only + ${JSON.stringify(e.target)}: rejected, but a class record can match it: ${r.message}`);
+    }
+    const shellRecord = normalize("shell", { command: e.command, environment: "unknown", identity: "s7b-issue-328" });
+    const verdict = decide({ rules: { version: "1.0.0", rules: [markerRule] }, defaultOutcome: "allow" }, shellRecord);
+    if (verdict.outcome !== "allow") problems.push(`marker-only + ${JSON.stringify(e.target)}: matched the shell record, so the rejection would be unsound`);
+  }
+  console.log(`R2-13: ${String(calls.length)} redirect commands normalized; ${String(authored.length)} deny rules authored from the emitted records, each loaded on ${String(LAYERS.length)} layers and denied by the kernel; marker-only variants: ${String(markerOnlyRejected)} rejected, ${String(markerOnlyLoaded)} loaded`);
+  assert.ok(markerOnlyRejected > 0 && markerOnlyLoaded > 0, "the corpus holds both rejected and accepted marker-only shapes");
+  assert.deepEqual(problems, []);
 });
 
 test("R2-10 no-rules-today: the real shipped-defaults and project policy files load through the real loader with the check active; the rule counts they hold are read and printed (migration exposure)", () => {

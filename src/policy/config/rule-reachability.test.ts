@@ -5,11 +5,16 @@
 //
 // Three checks, applied per element of `verbs` and `targets`:
 //   V1 a verb starting with the class-marker prefix that is not one of the three markers;
-//   V2 a target that is the MCP prefix plus a server name with no trailing "/" (no record's target is a
-//      server alone, and a pattern without a trailing "/" matches exactly);
+//   V2 a target that is the MCP prefix plus a server name with no trailing "/" (no CLASS record's target is
+//      a server alone, and a pattern without a trailing "/" matches exactly);
 //   V3 a target under the MCP prefix whose server segment is not an admitted server name.
-// NOT rejected (documented): legacy mutating verbs plus an MCP target (shape c: matches only
-// shell-forged records).
+// V2 and V3 apply ONLY to a rule with at least one verb whose verbs are ALL class-marker verbs (S7-B
+// fix-now H1, Issue #328, Manager ruling): the target namespace under "mcp/" is shared with the shell
+// normalizer, which emits a redirect target verbatim, so a rule that can also match a shell-emitted
+// record (no verbs, a legacy verb, or a mix) is reachable and is never rejected by V2 or V3. R2-13
+// (loader-reachability.test.ts) proves that against the real shell normalizer and the real kernel.
+// NOT rejected (documented): legacy mutating verbs plus an MCP target (shape c: matches shell-emitted
+// records only, never a class record; a disclosed residual routed to the activation story, Issue #329).
 //
 // NAMES. Stand-in server names only; committed fixture names are read at run time (G19).
 import { test } from "node:test";
@@ -24,6 +29,7 @@ import "../normalizer/shell.ts";
 import "../normalizer/structured-cluster.ts";
 import "../normalizer/tool-class.ts";
 import * as calls from "../fixtures/normalizer-calls.ts";
+import { mcpRedirectCalls } from "../fixtures/mcp-redirect-commands.ts";
 import { decide } from "../kernel/kernel.ts";
 import type { ActionRecord } from "../kernel/action-record.ts";
 import type { Rule, RuleSet } from "../kernel/rule-types.ts";
@@ -72,33 +78,34 @@ test("R2-1b per-element: one valid and one mistyped marker in the same rule is r
   assert.deepEqual(errors.map((e) => e.field), ["rules[1].verbs[1]"]);
 });
 
-test("R2-2 v2-no-trailing-slash: a server target without a slash rejects; with a slash, with a tool segment, and the bare prefix load", () => {
+test("R2-2 v2-no-trailing-slash: for a marker-verb rule a server target without a slash rejects; with a slash, with a tool segment, and the bare prefix load", () => {
   for (const server of STANDIN_SERVERS) {
-    const errors = checkRuleReachability(ruleSet(deny("noslash", undefined, [`${MCP_TARGET_PREFIX}${server}`])));
+    const errors = checkRuleReachability(ruleSet(deny("noslash", [MARKERS[0] as string], [`${MCP_TARGET_PREFIX}${server}`])));
     assert.equal(errors.length, 1, `${server} without a slash rejects exactly once`);
     assert.equal(errors[0]?.field, "rules[0].targets[0]");
     assert.ok(errors[0]?.message.includes(JSON.stringify("noslash")));
     assert.ok(errors[0]?.message.includes(`${MCP_TARGET_PREFIX}${server}/`), "the message shows the corrected shape");
     for (const ok of [`${MCP_TARGET_PREFIX}${server}/`, `${MCP_TARGET_PREFIX}${server}/some-tool`, MCP_TARGET_PREFIX]) {
-      assert.deepEqual(checkRuleReachability(ruleSet(deny("fine", undefined, [ok]))), [], `${ok} loads`);
+      assert.deepEqual(checkRuleReachability(ruleSet(deny("fine", [MARKERS[0] as string], [ok]))), [], `${ok} loads`);
     }
   }
 });
 
-test("R2-3 v3-declared-name: server segments with a space, colon, dot, underscore or empty reject; letters, digits and hyphen load; the tool segment is not checked here", () => {
+test("R2-3 v3-declared-name: for a marker-verb rule, server segments with a space, colon, dot, underscore or empty reject; letters, digits and hyphen load; the tool segment is not checked here", () => {
   const badServers = ["standin x", "standin:x", "standin.x", "standin_x", ""];
+  const markerVerb = [MARKERS[1] as string];
   for (const server of badServers) {
     const target = `${MCP_TARGET_PREFIX}${server}/tool`;
-    const errors = checkRuleReachability(ruleSet(deny("declared", undefined, [target])));
+    const errors = checkRuleReachability(ruleSet(deny("declared", markerVerb, [target])));
     assert.equal(errors.length, 1, `${JSON.stringify(target)} rejects exactly once (the slash is present, so only V3 speaks)`);
     assert.equal(errors[0]?.field, "rules[0].targets[0]");
     assert.ok(errors[0]?.message.includes(ADMISSIBLE_SERVER_NAME.source), "the message states the admitted pattern");
   }
-  assert.equal(checkRuleReachability(ruleSet(deny("emptyprefix", undefined, [`${MCP_TARGET_PREFIX}/`]))).length, 1, "an empty server segment with a trailing slash rejects");
+  assert.equal(checkRuleReachability(ruleSet(deny("emptyprefix", markerVerb, [`${MCP_TARGET_PREFIX}/`]))).length, 1, "an empty server segment with a trailing slash rejects");
   for (const server of ["standin-x", "Abc-123", "9", "a-b-c"]) {
-    assert.deepEqual(checkRuleReachability(ruleSet(deny("named", undefined, [`${MCP_TARGET_PREFIX}${server}/`]))), [], `${server} loads`);
+    assert.deepEqual(checkRuleReachability(ruleSet(deny("named", markerVerb, [`${MCP_TARGET_PREFIX}${server}/`]))), [], `${server} loads`);
   }
-  assert.deepEqual(checkRuleReachability(ruleSet(deny("toolseg", undefined, [`${MCP_TARGET_PREFIX}standin-x/some tool with spaces.and.dots`]))), [], "the tool segment is not checked");
+  assert.deepEqual(checkRuleReachability(ruleSet(deny("toolseg", markerVerb, [`${MCP_TARGET_PREFIX}standin-x/some tool with spaces.and.dots`]))), [], "the tool segment is not checked");
   console.log(`R2-3: ${String(badServers.length + 1)} rejected server segments checked`);
 });
 
@@ -112,15 +119,52 @@ test("R2-4 shape-c-loads: legacy mutating verbs plus an MCP server prefix load w
   assert.equal(decide({ rules: ruleSet(rule), defaultOutcome: "allow" }, record).outcome, "allow", "the documented fact stays true: shape c never matches a class record");
 });
 
+test("R2-12 v2-v3-only-when-every-verb-is-a-marker (Issue #328, Manager ruling): a target V2 or V3 would reject loads unless the rule has at least one verb and EVERY verb is a class marker; V1 is unchanged", () => {
+  const [m0, m1] = [MARKERS[0] as string, MARKERS[1] as string];
+  const badTargets = [`${MCP_TARGET_PREFIX}standin-x`, `${MCP_TARGET_PREFIX}standin_x/tool`, `${MCP_TARGET_PREFIX}standin.x/tool`, `${MCP_TARGET_PREFIX}/tool`];
+  const verbSets: { label: string; verbs: string[] | undefined; rejects: boolean }[] = [
+    { label: "no verbs field (matches every verb, so every shell record)", verbs: undefined, rejects: false },
+    { label: "an empty verbs array (matches every verb)", verbs: [], rejects: false },
+    { label: "one legacy verb", verbs: ["write"], rejects: false },
+    { label: "the legacy mutating verbs", verbs: ["write", "create", "modify", "delete", "move", "rename", "execute"], rejects: false },
+    { label: "a marker plus a legacy verb", verbs: [m0, "write"], rejects: false },
+    { label: "a legacy verb plus a marker", verbs: ["write", m0], rejects: false },
+    { label: "a marker plus a verb outside the marker namespace", verbs: [m0, "some-other-verb"], rejects: false },
+    { label: "one marker", verbs: [m0], rejects: true },
+    { label: "two markers", verbs: [m0, m1], rejects: true },
+    { label: "every marker", verbs: [...MARKERS], rejects: true },
+  ];
+  let cases = 0;
+  const problems: string[] = [];
+  for (const target of badTargets) {
+    for (const v of verbSets) {
+      cases += 1;
+      const errors = checkRuleReachability(ruleSet(deny("matrix", v.verbs, [target])));
+      if (v.rejects && errors.length === 0) problems.push(`${v.label} + ${JSON.stringify(target)}: expected a rejection`);
+      if (!v.rejects && errors.length > 0) problems.push(`${v.label} + ${JSON.stringify(target)}: rejected, but the rule can match a shell-emitted record: ${errors[0]?.message ?? ""}`);
+    }
+  }
+  console.log(`R2-12: ${String(cases)} (verb set x bad target) cases computed`);
+  assert.deepEqual(problems, []);
+  // V1 stays element-level and independent of the target: a mistyped marker is rejected wherever it sits
+  const typo = `${CLASS_MARKER_PREFIX}oops`;
+  assert.deepEqual(
+    checkRuleReachability(ruleSet(deny("typo-plus-legacy", [typo, "write"], [`${MCP_TARGET_PREFIX}standin-x`]))).map((e) => e.field),
+    ["rules[0].verbs[0]"],
+    "V1 fires for the typo and V2 does not fire (the rule can match a shell record)",
+  );
+  assert.deepEqual(checkRuleReachability(ruleSet(deny("typo-alone", [typo], [`${MCP_TARGET_PREFIX}standin-x`]))).map((e) => e.field), ["rules[0].verbs[0]"], "a typo is not a marker, so only V1 speaks");
+});
+
 // --- drift instruments -------------------------------------------------------------------------
 
-function emittedCorpus(): { verbs: Set<string>; targets: Set<string>; shellClusterTargets: string[]; records: number } {
+function emittedCorpus(): { verbs: Set<string>; targets: Set<string>; shellClusterTargets: string[]; records: ActionRecord[] } {
   const verbs = new Set<string>();
   const targets = new Set<string>();
   const shellClusterTargets: string[] = [];
-  let records = 0;
+  const records: ActionRecord[] = [];
   const take = (r: ActionRecord, fromShellOrCluster: boolean): void => {
-    records += 1;
+    records.push(r);
     for (const v of r.verbs) verbs.add(v);
     for (const t of r.targets) {
       targets.add(t);
@@ -132,6 +176,8 @@ function emittedCorpus(): { verbs: Set<string>; targets: Set<string>; shellClust
     if ("command" in value) take(normalize("shell", value), true);
     else if ("resourceType" in value) take(normalize("cluster", value), true);
   }
+  // S7-B fix-now H1: shell redirects whose targets land under the MCP prefix are real emitted records
+  for (const call of mcpRedirectCalls()) take(normalize("shell", call), true);
   for (const v of KNOWN_VERBS) verbs.add(v);
   const servers = [...STANDIN_SERVERS, ...committedServers()];
   for (const server of servers) {
@@ -145,18 +191,26 @@ function emittedCorpus(): { verbs: Set<string>; targets: Set<string>; shellClust
   return { verbs, targets, shellClusterTargets, records };
 }
 
-test("R2-6 drift-emitted-vocabulary-accepted: every verb and every target a normalizer emits over the golden corpus, used as a one-element rule, passes the check; the corpus is non-empty and holds no shell-emitted target under the MCP prefix", () => {
+test("R2-6 drift-emitted-vocabulary-accepted: every verb, every target and every whole record (its verbs and targets as one rule) a normalizer emits over the golden corpus, including shell redirects under the MCP prefix, passes the check", () => {
   const { verbs, targets, shellClusterTargets, records } = emittedCorpus();
-  console.log(`R2-6: ${String(records)} records normalized; ${String(verbs.size)} distinct verbs and ${String(targets.size)} distinct targets used as one-element rules`);
-  assert.ok(records > 0 && verbs.size > 0 && targets.size > 0, "the corpus is non-empty");
+  const shellUnderMcp = shellClusterTargets.filter((t) => t.startsWith(MCP_TARGET_PREFIX));
+  console.log(`R2-6: ${String(records.length)} records normalized; ${String(verbs.size)} distinct verbs and ${String(targets.size)} distinct targets used as one-element rules; ${String(shellUnderMcp.length)} shell-emitted targets sit under the MCP prefix`);
+  assert.ok(records.length > 0 && verbs.size > 0 && targets.size > 0, "the corpus is non-empty");
   assert.ok(shellClusterTargets.length > 0, "the shell and cluster corpus emits targets");
-  assert.deepEqual(shellClusterTargets.filter((t) => t.startsWith(MCP_TARGET_PREFIX)), [], "no shell or cluster record in the corpus carries a target under the MCP prefix (a forged one would be rejected by V2 by ruling; this makes that a decision, not an accident)");
+  assert.ok(shellUnderMcp.length > 0, "the corpus DOES hold shell-emitted targets under the MCP prefix (Issue #328: the namespace is shared), so this instrument can fail on them");
   const rejected: string[] = [];
   for (const v of verbs) {
     for (const e of checkRuleReachability(ruleSet(deny("drift-verb", [v])))) rejected.push(`verb ${JSON.stringify(v)}: ${e.message}`);
   }
   for (const t of targets) {
     for (const e of checkRuleReachability(ruleSet(deny("drift-target", undefined, [t])))) rejected.push(`target ${JSON.stringify(t)}: ${e.message}`);
+  }
+  for (const r of records) {
+    const verbsField = r.verbs.length > 0 ? [...r.verbs] : undefined;
+    const targetsField = r.targets.length > 0 ? [...r.targets] : undefined;
+    for (const e of checkRuleReachability(ruleSet(deny("drift-record", verbsField, targetsField)))) {
+      rejected.push(`record verbs ${JSON.stringify(r.verbs)} targets ${JSON.stringify(r.targets)}: ${e.message}`);
+    }
   }
   assert.deepEqual(rejected, [], "the check rejects nothing a normalizer emits");
 });
