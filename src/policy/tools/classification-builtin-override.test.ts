@@ -20,10 +20,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assembleCatalog, moduleRelativeFixtureLocation, type FixtureLocation } from "./classification-catalog.ts";
+import { assembleCatalog, assertNoBuiltinClassLowering, moduleRelativeFixtureLocation, type FixtureLocation } from "./classification-catalog.ts";
 import { loadBuiltinToolClassificationLayer } from "./builtin-tool-inventory.ts";
 import { loadCentralClassificationFixture } from "./central-classification.ts";
-import type { ToolClass } from "./classification.ts";
+import type { ToolClass, ToolClassificationSet } from "./classification.ts";
 import { CLASS_MARKER_VERBS } from "../normalizer/tool-class-format.ts";
 import { stripComments } from "../../qa/kernel-purity-check.ts";
 
@@ -59,6 +59,7 @@ function writeFixture(entries: { name: string; class: string }[]): FixtureLocati
 
 interface PairResult {
   name: string;
+  fixturePath: string;
   builtinClass: ToolClass;
   entryClass: ToolClass;
   lowers: boolean;
@@ -77,6 +78,7 @@ function runAllPairs(): PairResult[] {
   for (const b of loadBuiltinToolClassificationLayer().tools) {
     for (const c of CLASS_ORDER) {
       const location = writeFixture([{ name: b.name, class: c }]);
+      const fixturePath = location.fixturePath;
       let threw = false;
       let message = "";
       let mergedClass: string | undefined;
@@ -90,7 +92,7 @@ function runAllPairs(): PairResult[] {
         threw = true;
         message = (err as Error).message;
       }
-      results.push({ name: b.name, builtinClass: b.class, entryClass: c, lowers: rank(c) < rank(b.class), threw, message, mergedClass, mergedLayer });
+      results.push({ name: b.name, fixturePath, builtinClass: b.class, entryClass: c, lowers: rank(c) < rank(b.class), threw, message, mergedClass, mergedLayer });
     }
   }
   cachedPairs = results;
@@ -167,6 +169,125 @@ test("R1-3b every-offender-reported: two lowering entries in one fixture are bot
     message = (err as Error).message;
   }
   assert.ok(message.includes(JSON.stringify(a.name)) && message.includes(JSON.stringify(b.name)), `both entries are named; got: ${message}`);
+});
+
+// --- S7-B fix-now H3 (Issue #330): the halt relay cuts every diagnostic line at a fixed length, so the
+// guard message must put what the operator needs FIRST and the fixture path LAST. Both constants are read
+// from the production hook sources (never retyped), so a change to either is seen here.
+function relayVisibleWindow(): { prefix: string; maxDetail: number } {
+  const relay = readFileSync(join(REPO_ROOT, "hooks", "userpromptsubmit-halt-relay.mjs"), "utf8");
+  const start = readFileSync(join(REPO_ROOT, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
+  const max = /const MAX_DETAIL_LENGTH = (\d+);/.exec(relay);
+  const prefix = /`(internal exception during tool enumeration: )\$\{err\?\.message/.exec(start);
+  assert.ok(max?.[1] !== undefined && prefix?.[1] !== undefined, "the relay cap and the SessionStart detail prefix are found in the hook sources");
+  return { prefix: prefix[1], maxDetail: Number(max[1]) };
+}
+
+test("R1-11 message-order (Issue #330): for every lowering pair the entry, both classes and the Unlock clause come before the fixture path, the path is LAST, and everything but the path survives the relay cut of the SessionStart detail", () => {
+  const lowering = runAllPairs().filter((p) => p.lowers);
+  const { prefix, maxDetail } = relayVisibleWindow();
+  const wrong: string[] = [];
+  let longest = 0;
+  for (const p of lowering) {
+    const m = p.message;
+    const [iName, iUnlock, iPath] = [m.indexOf(JSON.stringify(p.name)), m.indexOf("Unlock:"), m.lastIndexOf(p.fixturePath)];
+    if (!(iName >= 0 && iName < iUnlock && iUnlock < iPath)) wrong.push(`${p.name}: order is name ${String(iName)}, Unlock ${String(iUnlock)}, path ${String(iPath)}`);
+    if (!m.endsWith(p.fixturePath)) wrong.push(`${p.name}: the fixture path is not last`);
+    const visible = (prefix + m).slice(0, maxDetail);
+    for (const [label, needle] of [
+      ["the quoted entry", JSON.stringify(p.name)],
+      ["the built-in class", p.builtinClass],
+      ["the entry class", p.entryClass],
+      ["Unlock:", "Unlock:"],
+      ["the raise action", "raise"],
+      ["the remove action", "remove"],
+    ] as const) {
+      if (!visible.includes(needle)) wrong.push(`${p.name} (${p.builtinClass} as ${p.entryClass}): the first ${String(maxDetail)} characters of the SessionStart detail lack ${label}`);
+    }
+    longest = Math.max(longest, (prefix + m.slice(0, Math.max(0, m.lastIndexOf(p.fixturePath)))).length);
+  }
+  console.log(`R1-11: ${String(lowering.length)} lowering messages checked against a ${String(maxDetail)}-character relay window; longest text before the fixture path is ${String(longest)} characters`);
+  assert.ok(lowering.length > 0);
+  assert.equal(wrong.length, 0, wrong.join("\n"));
+});
+
+test("R1-11b every-offender-capped-and-path-last: with more lowering entries than the cap, the first five are named, the rest are counted, and the path is still last", () => {
+  const lowerable = loadBuiltinToolClassificationLayer().tools.filter((b) => rank(b.class) > 0);
+  const lower = CLASS_ORDER[0] as ToolClass;
+  assert.ok(lowerable.length > 5, "more lowering built-ins than the cap of five");
+  const location = writeFixture(lowerable.map((b) => ({ name: b.name, class: lower })));
+  let message = "";
+  try {
+    assembleCatalog(location);
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  const named = lowerable.filter((b) => message.includes(JSON.stringify(b.name)));
+  assert.equal(named.length, 5, `exactly five offenders are named; got ${String(named.length)}`);
+  assert.deepEqual(
+    named.map((b) => b.name),
+    lowerable.slice(0, 5).map((b) => b.name),
+    "the first five in fixture order",
+  );
+  assert.ok(message.includes(`${String(lowerable.length - 5)} more`), `the rest are counted; got ${message}`);
+  assert.ok(message.indexOf("Unlock:") < message.lastIndexOf(location.fixturePath) && message.endsWith(location.fixturePath), "Unlock first, path last");
+});
+
+// --- S7-B fix-now H4 (Issue #331, app-security suspicion) ---------------------------------------------
+
+/** Spellings that differ from a built-in name without being that name: the guard must let them through
+ * (the merge never lets them override the built-in either), so the guard key is the merge key. */
+function nearMisses(name: string): { label: string; name: string }[] {
+  const fullwidth = [...name].map((c) => (c >= "!" && c <= "~" ? String.fromCharCode(c.charCodeAt(0) + 0xfee0) : c)).join("");
+  const variants = [
+    { label: "lower case", name: name.toLowerCase() },
+    { label: "upper case", name: name.toUpperCase() },
+    { label: "trailing space", name: `${name} ` },
+    { label: "leading space", name: ` ${name}` },
+    { label: "NUL suffix", name: `${name}\u0000` },
+    { label: "zero-width suffix", name: `${name}\u200b` },
+    { label: "combining mark", name: `${name}\u0301` },
+    { label: "fullwidth", name: fullwidth },
+    { label: "trailing slash", name: `${name}/` },
+    { label: "dot suffix", name: `${name}.` },
+  ];
+  return variants.filter((v) => v.name !== name);
+}
+
+test("R1-10 guard-key-is-the-merge-key (Issue #331): an entry whose name differs from a built-in only in case, spacing or a look-alike character LOADS and never changes the built-in, while the exact name lowering it throws", () => {
+  const lower = CLASS_ORDER[0] as ToolClass;
+  const builtins = loadBuiltinToolClassificationLayer().tools.filter((b) => rank(b.class) > 0);
+  const problems: string[] = [];
+  let cases = 0;
+  for (const b of builtins) {
+    assert.throws(() => assembleCatalog(writeFixture([{ name: b.name, class: lower }])), /Unlock:/, `${b.name}: the exact name lowering it throws`);
+    for (const v of nearMisses(b.name)) {
+      cases += 1;
+      try {
+        const { merged } = assembleCatalog(writeFixture([{ name: v.name, class: lower }]));
+        const own = merged.tools.find((t) => t.name === b.name);
+        if (own?.class !== b.class) problems.push(`${b.name} / ${v.label}: the built-in class became ${String(own?.class)}`);
+      } catch (err) {
+        problems.push(`${b.name} / ${v.label}: a near-miss name threw (the guard key is laxer than the merge key): ${(err as Error).message}`);
+      }
+    }
+  }
+  console.log(`R1-10: ${String(builtins.length)} lowerable built-ins x near-miss spellings = ${String(cases)} cases; the exact name throws for each built-in`);
+  assert.ok(cases > 0);
+  assert.deepEqual(problems, []);
+});
+
+test("R1-12 guard-fails-closed-on-an-unknown-class (app-security suspicion): an entry class or a built-in class outside the rank table is a lowering, never a silent pass (assertNoBuiltinClassLowering called directly; the parser rejects such a class first)", () => {
+  const b = loadBuiltinToolClassificationLayer().tools[0];
+  assert.ok(b !== undefined);
+  const set = (toolClass: string): ToolClassificationSet => ({ version: "t", tools: [{ name: b.name, class: toolClass as ToolClass }] });
+  const unknowns = ["bogus", "", "READ-ONLY", " read-only", "constructor", "__proto__", "toString"];
+  for (const unknown of unknowns) {
+    assert.throws(() => assertNoBuiltinClassLowering(set(b.class), set(unknown), "/x/fixture.json"), /Unlock:/, `an entry class ${JSON.stringify(unknown)} fails closed`);
+    assert.throws(() => assertNoBuiltinClassLowering(set(unknown), set(b.class), "/x/fixture.json"), /Unlock:/, `a built-in class ${JSON.stringify(unknown)} fails closed`);
+  }
+  assert.doesNotThrow(() => assertNoBuiltinClassLowering(set(b.class), set(b.class), "/x/fixture.json"), "the control: a same-class entry passes");
+  console.log(`R1-12: ${String(unknowns.length)} unknown class spellings, each on both sides, checked`);
 });
 
 test("R1-4 committed-fixture-passes: the committed fixture assembles; the overlap with the built-in names is derived by script and no committed entry lowers a built-in", () => {

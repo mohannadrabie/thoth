@@ -64,6 +64,11 @@ function load(layer: FailedLayerName, rules: Rule[]): LoadResult {
 
 /** The same, with the layer's raw text supplied by the caller (so a schema-invalid shape can be planted). */
 function loadText(layer: FailedLayerName, text: string): LoadResult {
+  return loadTextWithPaths(layer, text).result;
+}
+
+/** Also returns the two policy file paths the load used (the message for a file-backed layer names its own). */
+function loadTextWithPaths(layer: FailedLayerName, text: string): { result: LoadResult; shippedPath: string; projectPath: string } {
   const root = mkdtempSync(join(tmpdir(), "thoth-s7b-r2-"));
   try {
     const shippedPath = join(root, "shipped-defaults.json");
@@ -71,7 +76,7 @@ function loadText(layer: FailedLayerName, text: string): LoadResult {
     writeFileSync(shippedPath, layer === "shipped-defaults" ? text : EMPTY, "utf8");
     writeFileSync(projectPath, layer === "project" ? text : EMPTY, "utf8");
     const centralSource: CentralPolicySource = { read: () => (layer === "central" ? { status: "present", channel: "test-channel-descriptor", raw: text } : { status: "absent" }) };
-    return loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource });
+    return { result: loadEffectivePolicy({ shippedDefaultsPath: shippedPath, projectPolicyPath: projectPath, centralSource }), shippedPath, projectPath };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -232,6 +237,48 @@ test("R2-13 reachability-accepts-every-shell-emitted-target (Issue #328): for re
   }
   console.log(`R2-13: ${String(calls.length)} redirect commands normalized; ${String(authored.length)} deny rules authored from the emitted records, each loaded on ${String(LAYERS.length)} layers and denied by the kernel; marker-only variants: ${String(markerOnlyRejected)} rejected, ${String(markerOnlyLoaded)} loaded`);
   assert.ok(markerOnlyRejected > 0 && markerOnlyLoaded > 0, "the corpus holds both rejected and accepted marker-only shapes");
+  assert.deepEqual(problems, []);
+});
+
+test("R2-15 layer-aware-unlock (Issue #333): every rejection kind names the unlock the person who is blocked can perform: the central layer says the central policy owner must correct the out-of-session source and that a session cannot repair it; shipped-defaults and project name their own file edit; the fix itself stays in the text", () => {
+  interface Kind {
+    label: string;
+    rule: Rule;
+    fix: string[];
+  }
+  const kinds: Kind[] = [
+    { label: "V1 misspelled marker", rule: REJECTED[0]!.rule, fix: MARKERS },
+    { label: "V2 no trailing slash", rule: REJECTED[1]!.rule, fix: [`${MCP_TARGET_PREFIX}${SERVER}/`] },
+    { label: "V3 declared name", rule: REJECTED[2]!.rule, fix: ["sanitized runtime name"] },
+  ];
+  const problems: string[] = [];
+  let cases = 0;
+  for (const kind of kinds) {
+    for (const layer of LAYERS) {
+      cases += 1;
+      const { result, shippedPath, projectPath } = loadTextWithPaths(layer, JSON.stringify({ version: "1.0.0", rules: [kind.rule] }));
+      const where = `${layer} / ${kind.label}`;
+      if (result.ok) {
+        problems.push(`${where}: loaded ok`);
+        continue;
+      }
+      const m = result.message;
+      const unlock = m.slice(m.indexOf("Unlock:"));
+      if (!m.includes("Unlock:")) problems.push(`${where}: no Unlock clause: ${m}`);
+      for (const f of kind.fix) if (!m.includes(f)) problems.push(`${where}: the fix text ${JSON.stringify(f)} is missing: ${m}`);
+      if (layer === "central") {
+        if (!/central policy owner/.test(unlock)) problems.push(`${where}: the unlock does not name the central policy owner: ${unlock}`);
+        if (!/out-of-session/.test(unlock)) problems.push(`${where}: the unlock does not say the source is out of session: ${unlock}`);
+        if (!/cannot repair/.test(unlock)) problems.push(`${where}: the unlock does not say a session cannot repair it: ${unlock}`);
+        if (/\bedit\b/i.test(unlock)) problems.push(`${where}: the central unlock tells the operator to edit something this session cannot edit: ${unlock}`);
+      } else {
+        const file = layer === "shipped-defaults" ? shippedPath : projectPath;
+        if (!unlock.includes(`edit ${file}`)) problems.push(`${where}: the unlock does not name the file edit (${file}): ${unlock}`);
+        if (/central policy owner/.test(unlock)) problems.push(`${where}: a file-backed layer must not point at the central owner: ${unlock}`);
+      }
+    }
+  }
+  console.log(`R2-15: ${String(cases)} (rejection kind x layer) messages checked`);
   assert.deepEqual(problems, []);
 });
 
