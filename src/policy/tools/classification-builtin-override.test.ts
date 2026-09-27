@@ -341,3 +341,165 @@ test("R1-6 single-merge-site: the only production files naming the merge or the 
   assert.deepEqual(merge, ["src/policy/rule/precedence.ts", "src/policy/tools/classification-catalog.ts"], `only the definition and classification-catalog.ts may name mergeToolClassificationLayers; got ${JSON.stringify(merge)}`);
   assert.deepEqual(loader, ["src/policy/tools/central-classification.ts", "src/policy/tools/classification-catalog.ts"], `only the definition and classification-catalog.ts may name the fixture loader/parser; got ${JSON.stringify(loader)}`);
 });
+
+// --- S7-B fix-now H5 (Issue #332): R1-6b, the single-funnel instrument beyond name matching ------------
+//
+// R1-6 names two symbols. A production module that imports the fixture module for its exported default path,
+// or rebuilds the fixture path itself, and builds a catalog without assembleCatalog names neither, so it
+// would serve an unguarded catalog with every gate green (red-team mutant M9). This scan enumerates, at
+// run time, every production file (src/ and hooks/, tests and hooks/test-support/ excluded) that
+//   A. imports the fixture module (static import, re-export, bare import, dynamic import(), require(); the
+//      specifier is resolved against the importing file, so a barrel or another directory cannot hide it);
+//   B. holds a standalone path string literal ending in the fixture file name AND a file-read primitive;
+//   C. names ANY runtime export of the fixture module (enumerated from the live module, not typed here);
+//   D. calls import() or require() with a specifier it cannot resolve statically.
+// Allowed: the fixture module itself and classification-catalog.ts (the funnel), plus the one reviewed file
+// that only COPIES the fixture into a scratch tree (B). The self-test proves a synthetic bypass fails the leg
+// built for it and the controls pass; the red-team mutant (a production module reading DEFAULT_FIXTURE_PATH)
+// is killed through the mutation-harness engine (recorded in the build report, not committed).
+import * as fixtureModule from "./central-classification.ts";
+import { DEFAULT_FIXTURE_PATH } from "./central-classification.ts";
+import { basename, dirname, posix } from "node:path";
+
+const FIXTURE_MODULE_REL = "src/policy/tools/central-classification.ts";
+const FUNNEL_REL = "src/policy/tools/classification-catalog.ts";
+/** Reviewed: copies the committed fixture into a scratch tree for a fail-open probe and reads only the hook
+ * file; it never parses the fixture or builds a catalog. */
+const REVIEWED_COPY_ONLY_REL = "src/qa/gate-fail-open-probe.ts";
+
+/** Comments removed, string and template literals kept (a `//` inside a string does not start a comment). */
+function stripCommentsKeepingStrings(source: string): string {
+  return source.replace(/("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str: string | undefined) => str ?? " ");
+}
+
+const FILE_READ_PRIMITIVE = /\b(readFileSync|readFile|createReadStream|readSync|openSync|JSON\.parse)\b/;
+
+interface Scanned {
+  rel: string;
+  text: string;
+}
+interface FixtureAccess {
+  importers: string[];
+  pathReaders: string[];
+  symbolHolders: string[];
+  unresolvableImports: string[];
+}
+
+function withoutExt(path: string): string {
+  return path.replace(/\.(ts|mts|js|mjs|cjs)$/, "");
+}
+
+function scanFixtureAccess(files: Scanned[], fixtureModuleRel: string, fixtureFileName: string, exportedSymbols: string[]): FixtureAccess {
+  const out: FixtureAccess = { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [] };
+  const target = withoutExt(fixtureModuleRel);
+  const escapedName = fixtureFileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pathLiteral = new RegExp(`["'\`](?:[^"'\`\\s]*[\\\\/])?${escapedName}["'\`]`);
+  for (const { rel, text } of files) {
+    const code = stripCommentsKeepingStrings(text);
+    const specifiers = [
+      ...[...code.matchAll(/\bfrom\s*["']([^"']+)["']/g)].map((m) => m[1] as string),
+      ...[...code.matchAll(/(?:^|[;\s])import\s+["']([^"']+)["']/gm)].map((m) => m[1] as string),
+      ...[...code.matchAll(/\b(?:import|require)\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g)].map((m) => m[1] as string),
+    ];
+    if (specifiers.some((spec) => spec.startsWith(".") && withoutExt(posix.normalize(posix.join(posix.dirname(rel), spec))) === target)) out.importers.push(rel);
+    if (pathLiteral.test(code) && FILE_READ_PRIMITIVE.test(code)) out.pathReaders.push(rel);
+    if (exportedSymbols.some((sym) => new RegExp(`\\b${sym}\\b`).test(code))) out.symbolHolders.push(rel);
+    if (/\b(?:import|require)\s*\(\s*(?!["'`])[^)\s]/.test(code)) out.unresolvableImports.push(rel);
+  }
+  out.importers.sort();
+  out.pathReaders.sort();
+  out.symbolHolders.sort();
+  out.unresolvableImports.sort();
+  return out;
+}
+
+function productionScanFiles(): Scanned[] {
+  const files: string[] = [];
+  walk(join(REPO_ROOT, "src"), files);
+  walk(join(REPO_ROOT, "hooks"), files);
+  return files
+    .map((f) => relative(REPO_ROOT, f).replaceAll("\\", "/"))
+    .filter((rel) => !rel.startsWith("hooks/test-support/"))
+    .sort()
+    .map((rel) => ({ rel, text: readFileSync(join(REPO_ROOT, rel), "utf8") }));
+}
+
+const FIXTURE_FILE_NAME = basename(DEFAULT_FIXTURE_PATH);
+const FIXTURE_EXPORTS = Object.keys(fixtureModule);
+
+test("R1-6b self-test: a synthetic production module that reads the fixture without assembleCatalog FAILS the scan on the leg built for it, and the controls pass", () => {
+  const synth = (rel: string, text: string): Scanned => ({ rel, text });
+  const scan = (files: Scanned[]): FixtureAccess => scanFixtureAccess(files, FIXTURE_MODULE_REL, FIXTURE_FILE_NAME, FIXTURE_EXPORTS);
+  const some = FIXTURE_EXPORTS[0] as string;
+  assert.ok(FIXTURE_EXPORTS.includes("DEFAULT_FIXTURE_PATH"), "the live export list is enumerated (the default path is among them)");
+
+  const bypasses: { label: string; file: Scanned; leg: keyof FixtureAccess }[] = [
+    {
+      label: "the red-team mutant: imports the default path and reads it",
+      file: synth("src/policy/tools/bypass-a.ts", `import { readFileSync } from "node:fs";\nimport { DEFAULT_FIXTURE_PATH } from "./central-classification.ts";\nexport const raw = () => readFileSync(DEFAULT_FIXTURE_PATH, "utf8");`),
+      leg: "importers",
+    },
+    { label: "a barrel re-export", file: synth("src/policy/tools/barrel.ts", `export * from "./central-classification.ts";`), leg: "importers" },
+    {
+      label: "a dynamic import",
+      file: synth("src/policy/config/lazy.ts", `export const load = async () => (await import("../tools/central-classification.ts")).DEFAULT_FIXTURE_PATH;`),
+      leg: "importers",
+    },
+    {
+      label: "an import from another directory with a URL in a string on the same line (a naive comment strip would eat it)",
+      file: synth("hooks/sneaky.mjs", `const u = "http://x"; import { z } from "../src/policy/tools/central-classification.ts";`),
+      leg: "importers",
+    },
+    {
+      label: "a rebuilt path literal plus a read",
+      file: synth("src/policy/config/own-path.ts", `import { readFileSync } from "node:fs";\nexport const raw = (root: string) => readFileSync(root + "/docs/qa/${FIXTURE_FILE_NAME}", "utf8");`),
+      leg: "pathReaders",
+    },
+    {
+      label: "a name alone (no import, no path): the exported symbol is still named",
+      file: synth("src/policy/config/named.ts", `export const p = (globalThis as any).${some};`),
+      leg: "symbolHolders",
+    },
+    { label: "a computed dynamic import", file: synth("src/policy/config/computed.ts", `export const load = (p: string) => import(p);`), leg: "unresolvableImports" },
+  ];
+  for (const b of bypasses) {
+    const found = scan([b.file]);
+    assert.deepEqual(found[b.leg], [b.file.rel], `${b.label}: leg ${b.leg} flags the synthetic module; got ${JSON.stringify(found)}`);
+  }
+  const controls: { label: string; file: Scanned }[] = [
+    { label: "a comment that names the module and the file", file: synth("src/a.ts", `// see ./central-classification.ts and ${FIXTURE_FILE_NAME}, ${some}\nexport const x = 1;`) },
+    {
+      label: "a hint sentence holding the file name beside a read",
+      file: synth("hooks/hint.mjs", `import { readFileSync } from "node:fs";\nconst HINT = "unlock: reclassify the tool in docs/qa/${FIXTURE_FILE_NAME} (a reviewed fixture)";\nexport const r = (p) => JSON.parse(readFileSync(p, "utf8"));`),
+    },
+    { label: "an import of the funnel", file: synth("hooks/uses-funnel.mjs", `import { assembleCatalog } from "../src/policy/tools/classification-catalog.ts";`) },
+    { label: "a literal dynamic import of another module", file: synth("hooks/gate.mjs", `export const m = () => import("../src/policy/tools/classification-catalog.ts");`) },
+  ];
+  for (const c of controls) {
+    const found = scan([c.file]);
+    assert.deepEqual(found, { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [] }, `${c.label}: not flagged; got ${JSON.stringify(found)}`);
+  }
+  console.log(`R1-6b self-test: ${String(bypasses.length)} synthetic bypasses flagged on their own leg, ${String(controls.length)} controls clean; the fixture module exports ${JSON.stringify(FIXTURE_EXPORTS)}`);
+});
+
+test("R1-6b no-other-production-fixture-reader (Issue #332): the only production files that import the fixture module, read the fixture path, name one of its exports or hide a module specifier are the fixture module, the funnel and the one reviewed copy-only probe", () => {
+  const files = productionScanFiles();
+  const found = scanFixtureAccess(files, FIXTURE_MODULE_REL, FIXTURE_FILE_NAME, FIXTURE_EXPORTS);
+  console.log(
+    `R1-6b: ${String(files.length)} production files scanned (tests and hooks/test-support excluded); importers ${JSON.stringify(found.importers)}; path readers ${JSON.stringify(found.pathReaders)}; export holders ${JSON.stringify(found.symbolHolders)}; unresolvable imports ${JSON.stringify(found.unresolvableImports)}`,
+  );
+  assert.ok(files.some((f) => f.rel === FUNNEL_REL) && files.some((f) => f.rel === FIXTURE_MODULE_REL) && files.some((f) => f.rel.startsWith("hooks/")), "the scan covers src/ and hooks/ including the funnel");
+  assert.deepEqual(found.importers, [FUNNEL_REL], `only the funnel imports the fixture module; got ${JSON.stringify(found.importers)}`);
+  assert.deepEqual(
+    found.pathReaders.filter((f) => f !== FIXTURE_MODULE_REL && f !== FUNNEL_REL && f !== REVIEWED_COPY_ONLY_REL),
+    [],
+    `no other production file reads the fixture path; got ${JSON.stringify(found.pathReaders)}`,
+  );
+  assert.deepEqual(
+    found.symbolHolders.filter((f) => f !== FIXTURE_MODULE_REL && f !== FUNNEL_REL),
+    [],
+    `no other production file names an export of the fixture module; got ${JSON.stringify(found.symbolHolders)}`,
+  );
+  assert.deepEqual(found.unresolvableImports, [], "no production file imports or requires a module by a specifier it computes");
+  assert.equal(dirname(FIXTURE_MODULE_REL), dirname(FUNNEL_REL), "the funnel sits beside the fixture module");
+});
