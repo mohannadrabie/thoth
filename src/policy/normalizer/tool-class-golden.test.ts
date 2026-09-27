@@ -10,12 +10,15 @@
 // G13b documents, with the REAL rule schema validator, the REAL kernel and (since S7-B, Issue #306)
 // the REAL loader, the rule-author facts that schema.ts cannot check: class records carry no
 // legacy verb; an identity-keyed deny survives a reclassification while a marker-paired deny
-// follows it; four natural deny shapes are schema-valid and never match a class record, and of those
-// the loader now REJECTS three (a misspelled marker, a server target without the trailing slash, the
-// declared server name) while the legacy-verb-plus-MCP-target shape still loads. G13b was REPLACED
-// explicitly in S7-B (SE ADR-0005; docs/decisions.md): every assertion it had is kept, only its title
-// and comments changed (it no longer claims the shapes "load clean") and the loader assertions were
-// added.
+// follows it; four natural deny shapes are schema-valid and never match a class record. Since S7-B the
+// loader REJECTS a misspelled marker, and rejects a server target without the trailing slash and the
+// declared server name ONLY when the rule's verbs are all class markers (Issue #328: a target-only rule
+// on such a target can match a shell redirect record, so it loads); the legacy-verb-plus-MCP-target shape
+// still loads (Issue #329, a disclosed residual). G13b was REPLACED explicitly in S7-B (SE ADR-0005;
+// docs/decisions.md): every assertion it had is kept (each of the four original shapes keeps its schema
+// and kernel assertion), only its title and comments changed (it no longer claims the shapes "load
+// clean") and the loader assertions were added; the marker-verb variants of the two target shapes are
+// added beside the originals.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -99,7 +102,7 @@ function loadsAsProjectRule(rule: Rule): { ok: boolean; message: string } {
   }
 }
 
-test("G13b: rule-shape facts pinned (PC-10, #306; documenting, real schema validator plus kernel plus loader): legacy-verb deny does not match a class record; identity-keyed deny survives a flip and a marker-paired deny does not; four natural-but-inert deny shapes are schema-valid (0 schema errors) and never match, and the loader rejects three of them and still loads the fourth", () => {
+test("G13b: rule-shape facts pinned (PC-10, #306; documenting, real schema validator plus kernel plus loader): legacy-verb deny does not match a class record; identity-keyed deny survives a flip and a marker-paired deny does not; four natural-but-inert deny shapes are schema-valid (0 schema errors) and never match a class record, and the loader rejects the misspelled marker and the marker-verb variants of the two target shapes while the target-only and legacy-verb forms still load", () => {
   const remote = callTool("mcp__standin-x__run", catalogOf([["standin-x", "remote-mutating"]]));
   const flipped = callTool("mcp__standin-x__run", catalogOf([["standin-x", "read-only"]]));
 
@@ -115,18 +118,23 @@ test("G13b: rule-shape facts pinned (PC-10, #306; documenting, real schema valid
   assert.equal(decide(world(paired, "allow"), remote).outcome, "deny");
   assert.equal(decide(world(paired, "allow"), flipped).outcome, "allow", "a marker-paired deny follows the fixture");
 
-  // fact 3 and the four inert shapes: 0 schema errors, never match; since S7-B the loader rejects three
+  // fact 3 and the inert shapes: 0 schema errors, never match a class record; since S7-B the loader rejects
+  // the misspelled marker and the marker-verb variants of the two target shapes. The target-only forms
+  // load (Issue #328: a shell redirect can emit such a target, so the rule can match), as does the
+  // legacy-verb form (Issue #329).
   const inert: { label: string; rule: Rule; loaderRejects: boolean }[] = [
     { label: "misspelled marker verb", rule: { id: "i-typo", effect: "deny", verbs: ["tool-class:remote-mutatin"] }, loaderRejects: true },
-    { label: "server target without the trailing slash", rule: { id: "i-noslash", effect: "deny", targets: ["mcp/standin-x"] }, loaderRejects: true },
+    { label: "server target without the trailing slash", rule: { id: "i-noslash", effect: "deny", targets: ["mcp/standin-x"] }, loaderRejects: false },
+    { label: "marker verb plus a server target without the trailing slash", rule: { id: "i-noslash-marker", effect: "deny", verbs: ["tool-class:remote-mutating"], targets: ["mcp/standin-x"] }, loaderRejects: true },
     { label: "legacy mutating verbs plus the mcp target prefix", rule: { id: "i-legacy", effect: "deny", verbs: ["write", "execute"], targets: ["mcp/standin-x/"] }, loaderRejects: false },
-    { label: "declared server name instead of the sanitized runtime name", rule: { id: "i-declared", effect: "deny", targets: ["mcp/standin x/"] }, loaderRejects: true },
+    { label: "declared server name instead of the sanitized runtime name", rule: { id: "i-declared", effect: "deny", targets: ["mcp/standin x/"] }, loaderRejects: false },
+    { label: "marker verb plus the declared server name instead of the sanitized runtime name", rule: { id: "i-declared-marker", effect: "deny", verbs: ["tool-class:remote-mutating"], targets: ["mcp/standin x/"] }, loaderRejects: true },
   ];
   for (const { label, rule, loaderRejects } of inert) {
     assert.equal(validates([rule]), 0, `${label}: schema-valid (schema.ts validates verbs and targets as string arrays only)`);
     assert.equal(decide(world([rule], "allow"), remote).outcome, "allow", `${label}: never matches, so the call is allowed silently`);
     const loaded = loadsAsProjectRule(rule);
-    assert.equal(loaded.ok, !loaderRejects, `${label}: the loader ${loaderRejects ? "rejects it" : "still loads it (documented, never matches a class record)"}; got ${JSON.stringify(loaded)}`);
+    assert.equal(loaded.ok, !loaderRejects, `${label}: the loader ${loaderRejects ? "rejects it" : "still loads it (it can match a shell-emitted record; it never matches a class record)"}; got ${JSON.stringify(loaded)}`);
     if (loaderRejects) assert.ok(loaded.message.includes(JSON.stringify(rule.id)), `${label}: the failure names the rule id; got ${loaded.message}`);
   }
   // controls: the correct shapes DO match

@@ -7,16 +7,29 @@
 // Three checks, applied per ELEMENT of `verbs` and `targets` (a rule listing one valid and one mistyped
 // marker is rejected, because the mistyped element is inert):
 //   V1  a verb that starts with the class-marker prefix and is not one of the class markers.
-//   V2  a target that is the MCP target prefix plus a server name with no "/" after it: no record's
-//       target is a server alone (tool records are prefix/server/tool), and a pattern without a
-//       trailing "/" matches exactly, so it can never match.
+//   V2  a target that is the MCP target prefix plus a server name with no "/" after it: no CLASS record's
+//       target is a server alone (class records are prefix/server/tool), and a pattern without a
+//       trailing "/" matches exactly, so it can never match a class record.
 //   V3  a target under the MCP prefix whose server segment (up to the first "/") is not an admitted
 //       server name (empty, or outside the pattern the server index admits with): the runtime never
 //       presents such a name to a class record.
+//
+// V2 AND V3 APPLY ONLY TO A RULE WITH AT LEAST ONE VERB WHOSE VERBS ARE ALL CLASS MARKERS (S7-B fix-now
+// H1, Issue #328, Manager ruling). The target namespace under the MCP prefix is SHARED with the shell
+// normalizer, which emits a redirect target verbatim: a redirect into a directory named like the prefix
+// (a dot or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a real
+// emitted record and the kernel matches a deny rule on it. Only a marker verb is unreachable from the
+// shell (the markers are not in KNOWN_VERBS), so only a marker-only rule provably cannot match a
+// shell-emitted record. A rule with no verbs, a legacy verb, or a mix can, and is never rejected by V2
+// or V3. R2-13 (loader-reachability.test.ts) proves both halves against the real shell normalizer and
+// kernel. Accepted cost: an operator's inert target-only or legacy-verb rule on a mistyped server target
+// loads silently (the residual of Issues #328 and #329, routed to the activation story).
+//
 // NOT rejected, on purpose: the bare MCP prefix (matches every MCP target), a server plus trailing "/",
-// a server plus tool, and the legacy mutating verbs plus an MCP target (matches only shell-forged
-// records; documented in tool-class-format.ts, rule-author fact 4). A verb that does not start with the
-// marker prefix is out of scope (docs/backlog.md).
+// a server plus tool, and the legacy mutating verbs plus an MCP target (shape c: matches only
+// shell-emitted records and never a class record; documented in tool-class-format.ts, rule-author fact 4,
+// and a disclosed residual, Issue #329). A verb that does not start with the marker prefix is out of scope
+// (docs/backlog.md).
 //
 // The vocabulary (marker prefix, marker table, target prefix, server-name pattern) is IMPORTED from the
 // grammar file, never retyped: rule-reachability.test.ts scans this file for a retyped literal and
@@ -49,6 +62,13 @@ function checkVerb(ruleId: string, verb: string, field: string): ReachabilityErr
   ];
 }
 
+/** True when the rule has at least one verb and every verb is a class marker: the only kind of rule that
+ * cannot match a record a shell (or cluster) normalizer emits. No verbs field, or an empty array, matches
+ * EVERY verb and is therefore reachable from the shell. */
+function hasOnlyMarkerVerbs(verbs: readonly string[] | undefined): boolean {
+  return verbs !== undefined && verbs.length > 0 && verbs.every((v) => MARKERS.includes(v));
+}
+
 function checkTarget(ruleId: string, target: string, field: string): ReachabilityError[] {
   if (!target.startsWith(MCP_TARGET_PREFIX)) return [];
   const rest = target.slice(MCP_TARGET_PREFIX.length);
@@ -76,7 +96,9 @@ export function checkRuleReachability(ruleSet: RuleSet): ReachabilityError[] {
   const errors: ReachabilityError[] = [];
   ruleSet.rules.forEach((rule, i) => {
     (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`)));
-    (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`)));
+    if (hasOnlyMarkerVerbs(rule.verbs)) {
+      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`)));
+    }
   });
   return errors;
 }

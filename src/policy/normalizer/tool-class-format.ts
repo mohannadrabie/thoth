@@ -25,16 +25,24 @@
 //   2. A marker-paired deny follows the fixture (flip the class and it stops matching). An
 //      identity-keyed deny (a target like mcp/<server>/, no marker) survives the flip. "This server
 //      is always denied" is an identity-keyed deny; "this class is denied" is a marker rule.
-//   3. A shell redirect can forge an identity TARGET string, so an ALLOW rule keyed on identity MUST
-//      also carry the marker verb. A deny rule may be target-only: a forged match only denies.
+//   3. The shell normalizer's redirect targets share the "mcp/" namespace: it emits a redirect target
+//      verbatim, so a redirect into a directory named "mcp" (any relative path under it, including a dot
+//      or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a REAL emitted
+//      record with a target that looks like an identity target. So an ALLOW rule keyed on identity MUST
+//      also carry the marker verb (only a class record carries one). A deny rule may be target-only: a
+//      match on such a shell record only denies.
 //   4. The rule schema accepts any string, so it cannot see the four natural inert deny shapes: a
 //      misspelled marker; a server target without the trailing slash (the kernel matches a target
 //      exactly unless the pattern ends in "/"); the legacy mutating verbs plus the mcp target prefix;
 //      the DECLARED server name instead of the sanitized runtime name. Since S7-B (Issue #306) the
 //      loader rejects three of them as `schema-invalid` load errors (src/policy/config/rule-
-//      reachability.ts: a misspelled marker, a server target with no trailing slash, a server segment
-//      that is not an admitted name). The fourth, the legacy mutating verbs plus an MCP target, still
-//      loads and never matches a class record (it matches only shell-forged records).
+//      reachability.ts): a misspelled marker, and, ONLY for a rule whose verbs are all class markers
+//      (Issue #328, because of fact 3), a server target with no trailing slash and a server segment that
+//      is not an admitted name. A target-only or legacy-verb rule on those targets loads, because it can
+//      match a shell-emitted record. The legacy mutating verbs plus an MCP target still load and never
+//      match a class record (they match only shell-emitted records); PT-12 is satisfied for the marker-
+//      verb shapes only, and this shape is a disclosed residual routed to the activation story (Issue
+//      #329).
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
 //      version. A bump needs a decisions row and a central-rule migration note.
 //
