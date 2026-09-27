@@ -36,18 +36,18 @@
 //      exactly unless the pattern ends in "/"); the legacy mutating verbs plus the mcp target prefix;
 //      the DECLARED server name instead of the sanitized runtime name. Since S7-B (Issue #306) the
 //      loader rejects three of them as `schema-invalid` load errors (src/policy/config/rule-
-//      reachability.ts): a misspelled marker, and, ONLY for a rule whose verbs are all class markers
-//      (Issue #328, because of fact 3), a server target with no trailing slash and a server segment that
-//      is not an admitted name. A target-only or legacy-verb DENY rule on those targets loads, because it
-//      can match a shell-emitted record and only denies more. Two shapes the S7-B rejection first skipped
-//      are now rejected too (S7-C, Issues #334 and #335): a verb list that holds a class marker and no
-//      verb any normalizer emits (a marker plus a stray verb: the kernel needs a shared verb, so only a
-//      class record can match, and none carries such a target), and an ALLOW rule with no verbs (absent or
-//      empty) on such a target, which would otherwise load and silently widen allow (the kernel returns
-//      allow for a real shell-emitted redirect record under that path). Fact 3 still applies to an allow
-//      rule keyed on a presentable server target: it must carry the marker verb (an allow without one is
-//      not rejected there, Issue #338). The legacy mutating verbs plus an MCP target still load and never
-//      match a class record (they match only shell-emitted records); PT-12 is satisfied for the marker-
+//      reachability.ts): a misspelled marker, and, for a server target with no trailing slash or a server
+//      segment that is not an admitted name, a rule in one of two scopes. Scope one is a verb list that
+//      holds a class marker and no verb a normalizer emits: markers only (Issue #328, because of fact 3) or
+//      a marker plus a stray verb (S7-C, Issue #334); the kernel needs a shared verb, so only a class record
+//      can match, and none carries such a target. Scope two is an ALLOW rule with no verbs, absent or empty
+//      (S7-C, Issue #335): on such a target it would load and silently widen allow, because the kernel
+//      returns allow for a real shell-emitted redirect record under that path. A target-only or legacy-verb
+//      DENY rule on those targets loads, because it can match a shell-emitted record and only denies more.
+//      Fact 3 still applies to an allow rule keyed on a presentable server target: it must carry the marker
+//      verb (an allow without one is not rejected there, Issue #338). The legacy mutating verbs plus an
+//      MCP target still load and never match a class record (they match only shell-emitted records); PT-12
+//      is satisfied for the marker-
 //      verb shapes only, and this shape is a disclosed residual routed to the activation story
 //      (Issue #329).
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no

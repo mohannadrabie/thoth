@@ -35,10 +35,12 @@
 //        never checked here: for a deny the same shape only denies more, which fails closed.
 // The emitted set is `KNOWN_VERBS` (the action catalog), imported and never retyped: the shell normalizer
 // emits a catalog verb plus the write verb (also in the catalog), the cluster normalizer a catalog verb, and
-// the tool-class normalizer only a marker. R2-8 scans this file for a retyped verb and R2-19 enumerates the
-// verbs the real normalizers emit at run time and fails if one is outside the catalog, so a normalizer that
-// someday emits a new verb fails a test instead of silently making this check unsound. Case is exact,
-// matching the kernel's verb comparison, so a case-variant of a catalog verb is a stray verb.
+// the tool-class normalizer only a marker. R2-8 scans this file for a retyped verb. R2-19 drives the three
+// registered normalizers (shell, cluster, tool-class) at run time and fails if one emits a verb outside the
+// catalog; that is the whole of its coverage. The normalizer registry is open by design (SE ADR-0021
+// POL-12) and has no enumeration, so a fourth normalizer that emits a verb outside KNOWN_VERBS would make
+// this check falsely reject a rule the kernel matches, and no test would notice. Issue #339 owns that gap.
+// Case is exact, matching the kernel's verb comparison, so a case-variant of a catalog verb is a stray verb.
 // R2-13 (loader-reachability.test.ts) proves the shared-namespace half against the real shell normalizer
 // and kernel.
 //
@@ -48,6 +50,14 @@
 // and a disclosed residual, Issue #329). A verb list with no class marker (only stray verbs, none a verb a
 // normalizer emits) is out of scope (docs/backlog.md), as is an allow rule keyed on a presentable server
 // target without a marker verb (Issue #338).
+//
+// THE SURVIVING SHAPES ARE NOT BENIGN FOR AN ALLOW EFFECT. For a deny, matching a shell-emitted record only
+// denies more. For an allow it is the widening the rejection above exists to stop, and three allow shapes
+// still load by ruling and CAN match a shell redirect record: an allow with a catalog verb (write) on a
+// server target the runtime never presents (R2-17 part 1 measures write as the one widening verb and part 3
+// pins the shape; Issue #340), an allow on a presentable server target that carries no marker verb
+// (Issue #338), and an allow with no verbs on the bare MCP prefix (Issue #338). Each is a disclosed residual
+// routed to the activation story (Issue #308), not a claim that the shape is safe.
 //
 // LAYER-AWARE UNLOCK (S7-B fix-now H6, Issue #333). Every message ends with an `Unlock:` clause naming what the
 // person who is BLOCKED can do. A shipped-defaults or project rule lives in a file the operator can edit, so
