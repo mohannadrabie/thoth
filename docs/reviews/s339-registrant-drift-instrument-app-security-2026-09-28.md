@@ -122,3 +122,36 @@ evidence: demonstrated=2 code-traced=4 derived=0
 checks="18/0/0|n/a"
 adr=HIT(2)
 report=docs/reviews/s339-registrant-drift-instrument-app-security-2026-09-28.md
+
+## Re-confirm -- 2026-09-28 (PR #350 fix-now round, commit 1c90d48, tip 30ab631)
+
+Scope: lightweight re-confirm, not a fresh full review. Confirms the fix-now round closes finding 1 (Issue #351) without introducing anything new. Diff base: 5710c88 (original review tip) to 30ab631 (current tip).
+
+(1) REGISTRANT_CALL and scan logic genuinely unchanged. Diffed 5710c88..30ab631 on src/policy/config/rule-reachability.test.ts directly, not trusting the commit message claim. Filtered the diff to non-comment lines: the only two non-comment lines touched are the two test title strings (wording only, same closing boundary both times). REGISTRANT_CALL = /registerNormalizer\s*\(\s*\{/ (near line 625), productionSrcFiles(), registrantFiles(), EXPECTED_REGISTRANTS, and both R2-21 assertion bodies do not appear in the diff at all -- zero-byte change. Evidence: demonstrated (ran a filtered diff isolating non-comment plus/minus lines):
+
+  -test("R2-21 part 1 registrant-scan-covers-exactly-three (...)", () => {
+  +test("R2-21 part 1 registrant-scan-covers-exactly-three-inline-literal-registrants (...)", () => {
+  -test("R2-21 part 2 fourth-registrant-detected self-test (...)", () => {
+  +test("R2-21 part 2 fourth-registrant-detected self-test (...)", () => {
+
+(2) New disclosed-residual wording accurately describes the demonstrated gap. The new header-comment paragraph and the REGISTRANT_CALL doc comment state: this instrument proves the set of registrants calling registerNormalizer with an inline object literal is exactly three; it does NOT prove there is no fourth registrant via a builder, factory, or any other non-literal call shape. This matches what was demonstrated (the registerNormalizer(makeEntry()) scratch-file false negative) -- not overstated (no claim to catch everything), not understated (the "or any other non-literal call shape" catch-all also covers the bare-identifier variant, e.g. registerNormalizer(SOME_CONST), mentioned but not separately demonstrated in the original report). One minor editorial note, not a new finding: the disclosed text does not separately name the aliased-import case (import registerNormalizer as reg ...; reg(...)), which evades detection by token-name mismatch rather than by literal-vs-non-literal shape -- that variant was mentioned in the original report prose but never independently demonstrated with a test run, and was not the crux of the filed Issue #351 or the condition set at the time. Not worth a new finding; noted for completeness only.
+
+(3) 18 tests still pass. Re-ran at tip 30ab631 (worktree reset to FETCH_HEAD after confirming the only uncommitted local change was a regenerable ADR-cache artifact, discarded before reset): node --test src/policy/config/rule-reachability.test.ts -> 18 pass, 0 fail, 0 skipped, 0 cancelled. R2-21 part 1 log line unchanged in substance: registrant call sites found are exactly the three real files.
+
+(4) Nothing else in the sensitive-area file changed beyond comments/titles. Confirmed by (1) above -- the full diff stat for this range touches CHANGELOG.md, docs/REVIEW_LOG.md, docs/STATE.md, two new persisted review report files, docs/run-log.jsonl, and rule-reachability.test.ts (comments and titles only, shown above). No other file under src/policy/ changed. The QA-15 self-trip fix (Issue #352, cross-domain-reviewer finding) touched only prose in docs/STATE.md and CHANGELOG.md verification sections -- restructuring two sentences so numerals are not adjacent across the word "of" -- no code, no secrets, no access-control surface; confirmed it does not touch anything in this domain review scope.
+
+Verdict: APPROVE-WITH-CONDITIONS -> APPROVE. Condition met: the narrower claim is now disclosed accurately in the test file itself, matching what was demonstrated. Issue #351 closed (state_reason: completed), comment posted.
+
+---
+
+RECEIPT (RE-CONFIRM, 2026-09-28): verdict=APPROVE
+findings (ALL of them, one terse line each):
+1. [CLEAN][demonstrated] src/policy/config/rule-reachability.test.ts -- diffed 5710c88..30ab631 line by line: only the two test() title strings and comments changed; REGISTRANT_CALL, productionSrcFiles(), registrantFiles(), walkProduction byte-identical.
+2. [CLEAN][code-traced] src/policy/config/rule-reachability.test.ts header and REGISTRANT_CALL doc comment -- new disclosed-residual wording accurately matches the demonstrated builder/factory-shape gap (Issue #351); condition met.
+3. [CLEAN][demonstrated] src/policy/config/rule-reachability.test.ts -- node --test at tip 30ab631: 18/18 pass, 0 fail, 0 skipped.
+4. [CLEAN][code-traced] whole diff 5710c88..30ab631 -- QA-15 self-trip fix (Issue #352, cross-domain finding) is prose-only in docs/STATE.md and CHANGELOG.md, no code, secrets or access-control impact, outside this domain but confirmed non-overlapping.
+counts: issues=0 suspicions=0 clean=4
+evidence: demonstrated=2 code-traced=2 derived=0
+checks="18/0/0|n/a"
+adr=HIT(2)
+report=docs/reviews/s339-registrant-drift-instrument-app-security-2026-09-28.md
