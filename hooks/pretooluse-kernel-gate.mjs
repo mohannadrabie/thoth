@@ -104,6 +104,11 @@ function readStdin() {
  * into a model-visible channel); anything else prints as the bare type `Error`. The exit runs in a finally
  * so that even a broken stderr cannot turn this into a non-blocking exit 1. The name lookup is inside the same
  * try: a thrown value whose `name` getter throws (app-security finding 1) reads as the bare type `Error`. */
+/**
+ * @param {string} what
+ * @param {any} err — deliberately untyped: a thrown value can be any shape, including one whose
+ *   `name` getter itself throws (app-security finding 1), so this reads it defensively.
+ */
 function failClosed(what, err) {
   try {
     let name = "Error";
@@ -123,6 +128,7 @@ const STDOUT_FAILED = "decision could not be written to stdout";
 
 /** Writes the decision and resolves only when the stream reports it flushed. A failed write (the callback
  * receives an error) fails closed here, so a decided deny that never reached the reader is never an exit 0. */
+/** @param {string} text */
 function writeStdout(text) {
   return new Promise((resolvePromise) => {
     process.stdout.write(text, (err) => (err ? failClosed(STDOUT_FAILED, err) : resolvePromise(undefined)));
@@ -170,6 +176,7 @@ async function main() {
     // failure), and renderHookOutput maps it to what this script writes. A port that throws (for example a
     // malformed fixture) propagates to the catch below: exit 2.
     const ports = {
+      /** @returns {import("../src/policy/gate/decide-tool-call.ts").GatePolicyResult} */
       loadPolicy() {
         const loaded = loader.loadEffectivePolicy({
           shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,

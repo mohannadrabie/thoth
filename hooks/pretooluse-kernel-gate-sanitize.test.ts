@@ -66,3 +66,44 @@ test("AC-8: a hostile project-rule id (no rationale, the kernel's id-fallback re
   assert.equal(reason, `denied by rule ${HOSTILE_VISIBLE}`, "the id-fallback reason must carry the sanitized id, not the raw hostile id");
   assert.ok(!reason.includes("\u001b"), "no raw ESC byte may reach the hook's real stdout");
 });
+
+// Issue #360 fix-now (red-team F3, 2026-09-28): the LOAD-BEARING guard against a conditional
+// bypass (AC-7 in sanitize.test.ts is a cheap source-text smoke check only, per that test's own
+// header). This is behavioral, against the REAL shipped hook (spawned, not mutated), across a set
+// of arbitrary environment variables including the exact name red-team's drill used
+// (THOTH_RAW_REASON) plus unrelated ones, to prove sanitization does not depend on ambient
+// environment state today.
+test("AC-9: the hook sanitizes a hostile rationale unconditionally, regardless of environment variables (behavioral drift guard, not a source-text pattern)", () => {
+  const envCases: NodeJS.ProcessEnv[] = [{}, { THOTH_RAW_REASON: "1" }, { THOTH_RAW_REASON: "true" }, { NODE_ENV: "production" }, { THOTH_DEBUG: "1" }];
+  for (const env of envCases) {
+    const sb = createGateSandbox();
+    const name = firstCommittedEntryName();
+    sb.writeProjectPolicy(
+      policyOf([{ id: "s312-ac9-hostile-rationale", effect: "deny", verbs: [MARKER_REMOTE_MUTATING], targets: [`mcp/${name}/`], rationale: HOSTILE }]),
+    );
+    const denied = sb.mcp(name, "x", env);
+    assertPolicyDenied(denied, `mcp__${name}__x with env=${JSON.stringify(env)}`);
+    const reason = denyReason(denied);
+    assert.equal(reason, HOSTILE_VISIBLE, `env=${JSON.stringify(env)}: the hook's stdout must be sanitized regardless of environment`);
+    assert.ok(!reason.includes("\u001b"), `env=${JSON.stringify(env)}: no raw ESC byte may reach the hook's real stdout`);
+    assert.ok(!reason.includes("\u0000"), `env=${JSON.stringify(env)}: no raw NUL byte may reach the hook's real stdout`);
+  }
+});
+
+// Issue #360 fix-now (red-team F4, 2026-09-28): no PR test pinned a LONG hostile reason; a
+// length-gated skip (`reason.length > 1000 ? reason : sanitize(reason)`) passed every existing test
+// and leaked raw ESC/NUL end-to-end at 1632 characters. This fixture exceeds that measured length.
+test("AC-10: a very long hostile rationale (over 1632 characters) is sanitized end-to-end through the real hook, not skipped by a length-gated bypass", () => {
+  const sb = createGateSandbox();
+  const name = firstCommittedEntryName();
+  const longHostile = HOSTILE.repeat(Math.ceil(2000 / HOSTILE.length));
+  assert.ok(longHostile.length > 1632, `fixture must exceed red-team's drill length; got ${longHostile.length}`);
+  sb.writeProjectPolicy(
+    policyOf([{ id: "s312-ac10-long-hostile-rationale", effect: "deny", verbs: [MARKER_REMOTE_MUTATING], targets: [`mcp/${name}/`], rationale: longHostile }]),
+  );
+  const denied = sb.mcp(name, "x");
+  assertPolicyDenied(denied, `mcp__${name}__x with a ${longHostile.length}-char hostile rationale`);
+  const reason = denyReason(denied);
+  assert.ok(!reason.includes("\u001b"), `${longHostile.length}-char reason: no raw ESC byte may reach the hook's real stdout`);
+  assert.ok(!reason.includes("\u0000"), `${longHostile.length}-char reason: no raw NUL byte may reach the hook's real stdout`);
+});

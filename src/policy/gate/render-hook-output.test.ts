@@ -95,6 +95,24 @@ test("AC-4: renderHookOutput: a reason that sanitizes to empty is fail-closed (e
   }
 });
 
+// AC-10 (Issue #360 fix-now, red-team F4): no test pinned a LONG hostile reason, so a length-gated
+// skip (`reason.length > 1000 ? reason : sanitize(reason)`) passed 22/22 while leaking raw ESC at
+// 1632 chars end-to-end (hooks/pretooluse-kernel-gate-sanitize.test.ts's own AC-10 covers that
+// real-hook path). This is the unit-level pin, straddling the plausible bound the sibling file
+// already carries (decide-tool-call.ts's REASON_NAME_CAP = 512).
+test("AC-10: a hostile reason is sanitized at every length — 10, 1000 and 100000 characters (no length-gated skip)", () => {
+  const esc = "\u001b[31m";
+  for (const targetLen of [10, 1000, 100_000]) {
+    const body = "X".repeat(targetLen - esc.length);
+    const reason = esc + body;
+    const out = renderHookOutput(verdict("deny", reason) as never, sanitizeForTerminal);
+    assert.equal(out.exitCode, 0, `length ${targetLen}: must still deny, not fail closed`);
+    const cleaned = parsedDeny(out.stdout).permissionDecisionReason as string;
+    assert.equal(cleaned, `[31m${body}`, `length ${targetLen}: the ESC byte must be stripped and the rest kept, at every length`);
+    assert.ok(!cleaned.includes("\u001b"), `length ${targetLen}: no raw ESC must survive`);
+  }
+});
+
 test("G20: renderHookOutput: every odd shape is exit 2 with stderr and no stdout, never silent: outcome ask, undefined, null, unknown kind, refusal without a reason, verdict with an empty reason on deny, non-object", () => {
   const odd: unknown[] = [
     verdict("ask"),

@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 import { sanitizeForTerminal } from "./sanitize.ts";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -100,16 +101,68 @@ test("sanitize class literal matches userpromptsubmit-halt-relay.mjs", () => {
 // a different shape: it fails loud if a future refactor quietly drops the import (or the call site
 // that passes it to renderHookOutput), which would silently reopen the Issue #312 hole with zero
 // signal from the two-way literal comparison above.
-test("Issue #312: hooks/pretooluse-kernel-gate.mjs imports and wires sanitizeForTerminal from this module", () => {
+//
+// Issue #360 fix-now (red-team F3, 2026-09-28): the ORIGINAL AC-7 matched
+// `renderHookOutput\([\s\S]*?\.sanitizeForTerminal\)` — unbounded across the whole file, satisfied
+// by the literal text `.sanitizeForTerminal)` appearing ANYWHERE after a `renderHookOutput(`. An
+// env-gated ternary bypass (`renderHookOutput(x, cond ? identity : sanitizeMod.sanitizeForTerminal)`)
+// still contains that substring and passed, while leaking raw ESC/NUL through the real hook. AC-7
+// is now an AST check (the TypeScript parser can parse plain ESM `.mjs`, per kernel-purity-check.ts's
+// own precedent): it finds the real `renderHookOutput(...)` call and requires its second argument to
+// UNCONDITIONALLY resolve to `*.sanitizeForTerminal` — either directly, or via exactly one local
+// `const` alias assignment (a benign hoist, red-team's own drill M9, is accepted) — with no
+// ternary/conditional/function-wrapper in between. This is still a cheap SOURCE-TEXT smoke check,
+// not the load-bearing guard: AC-9 below (a real, spawned-hook behavioral test with env vars set and
+// unset) is what actually proves the sanitizer fires unconditionally at runtime.
+function isSanitizeForTerminalAccess(expr: ts.Expression): boolean {
+  return ts.isPropertyAccessExpression(expr) && expr.name.text === "sanitizeForTerminal";
+}
+
+/** Resolves `expr` to `*.sanitizeForTerminal`, directly or via exactly one local `const` alias
+ * assignment found anywhere in `sourceFile` — never through a ternary, call, or other operator. */
+function resolvesToSanitizeForTerminal(expr: ts.Expression, sourceFile: ts.SourceFile, seen = new Set<string>()): boolean {
+  if (isSanitizeForTerminalAccess(expr)) return true;
+  if (!ts.isIdentifier(expr) || seen.has(expr.text)) return false;
+  seen.add(expr.text);
+  let initializer: ts.Expression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === expr.text && node.initializer) {
+      initializer = node.initializer;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return initializer !== undefined && resolvesToSanitizeForTerminal(initializer, sourceFile, seen);
+}
+
+/** The second argument of the first `renderHookOutput(...)` call found in `sourceFile`, or undefined. */
+function findRenderHookOutputSecondArg(sourceFile: ts.SourceFile): ts.Expression | undefined {
+  let result: ts.Expression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (result) return;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "renderHookOutput") {
+      result = node.arguments[1];
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
+test("AC-7: hooks/pretooluse-kernel-gate.mjs unconditionally wires sanitizeForTerminal as renderHookOutput's second argument (no conditional/ternary bypass; a local-alias hoist is accepted)", () => {
   const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
   assert.match(
     hook,
     /import\(\s*["']\.\.\/src\/policy\/config\/sanitize\.ts["']\s*\)/,
     "hooks/pretooluse-kernel-gate.mjs must dynamically import ../src/policy/config/sanitize.ts",
   );
-  assert.match(
-    hook,
-    /renderHookOutput\([\s\S]*?\.sanitizeForTerminal\)/,
-    "hooks/pretooluse-kernel-gate.mjs must pass sanitizeForTerminal as renderHookOutput's second argument",
+  const sourceFile = ts.createSourceFile("pretooluse-kernel-gate.mjs", hook, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const secondArg = findRenderHookOutputSecondArg(sourceFile);
+  assert.ok(secondArg, "no renderHookOutput(...) call with a second argument found");
+  assert.ok(
+    resolvesToSanitizeForTerminal(secondArg, sourceFile),
+    "hooks/pretooluse-kernel-gate.mjs must pass an UNCONDITIONAL reference to sanitizeForTerminal (directly, or via one local " +
+      `alias assignment) as renderHookOutput's second argument — no ternary/conditional. Got: ${hook.slice(secondArg.getStart(sourceFile), secondArg.getEnd())}`,
   );
 });

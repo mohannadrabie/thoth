@@ -140,12 +140,52 @@ const FORBIDDEN_GLOBAL_PATTERNS: { name: string; re: RegExp }[] = [
 /**
  * Heuristic-only comment stripping (documented as such, not claimed exhaustive — this repo's own
  * completeness-claim-checker.ts sets this precedent). Removes `/* ... *\/` block comments and
- * `//` line comments before the forbidden-globals scan, so a header comment that quotes ADR-0021
- * prose ("no filesystem, network, or process access") does not false-positive on the word
- * "process" appearing in English text rather than in real code.
+ * `//` line comments before the forbidden-globals and import-specifier scans, so a header comment
+ * that quotes ADR-0021 prose ("no filesystem, network, or process access") does not false-positive
+ * on the word "process" appearing in English text rather than in real code.
+ *
+ * Issue #359/#312 fix-now (red-team F1/F2, 2026-09-28): the ORIGINAL implementation was two
+ * sequential regex passes — strip every `/* *\/` block first, THEN strip every `//` line — which
+ * let the two interact: a `//` line comment whose text happens to contain a `/*`-shaped substring
+ * (e.g. a glob written in prose, `src/policy/kernel/**`) was read by the block-comment pass as a
+ * REAL block-comment opener, before the line-comment pass ever ran, and the fake block then
+ * swallowed every real line of code up to the next unrelated `*\/` (a JSDoc closer, in the
+ * demonstrated case) — silently, with no scan anywhere reporting a hole. `qa:kernel-purity` and
+ * this same helper's other consumers (gate-structure.test.ts's G11/G11b/G15/G18,
+ * normalizer-registry-purity-check.ts) all depend on this function seeing every real import and
+ * every real forbidden-global token; a blind spot here made every one of them pass a planted
+ * `node:fs` import in the kernel and a planted filesystem write, undetected across the whole
+ * 1504-test suite.
+ *
+ * FIX: a single left-to-right scan, not two independent regex passes. Whichever comment-opener
+ * (`//` or `/*`) is encountered FIRST in the raw text is the one that fires; once inside either
+ * comment kind, the other kind's opener is never inspected (a `/*` inside a `//` line is just
+ * text, exactly as a `//` inside a `/* *\/` block is just text) — so the two strips can no longer
+ * interact in either direction, which the two-pass version could not guarantee for either order.
+ * Same net stripping behavior as before for every well-formed, non-interacting input (block
+ * comments are still removed in full, including embedded newlines; line comments still stop
+ * before, not consuming, the trailing newline) — verified by the pre-existing stripComments unit
+ * tests below, unchanged.
  */
 export function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    if (source[i] === "/" && source[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    if (source[i] === "/" && source[i + 1] === "/") {
+      const nl = source.indexOf("\n", i + 2);
+      i = nl === -1 ? n : nl; // stop right before the newline; the next loop iteration appends it
+      continue;
+    }
+    out += source[i];
+    i++;
+  }
+  return out;
 }
 
 export function scanForbiddenGlobals(source: string): { name: string }[] {

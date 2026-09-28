@@ -85,6 +85,32 @@ const STORY_TEST_FILES = [
   "src/policy/config/loader-reachability.test.ts",
 ];
 
+// Issue #359/#312 fix-now (red-team F1, named proof-test): a `//` comment that happens to contain a
+// `/*`-shaped substring must not silently widen the hole stripComments leaves — this fails loud if
+// it ever does, instead of every G11/G11b/G15/G18 scan above staying silently blind to real code a
+// header comment accidentally hid. `lineFirstThenBlock` is an INDEPENDENT re-implementation of the
+// naive two-pass order (strip `//` first, THEN strip `/* */`) — not a call into stripComments
+// itself — so a future regression that reopens the interaction (in either direction: a `//` eating
+// into a real block comment, or a `/*` inside a `//` line eating real code) shows up as a length
+// mismatch between the two differently-reasoned implementations, on the REAL files, not a
+// synthetic fixture.
+function lineFirstThenBlock(source: string): string {
+  return source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+test("G21: every gate source is fully visible to the structural scanner (no // comment opens an unterminated block comment)", () => {
+  for (const { file, source } of gateSources()) {
+    const strippedLen = stripComments(source).length;
+    const otherOrderLen = lineFirstThenBlock(source).length;
+    assert.equal(
+      strippedLen,
+      otherOrderLen,
+      `${file}: stripComments (${strippedLen} chars) disagrees with an independently-ordered strip (${otherOrderLen} chars) — ` +
+        "a // comment is opening a real block comment (or vice versa) and swallowing real code",
+    );
+  }
+});
+
 test("G19: no literal fixture entry name in this story's new test files (PC-11): the forbidden names are derived from the committed fixture at run time", () => {
   const fixture = JSON.parse(readFileSync(join(REPO_ROOT, "docs", "qa", "s5-central-classification.json"), "utf8")) as { centralLayer: { tools: { name: string }[] }; knownConnectors: string[] };
   const forbidden = [...fixture.centralLayer.tools.map((t) => t.name), ...fixture.knownConnectors];
