@@ -353,16 +353,17 @@ test("R1-6 single-merge-site: the only production files naming the merge or the 
 //   B. holds a standalone path string literal ending in the fixture file name AND a file-read primitive;
 //   C. names ANY runtime export of the fixture module (enumerated from the live module, not typed here);
 //   D. calls import() or require() with a specifier it cannot resolve statically;
-//   E. (R1-6d, Issue #332) uses node:module's createRequire, strictly matched (an import binding or a
-//      call, never a bare substring in a comment/string) -- the funnel needs none of it, so ANY
-//      production use is flagged regardless of aliasing or specifier shape.
+//   E. (R1-6d, Issue #332) uses node:module's createRequire via a static import-clause binding or a
+//      direct/property call, strictly matched (never a bare substring in a comment/string) -- the
+//      funnel needs none of it, so a production use in EITHER shape is flagged. Two further access
+//      shapes are NOT covered by this leg; see the RESIDUAL note below.
 // Allowed: the fixture module itself and classification-catalog.ts (the funnel), plus the one reviewed file
 // that only COPIES the fixture into a scratch tree (B). The self-test proves a synthetic bypass fails the leg
 // built for it and the controls pass; the red-team mutant (a production module reading DEFAULT_FIXTURE_PATH)
 // is killed through the mutation-harness engine (recorded in the build report, not committed).
 //
-// RESIDUAL, DISCLOSED (red-team round 2, Issue #332; this scan is a labelled heuristic, not a proof, and
-// R1-6d below closes only part of it). Legs B and D key on token spellings: the names of the file-read
+// RESIDUAL, DISCLOSED (red-team round 2, Issue #332, narrowed but NOT closed by R1-6d below -- this scan
+// is a labelled heuristic, not a proof). Legs B and D key on token spellings: the names of the file-read
 // primitives (FILE_READ_PRIMITIVE) and the two literal spellings of a module-loading call (import(...) and
 // require(...)). So ANY loading or reading call whose token spelling this scan does not enumerate is
 // invisible to it -- the underlying class is the token-spelling gap itself, not any one instance of it, and
@@ -372,15 +373,28 @@ test("R1-6 single-merge-site: the only production files naming the merge or the 
 // on a PLAIN, unsplit literal path to the fixture (it needs no read primitive and no parse call, so leg B
 // never fires, and a literal specifier never fires leg D); (3) a read through the promise-based file-handle
 // API with a file name assembled from string pieces; (4) a synchronous read with a file name assembled from
-// string pieces. R1-6d below adds leg E and closes shapes (1) and (2), the createRequire class. Shapes (3)
-// and (4) stay open and disclosed, without a dedicated tracking Issue (an accepted, standing limitation of a
-// token-spelling heuristic, same category as this file's own R1-6 -> R1-6b precedent): a path literal split
+// string pieces. R1-6d below adds leg E and closes shapes (1) and (2), the createRequire class, for its two
+// covered access forms (a static import-clause binding, a direct or `.`-property call). Shapes (3) and (4)
+// stay open, now tracked as Issue #355 (Stage-3 round-1 cross-domain-reviewer finding): a path literal split
 // across string pieces is one instance of the token-spelling gap leg E does not touch, not the whole class,
 // and neither shape needs a module-loading helper at all -- closing them needs new primitive names in
-// FILE_READ_PRIMITIVE or a structural rewrite of legs B/D, not an addition like E. Separately, Issue #332's
-// sibling suspicion R1-6c one-catalog-source stays open, deferred to Issue #308's activation precondition
-// list per that Issue's own scope: nothing pins that every catalog handed to the gate came from
-// assembleCatalog; a hand-built catalog needs neither the merge nor the fixture and satisfies R1-6 and R1-6b.
+// FILE_READ_PRIMITIVE or a structural rewrite of legs B/D, not an addition like E.
+//
+// (5)/(6), DISCLOSED (Stage-3 round-1, app-security-reviewer finding, same session as R1-6d): leg E's own
+// two matched forms still miss two more createRequire access shapes -- (5) bracket/computed-property access
+// on the node:module namespace object, e.g. `nm["createRequire"](...)`, no `.` before the property name so
+// the `.createRequire` alternative never fires, and no `createRequire(` substring either since the literal
+// is quoted; (6) a dynamic `import()` destructured with a rename, e.g.
+// `const { createRequire: mk } = await import("node:module")`, which is neither a static `import { } from`
+// clause (leg E's first alternative) nor a `createRequire(`/`.createRequire` call site (its other two).
+// Ruled, same session, same precedent as Issue #351 on the sibling #339 story: disclose, do not chase every
+// further JS access shape with more regex complexity (simplicity over polish) -- no dedicated tracking
+// Issue, same treatment as shapes (3)/(4) carried before Issue #355 existed for them.
+//
+// Separately, Issue #332's sibling suspicion R1-6c one-catalog-source stays open, deferred to Issue #308's
+// activation precondition list per that Issue's own scope: nothing pins that every catalog handed to the
+// gate came from assembleCatalog; a hand-built catalog needs neither the merge nor the fixture and satisfies
+// R1-6 and R1-6b.
 import * as fixtureModule from "./central-classification.ts";
 import { DEFAULT_FIXTURE_PATH } from "./central-classification.ts";
 import { basename, dirname, posix } from "node:path";
@@ -403,10 +417,13 @@ const FILE_READ_PRIMITIVE = /\b(readFileSync|readFile|createReadStream|readSync|
 // never fires; and when the loader is aliased and its specifier assembled, leg A (importers), leg C
 // (symbolHolders, since the reached property is a runtime-computed key, not a literal export-name
 // token) and leg D (unresolvableImports, since the call site is the alias, never the literal `import(`
-// or `require(` token) all miss it too. The funnel needs none of this, so ANY production use of the
-// helper is flagged, matched strictly (an import binding or a call), never as a bare substring, so a
-// file that only MENTIONS the name in prose (a comment, stripped; a hint string with no call/import) is
-// not flagged -- same discipline the other legs' controls already prove for their own tokens.
+// or `require(` token) all miss it too. The funnel needs none of this, so a production use of the helper
+// as a static import-clause binding, a direct call, or a `.`-property call is flagged -- matched
+// strictly, never as a bare substring, so a file that only MENTIONS the name in prose (a comment,
+// stripped; a hint string with no call/import) is not flagged, same discipline the other legs' controls
+// already prove for their own tokens. NOT flagged: bracket/computed-property access on the node:module
+// namespace, and a destructured dynamic import() with a rename -- disclosed residual (5)/(6) above, ruled
+// disclose-not-chase, same as shapes (3)/(4).
 const MODULE_LOADING_HELPER = /\bimport\s*\{[^}]*\bcreateRequire\b[^}]*\}\s*from|\bcreateRequire\s*\(|\.createRequire\b/;
 
 interface Scanned {
