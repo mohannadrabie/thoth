@@ -3,7 +3,12 @@
 // R2-1 to R2-4 and R2-6 to R2-8). story-implementer's own tests, written failing first. The loader-level
 // half (R2-5, R2-9, R2-10) is loader-reachability.test.ts. S7-C (Issues #334 and #335,
 // docs/plans/s7c-reachability-residuals-phase1-2026-09-27.md) adds R2-16, R2-17, R2-19 and R2-20, extends
-// R2-8 and REPLACES one R2-12 row (see that test).
+// R2-8 and REPLACES one R2-12 row (see that test). Issue #339 (s7c-reachability-residuals-cross-domain-
+// 2026-09-27.md finding 1; docs/decisions.md's second 2026-09-27 row, item (b)) adds R2-21: the three
+// normalizers R2-19 drives are hard-coded in that test, while the registry is open by design (SE ADR-0021
+// POL-12); R2-21 proves, by a live scan of production files, that R2-19's coverage still matches every real
+// registerNormalizer call site, so a silently-added fourth registrant is caught rather than making R2-19
+// falsely reject a matchable rule with nothing noticing.
 //
 // Three checks, applied per element of `verbs` and `targets`:
 //   V1 a verb starting with the class-marker prefix that is not one of the three markers;
@@ -26,9 +31,9 @@
 // NAMES. Stand-in server names only; committed fixture names are read at run time (G19).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRuleReachability, type ReachabilitySource } from "./rule-reachability.ts";
 import { loadEffectivePolicy, type FailedLayerName, type LoadResult } from "./loader.ts";
@@ -570,4 +575,115 @@ test("R2-20 mixed-list-message-wording (Issue #334, AC-334-8): for a marker plus
   }
   console.log(`R2-20: ${String(messages)} messages checked`);
   assert.deepEqual(problems, []);
+});
+
+// --- R2-21 (Issue #339): R2-19's drift coverage matches every real registrant, not a hard-coded three ---
+//
+// s7c-reachability-residuals-cross-domain-2026-09-27.md finding 1 (MED, demonstrated): R2-19 collects
+// emitted verbs from exactly three fixed tool types (emittedCorpus() plus explicit cluster/shell probes); the
+// normalizer registry (src/policy/normalizer/registry.ts) is open by design (SE ADR-0021 POL-12, no
+// enumeration function), so nothing pinned that those three are still the whole set. The reviewer's own
+// minimal fix (finding 1's last bullet): "add one instrument ... that scans production files under src for a
+// registerNormalizer call, excluding registry.ts and tests, asserts the set equals the three modules the
+// test drives, and fails naming the new file (a labelled heuristic, worded as one, in the style of R1-6b,
+// Issue #332)". That is what this section builds. Residual, disclosed (same convention as R1-6b's own
+// residual): this keys on FILE identity, not on the `toolType` string each call registers (today those
+// coincide except structured-cluster.ts registers toolType "cluster") — a hypothetical second
+// registerNormalizer call added INSIDE one of the three existing files would not be caught by a file-set
+// check alone. No such shape exists today (each file is single-purpose, one call at the bottom, matching
+// ADR-0021's per-tool-type-by-declaration model); AC-1's own wording ("scans production files ... for every
+// registerNormalizer call site") and the reviewer's minimal fix are both file-set shaped, so the fix stays
+// minimal rather than adding a second, more invasive keying scheme.
+//
+// SECOND RESIDUAL, DISCLOSED (Issue #351, app-security-reviewer APPROVE-WITH-CONDITIONS, demonstrated with a
+// real scratch file): REGISTRANT_CALL only recognizes an INLINE-OBJECT-LITERAL call — `registerNormalizer({
+// ... })`, the one shape all three real registrants use today. A builder/factory-shaped call —
+// `registerNormalizer(makeEntry())`, passing a pre-built value through a function call or a variable rather
+// than a literal — is silently invisible to it. Manager's ruling: do not broaden the regex to chase
+// arbitrary call shapes (open-ended, diminishing returns, against this project's simplicity-over-polish
+// convention); state the narrower claim plainly instead. So, stated plainly: this instrument proves the set
+// of registrants calling `registerNormalizer` with an inline object literal is exactly three; it does NOT
+// prove there is no fourth registrant calling it through a builder, factory, or any other non-literal call
+// shape. Combined with the first residual above, R2-21 covers "a new file, calling registerNormalizer the
+// same way the three real ones already do" — not every conceivable way to add a registrant.
+const REGISTRY_MODULE_REL = "src/policy/normalizer/registry.ts";
+const REPO_ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+
+interface RegistrantScanFile {
+  rel: string;
+  text: string;
+}
+
+/** Every .ts/.mjs/.js file under `dir`, recursing, skipping node_modules/.git and any *.test.* file
+ * (mirrors classification-builtin-override.test.ts's own walk(), the R1-6b precedent). */
+function walkProduction(dir: string, out: string[]): void {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === ".git") continue;
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) walkProduction(full, out);
+    else if (/\.(ts|mjs|js)$/.test(name) && !/\.test\.(ts|mjs|js)$/.test(name)) out.push(full);
+  }
+}
+
+/** Production files under src/, excluding registry.ts itself (the `registerNormalizer` declaration site;
+ * *.test.* files are already excluded by walkProduction). */
+function productionSrcFiles(): RegistrantScanFile[] {
+  const files: string[] = [];
+  walkProduction(join(REPO_ROOT, "src"), files);
+  return files
+    .map((f) => relative(REPO_ROOT, f).replaceAll("\\", "/"))
+    .filter((rel) => rel !== REGISTRY_MODULE_REL)
+    .sort()
+    .map((rel) => ({ rel, text: readFileSync(join(REPO_ROOT, rel), "utf8") }));
+}
+
+/** A real registerNormalizer CALL site, INLINE-OBJECT-LITERAL SHAPE ONLY: the token immediately followed by
+ * "(" and then "{" (every real registrant passes one NormalizerEntry object literal this way today — see
+ * shell.ts/structured-cluster.ts/tool-class.ts, each `registerNormalizer({ ... })` at the bottom of the
+ * file). This shape naturally excludes: the `export function registerNormalizer(entry: ...)` declaration
+ * (parens then a param name, not "{"; also excluded by path above), and the two bare-token prose mentions in
+ * src/qa/normalizer-registry-purity-check.ts (a comment and a diagnostic string, both
+ * "registerNormalizer(), ..." — parens then a comma, never "{"). KNOWN MISS, disclosed above (Issue #351):
+ * a builder/factory-shaped call, `registerNormalizer(makeEntry())`, passes no object literal, so this
+ * regex — and this instrument — does not see it. Not broadened on purpose; see the second residual note
+ * above for why and for what this instrument does and does not prove. */
+const REGISTRANT_CALL = /registerNormalizer\s*\(\s*\{/;
+
+function registrantFiles(files: RegistrantScanFile[]): string[] {
+  return files.filter((f) => REGISTRANT_CALL.test(f.text)).map((f) => f.rel).sort();
+}
+
+const EXPECTED_REGISTRANTS: readonly string[] = ["src/policy/normalizer/shell.ts", "src/policy/normalizer/structured-cluster.ts", "src/policy/normalizer/tool-class.ts"].slice().sort();
+
+test("R2-21 part 1 registrant-scan-covers-exactly-three-inline-literal-registrants (Issue #339, AC-339-1, AC-339-2; scope narrowed per Issue #351, see the file header's second disclosed residual): every production file under src/ (registry.ts and *.test.* files excluded) holding a registerNormalizer(...) call site in the INLINE-OBJECT-LITERAL shape (the one shape all three real registrants use today; a builder/factory-shaped call is a disclosed, undetected miss) is exactly the three registered normalizers; the scan can fail (src/qa/normalizer-registry-purity-check.ts, in scope, holds two bare-token prose mentions with no following '{' and is not flagged)", () => {
+  const files = productionSrcFiles();
+  const found = registrantFiles(files);
+  console.log(`R2-21 part 1: ${String(files.length)} production src/ files scanned (registry.ts and *.test.* excluded); registrant call sites found in ${JSON.stringify(found)}`);
+  assert.ok(files.some((f) => f.rel === "src/policy/normalizer/shell.ts"), "the scan reaches the normalizer directory");
+  assert.ok(!files.some((f) => f.rel === REGISTRY_MODULE_REL), "registry.ts itself is excluded by path, so its declaration never counts as a registrant");
+  const purityCheck = files.find((f) => f.rel === "src/qa/normalizer-registry-purity-check.ts");
+  assert.ok(purityCheck !== undefined, "the scan reaches src/qa/, where the two prose mentions of the bare token live");
+  assert.ok(purityCheck.text.includes("registerNormalizer()"), "that file does hold the bare-token mentions the call-shape regex must not match");
+  assert.deepEqual(found, EXPECTED_REGISTRANTS, `expected exactly the three registered normalizers; got ${JSON.stringify(found)}`);
+});
+
+test("R2-21 part 2 fourth-registrant-detected self-test (Issue #339, AC-339-3, mirrors R1-6b's self-test in classification-builtin-override.test.ts): a synthetic file list holding the three real registrant shapes plus a fourth registrant using the same inline-object-literal call shape FAILS the scan, naming the new file; a control file that only mentions the token in a comment or a bare-parens string is not flagged (a builder/factory-shaped fourth registrant is a separate, disclosed miss — see the file header's second residual — not exercised here, since part 2 is proving the file-identity residual, not the call-shape one)", () => {
+  const synth = (rel: string, toolType: string): RegistrantScanFile => ({ rel, text: `import { registerNormalizer } from "./registry.ts";\n\nregisterNormalizer({\n  toolType: "${toolType}",\n  normalize: (raw) => raw,\n});\n` });
+  const real = [
+    synth("src/policy/normalizer/shell.ts", "shell"),
+    synth("src/policy/normalizer/structured-cluster.ts", "cluster"),
+    synth("src/policy/normalizer/tool-class.ts", "tool-class"),
+  ];
+  const fourth = synth("src/policy/normalizer/http.ts", "http");
+  const found = registrantFiles([...real, fourth]);
+  const expectedWithFourth = [...EXPECTED_REGISTRANTS, fourth.rel].sort();
+  assert.deepEqual(found, expectedWithFourth, `the fourth registrant must be named in the flagged set; got ${JSON.stringify(found)}`);
+  assert.ok(found.includes(fourth.rel), `${fourth.rel} is named`);
+
+  const controls: RegistrantScanFile[] = [
+    { rel: "src/policy/config/comment-only.ts", text: "// see registerNormalizer(), never a call here\nexport const x = 1;" },
+    { rel: "src/qa/hint.ts", text: "const HINT = `call registerNormalizer(), never the reverse.`;\nexport const h = HINT;" },
+  ];
+  assert.deepEqual(registrantFiles(controls), [], "a bare mention with no following '{' is never flagged (same shape as the two real prose mentions R2-21 part 1 proves are not flagged)");
+  console.log(`R2-21 part 2: fourth registrant ${fourth.rel} flagged; ${String(controls.length)} controls confirmed clean`);
 });
