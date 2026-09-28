@@ -594,6 +594,18 @@ test("R2-20 mixed-list-message-wording (Issue #334, AC-334-8): for a marker plus
 // ADR-0021's per-tool-type-by-declaration model); AC-1's own wording ("scans production files ... for every
 // registerNormalizer call site") and the reviewer's minimal fix are both file-set shaped, so the fix stays
 // minimal rather than adding a second, more invasive keying scheme.
+//
+// SECOND RESIDUAL, DISCLOSED (Issue #351, app-security-reviewer APPROVE-WITH-CONDITIONS, demonstrated with a
+// real scratch file): REGISTRANT_CALL only recognizes an INLINE-OBJECT-LITERAL call — `registerNormalizer({
+// ... })`, the one shape all three real registrants use today. A builder/factory-shaped call —
+// `registerNormalizer(makeEntry())`, passing a pre-built value through a function call or a variable rather
+// than a literal — is silently invisible to it. Manager's ruling: do not broaden the regex to chase
+// arbitrary call shapes (open-ended, diminishing returns, against this project's simplicity-over-polish
+// convention); state the narrower claim plainly instead. So, stated plainly: this instrument proves the set
+// of registrants calling `registerNormalizer` with an inline object literal is exactly three; it does NOT
+// prove there is no fourth registrant calling it through a builder, factory, or any other non-literal call
+// shape. Combined with the first residual above, R2-21 covers "a new file, calling registerNormalizer the
+// same way the three real ones already do" — not every conceivable way to add a registrant.
 const REGISTRY_MODULE_REL = "src/policy/normalizer/registry.ts";
 const REPO_ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
@@ -625,13 +637,16 @@ function productionSrcFiles(): RegistrantScanFile[] {
     .map((rel) => ({ rel, text: readFileSync(join(REPO_ROOT, rel), "utf8") }));
 }
 
-/** A real registerNormalizer CALL site: the token immediately followed by "(" and then "{" (every real
- * registrant passes one NormalizerEntry object literal — see shell.ts/structured-cluster.ts/tool-class.ts,
- * each `registerNormalizer({ ... })` at the bottom of the file). This shape naturally excludes: the
- * `export function registerNormalizer(entry: ...)` declaration (parens then a param name, not "{"; also
- * excluded by path above), and the two bare-token prose mentions in
+/** A real registerNormalizer CALL site, INLINE-OBJECT-LITERAL SHAPE ONLY: the token immediately followed by
+ * "(" and then "{" (every real registrant passes one NormalizerEntry object literal this way today — see
+ * shell.ts/structured-cluster.ts/tool-class.ts, each `registerNormalizer({ ... })` at the bottom of the
+ * file). This shape naturally excludes: the `export function registerNormalizer(entry: ...)` declaration
+ * (parens then a param name, not "{"; also excluded by path above), and the two bare-token prose mentions in
  * src/qa/normalizer-registry-purity-check.ts (a comment and a diagnostic string, both
- * "registerNormalizer(), ..." — parens then a comma, never "{"). */
+ * "registerNormalizer(), ..." — parens then a comma, never "{"). KNOWN MISS, disclosed above (Issue #351):
+ * a builder/factory-shaped call, `registerNormalizer(makeEntry())`, passes no object literal, so this
+ * regex — and this instrument — does not see it. Not broadened on purpose; see the second residual note
+ * above for why and for what this instrument does and does not prove. */
 const REGISTRANT_CALL = /registerNormalizer\s*\(\s*\{/;
 
 function registrantFiles(files: RegistrantScanFile[]): string[] {
@@ -640,7 +655,7 @@ function registrantFiles(files: RegistrantScanFile[]): string[] {
 
 const EXPECTED_REGISTRANTS: readonly string[] = ["src/policy/normalizer/shell.ts", "src/policy/normalizer/structured-cluster.ts", "src/policy/normalizer/tool-class.ts"].slice().sort();
 
-test("R2-21 part 1 registrant-scan-covers-exactly-three (Issue #339, AC-339-1, AC-339-2): every production file under src/ (registry.ts and *.test.* files excluded) holding a real registerNormalizer(...) call site is exactly the three registered normalizers; the scan can fail (src/qa/normalizer-registry-purity-check.ts, in scope, holds two bare-token prose mentions with no following '{' and is not flagged)", () => {
+test("R2-21 part 1 registrant-scan-covers-exactly-three-inline-literal-registrants (Issue #339, AC-339-1, AC-339-2; scope narrowed per Issue #351, see the file header's second disclosed residual): every production file under src/ (registry.ts and *.test.* files excluded) holding a registerNormalizer(...) call site in the INLINE-OBJECT-LITERAL shape (the one shape all three real registrants use today; a builder/factory-shaped call is a disclosed, undetected miss) is exactly the three registered normalizers; the scan can fail (src/qa/normalizer-registry-purity-check.ts, in scope, holds two bare-token prose mentions with no following '{' and is not flagged)", () => {
   const files = productionSrcFiles();
   const found = registrantFiles(files);
   console.log(`R2-21 part 1: ${String(files.length)} production src/ files scanned (registry.ts and *.test.* excluded); registrant call sites found in ${JSON.stringify(found)}`);
@@ -652,7 +667,7 @@ test("R2-21 part 1 registrant-scan-covers-exactly-three (Issue #339, AC-339-1, A
   assert.deepEqual(found, EXPECTED_REGISTRANTS, `expected exactly the three registered normalizers; got ${JSON.stringify(found)}`);
 });
 
-test("R2-21 part 2 fourth-registrant-detected self-test (Issue #339, AC-339-3, mirrors R1-6b's self-test in classification-builtin-override.test.ts): a synthetic file list holding the three real registrant shapes plus a fourth registrant FAILS the scan, naming the new file; a control file that only mentions the token in a comment or a bare-parens string is not flagged", () => {
+test("R2-21 part 2 fourth-registrant-detected self-test (Issue #339, AC-339-3, mirrors R1-6b's self-test in classification-builtin-override.test.ts): a synthetic file list holding the three real registrant shapes plus a fourth registrant using the same inline-object-literal call shape FAILS the scan, naming the new file; a control file that only mentions the token in a comment or a bare-parens string is not flagged (a builder/factory-shaped fourth registrant is a separate, disclosed miss — see the file header's second residual — not exercised here, since part 2 is proving the file-identity residual, not the call-shape one)", () => {
   const synth = (rel: string, toolType: string): RegistrantScanFile => ({ rel, text: `import { registerNormalizer } from "./registry.ts";\n\nregisterNormalizer({\n  toolType: "${toolType}",\n  normalize: (raw) => raw,\n});\n` });
   const real = [
     synth("src/policy/normalizer/shell.ts", "shell"),
