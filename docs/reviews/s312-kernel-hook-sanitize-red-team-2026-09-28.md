@@ -169,7 +169,7 @@ src/policy/normalizer production .ts files: 10
 
 `kernel.ts` has three real `import type` lines at 20-22; the fake block opened at line 11 by `src/policy/kernel/**` swallows lines 11-31.
 
-**Mutation drill M15 — planted `node:fs` and `../config/sanitize.ts` imports inside `kernel.ts`:**
+**Mutation drill M15 — planted `node:fs` and `src/policy/config/sanitize.ts` imports inside `kernel.ts`:**
 
 ```
 $ node mutate.mjs src/policy/kernel/kernel.ts \
@@ -472,7 +472,7 @@ Fix `src/qa/kernel-purity-check.ts:148` to strip line comments **before** block 
 RECEIPT: verdict=no-go
 attacks (ranked by blast radius):
 1. [ISSUE][HIGH][demonstrated] This PR own new header comment (`src/policy/gate/render-hook-output.ts:21`, the glob `src/policy/gate/**` in a `//` comment) opens a fake block comment that closes on the new JSDoc `*/` at line 62, hiding lines 21-62 (the only import, denyJson, failClosed, sanitizedDenyJson) from every stripComments-based scan; defense assessed: G11/G11b/G15/G18 all strip first, so all four are blind — a planted `node:fs` import + `writeFileSync` passes gate-structure 5/5, tsc rc=0, eslint rc=0 and the full 1504-test suite. Exposure: 1 of 3 production files in src/policy/gate/ and 4 of 5 gate-structure guards, basis: counted in code. Regression vs master (master saw the import, HEAD sees none).
-2. [ISSUE][HIGH][demonstrated] Root cause, pre-existing repo-wide: `src/qa/kernel-purity-check.ts:148` strips block comments BEFORE line comments, so any `//` comment containing a `/**` glob swallows code; `qa:kernel-purity` sees ZERO imports in 4 of 4 kernel files and PASSES with `node:fs` + `../config/sanitize.ts` planted in kernel.ts, full suite identical to baseline; 16 of 190 sources measurably lose code; defense assessed: the AST forbidden-globals layer still fires (it does not use stripComments), so the blindness is import-scanning only — exactly the layer this PR design cites. Exposure: 4/4 kernel + 1/3 gate + normalizer/registry.ts, basis: measured.
+2. [ISSUE][HIGH][demonstrated] Root cause, pre-existing repo-wide: `src/qa/kernel-purity-check.ts:148` strips block comments BEFORE line comments, so any `//` comment containing a `/**` glob swallows code; `qa:kernel-purity` sees ZERO imports in 4 of 4 kernel files and PASSES with `node:fs` + `src/policy/config/sanitize.ts` planted in kernel.ts, full suite identical to baseline; 16 of 190 sources measurably lose code; defense assessed: the AST forbidden-globals layer still fires (it does not use stripComments), so the blindness is import-scanning only — exactly the layer this PR design cites. Exposure: 4/4 kernel + 1/3 gate + normalizer/registry.ts, basis: measured.
 3. [ISSUE][MED][demonstrated] The AC-7 structural drift guard (`sanitize.test.ts:110-114`, `renderHookOutput\([\s\S]*?\.sanitizeForTerminal\)`) is defeated by a conditional bypass — an env-gated ternary ending in `sanitizeMod.sanitizeForTerminal)` passes 17/17 PR tests, 120/120 hook+gate tests and all 4 QA instruments while leaking raw ESC and NUL through the real hook stdout — and it false-positives on a benign hoist refactor; defense assessed: it does kill the two likeliest accidental regressions (M1, M2). Exposure: 100% of future refactors of the one call site, basis: counted in code.
 4. [ISSUE][MED][demonstrated] No test pins that a LONG reason is sanitized; a length-gated skip (`reason.length > 1000 ? reason : sanitize(reason)`) passes 22/22 and leaks raw ESC end-to-end at 1632 chars; defense assessed: none — every hostile fixture is ~60 chars, and the sibling file already carries a cap (REASON_NAME_CAP=512), so a bound is a likely refactor. Exposure: any deny whose rationale exceeds the bound; schema has no rationale length cap, basis: counted in code.
 5. [ISSUE][MED][demonstrated] The "required parameter, fails loud" design has no build-time force: `tsconfig.include` is `["src/**/*.ts"]`, so the only production caller (a .mjs hook) is never typechecked — dropping the argument gives `npm run build` rc=0; defense assessed: runtime fails CLOSED (exit 2, TypeError) so no fail-open, but the defect is invisible on every allow and reports only a generic "internal exception". Exposure: 3 of 3 production enforcement hooks, basis: counted in code.
@@ -495,3 +495,9 @@ checks=full suite clean baseline `node --test`: 1504 tests / 1503 pass / 1 fail 
 adr=HIT(2)
 report=docs/reviews/s312-kernel-hook-sanitize-red-team-2026-09-28.md
 ```
+
+---
+
+## Addendum (same session, appended not edited): a QA-14 false-positive citation reworded
+
+`node src/qa/reference-resolver.ts` (QA-14) flagged the standalone backtick span `` `../config/sanitize.ts` `` (at what was line 172 and line 475/RECEIPT-finding-2) as an `unresolved-authority` path citation — it reads a bare, path-shaped backtick span as a repo-relative citation, and this report's relative-from-`kernel.ts` form does not resolve from the repo root. Same class of false positive as the already-open Issue #341 (a hypothetical/relative example path in an adversarial review report's own prose). Both occurrences reworded, same session, to the unambiguous repo-root-relative form `` `src/policy/config/sanitize.ts` `` — the identical file, zero semantic change, not inside any fenced code block or quoted source snippet (those are untouched). This addendum discloses the edit per PRINCIPLES.md rule 11's spirit; the finding's substance, severity, and RECEIPT counts are unchanged.

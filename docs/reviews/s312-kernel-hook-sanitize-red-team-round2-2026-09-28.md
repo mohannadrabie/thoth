@@ -293,7 +293,7 @@ Byte-identical to the clean baseline, with a live filesystem read inside the pol
 
 Two independent gaps that compose:
 
-1. `isSanitizeForTerminalAccess` (`src/policy/config/sanitize.test.ts:135-137`) returns true for **any** property access whose name is `sanitizeForTerminal`. It never checks that the object resolves to the `../src/policy/config/sanitize.ts` import binding. A local object literal with that property name satisfies it.
+1. `isSanitizeForTerminalAccess` (`src/policy/config/sanitize.test.ts:135-137`) returns true for **any** property access whose name is `sanitizeForTerminal`. It never checks that the object resolves to the `src/policy/config/sanitize.ts` import binding. A local object literal with that property name satisfies it.
 2. AC-9 iterates a hard-coded list of five environment cases (`{}`, `THOTH_RAW_REASON` x2, `NODE_ENV`, `THOTH_DEBUG`). A bypass keyed on any other variable name is invisible to it. Its own header states the intent is "to prove sanitization does not depend on ambient environment state" — a fixed allowlist cannot prove a negative over an open set.
 
 **Drill N4 — the composed bypass.** `hooks/pretooluse-kernel-gate.mjs:198` becomes:
@@ -533,3 +533,9 @@ checks=clean baseline on a fresh worktree after npm ci plus git submodule update
 adr=HIT(2)
 report=docs/reviews/s312-kernel-hook-sanitize-red-team-round2-2026-09-28.md
 ```
+
+---
+
+## Addendum (same session, appended not edited): a QA-14 false-positive citation reworded
+
+`node src/qa/reference-resolver.ts` (QA-14) flagged the standalone backtick span `` `../src/policy/config/sanitize.ts` `` (at what was line 296) as an `unresolved-authority` path citation — it reads a bare, path-shaped backtick span as a repo-relative citation, and this report's relative-from-`hooks/` form does not resolve from the repo root. Same class of false positive as the already-open Issue #341 (a hypothetical/relative example path in an adversarial review report's own prose). Reworded, same session, to the unambiguous repo-root-relative form `` `src/policy/config/sanitize.ts` `` — the identical file, zero semantic change, not inside any fenced code block or quoted source snippet (those are untouched). This addendum discloses the edit per PRINCIPLES.md rule 11's spirit; the finding's substance, severity, and RECEIPT counts are unchanged.
