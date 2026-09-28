@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Issue #252 (partial: citation-cleanup half only) — stale predecessor-era path citations in REQUIREMENTS.md
+
+STANDARD tier, docs-only. Progresses #252; does not close it. The stale/broken citations this story's plan identified (a `docs/` prefix that no longer matches this file's own location, a removed hook wrongly described as shipped, two uncommitted spike notes cited as if they were in the tree, an AGT ADR reference written with a hyphen before its four-digit number — matching the resolver's `ADR-####` id-citation pattern, for an ADR that does not exist under that id, now written with a space instead — and backtick-fenced paths to files that live in the predecessor/adapter repos, not this one) are reworded or de-backticked in place — no lines added or removed. Line 570 (QA-14's acceptance-criteria wording) is untouched; that is a separate future story. Neither a SECURITY.md file nor a hooks/report-subject-gate.mjs hook is created.
+
+- **Gap closed (Manager-ratified follow-up).** The initial pass missed two of the spike-note citation's three occurrences in REQUIREMENTS.md (lines 99 and 205; only the third, line 573, was in the original plan). A follow-up commit applies the same de-backtick-and-disclose treatment to both. `node src/qa/reference-resolver.ts origin/master HEAD` now exits 0 with zero unresolved-authority `[file: REQUIREMENTS.md]` citations.
+
 ### Fixed — `s7c-reachability-residuals` (issues 334 and 335): a marker plus a stray verb, and an allow rule with no verbs, no longer load on a server target the runtime cannot present
 
 CRITICAL tier (sensitive area: the policy delivery and config surface). The gate hook stays UNWIRED: activation is issue 308, so live exposure is zero today (the committed policy files hold no rules). Plan: `docs/plans/s7c-reachability-residuals-phase1-2026-09-27.md`. Decisions row: `docs/decisions.md`, 2026-09-27, pending human ratification.
