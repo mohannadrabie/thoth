@@ -27,8 +27,10 @@
   // `hooks/pretooluse-kernel-gate.mjs`, the only production caller of `renderHookOutput` — whose
   // own 4 pre-existing implicit-any / return-type-widening errors were fixed alongside this file
   // (minimal JSDoc annotations, no behavior change) so it type-checks clean. Widening this project
-  // to the other 2 hooks is left as a backlog candidate (docs/backlog.md), not silently expanded
-  // into this round.
+  // to the other 2 hooks (hooks/sessionstart-tool-enum.mjs, hooks/userpromptsubmit-halt-relay.mjs)
+  // is tracked by the still-open Issue #361 — not silently expanded into this round, and not a
+  // dangling reference to a docs/backlog.md line that was never written (red-team round 2 finding,
+  // s312-kernel-hook-sanitize-red-team-round2-2026-09-28.md, attack 5).
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "allowJs": true,
