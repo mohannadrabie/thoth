@@ -139,3 +139,45 @@ evidence (a CHECKSUM over the tags above -- MUST equal them, and MUST total the 
 checks=target file 18/0/0 skipped; full completeness-claim-checker.test.ts 32/1/0 skipped (1 fail = finding 1); tsc --noEmit exit 0; eslint . exit 0
 adr=HIT(37, whole catalog)
 report=docs/reviews/s339-registrant-drift-instrument-cross-domain-2026-09-28.md
+
+---
+
+## RE-CONFIRM ADDENDUM — 2026-09-28 (PR #350 fix-now round, tip 30ab631, was 5710c88 at prior review)
+
+Lightweight re-confirm only, not a fresh full review. Scope: does commit `1c90d48` close finding 1 (HIGH) above without collision, and does `30ab631` (report persistence) change anything.
+
+**What changed (`git diff 5710c88 30ab631 --stat`):** `CHANGELOG.md`, `docs/REVIEW_LOG.md`, `docs/STATE.md`, `docs/run-log.jsonl`, `src/policy/config/rule-reachability.test.ts`, plus the two dated review reports (this file and app-security's, both newly committed). No file outside this list changed. `rule-reachability.test.ts`'s diff is comments and two test-title strings only — `REGISTRANT_CALL` regex, assertions, and control-file logic are byte-identical; confirmed by reading the full diff hunk-by-hunk.
+
+**1. Re-ran the tripped gate directly** (not trusting the claim): `node --test src/qa/completeness-claim-checker.test.ts` — 33 pass, 0 fail, 0 skipped, including `QA-15 (Issue #159, end-to-end, real corpus): CHANGELOG.md and docs/STATE.md ... contain ZERO bare claims after this round's own edits`, which runs the live scanner against the actual current file text, not a canned fixture. Finding 1 is closed: **demonstrated**.
+
+**2. Spot-checked the "1498 tests" / "QA-15: PASS" claims are now true, not reworded around the trip.** `grep -c "1498" docs/STATE.md CHANGELOG.md` → 0/0: the stale bare test-count numeral was dropped entirely (replaced with qualitative "pre-existing pass count unchanged, two tests fail, both confirmed pre-existing and unrelated to this diff" prose), not just re-punctuated around QA-15's pattern. The "QA-15: PASS" claim in both files is now backed by the real re-run above. This matches the fix-now round's own framing ("re-verifying for real rather than rewording around the trip") — checked, not just taken at its word.
+
+**3. `rule-reachability.test.ts` comment-only change vs. the whole ADR catalog.** Re-ran `node docs/adr-cache.mjs --ensure` after initializing the `adr/` submodule fresh in this worktree (it started uninitialized here) → `📊 ADR cache BUILT: cataloged 37 ADR(s) [adr/devops:12, adr/software-engineering:23, docs/adr:2]` — same 37-ADR catalog size as my original pass. The only change to this sensitive-area file (policy delivery/config surface) is disclosure prose naming a residual already ruled on by the Manager (do not broaden `REGISTRANT_CALL`); no behavior changed, so nothing new can trip SE ADR-0021 POL-12 or any other catalog entry beyond what my original pass already cleared. No collision.
+
+**4. No other file changed beyond what's described.** Confirmed by the `--stat` above: the two new files are the persisted review reports (Manager backstop, as the story states), `docs/run-log.jsonl` gained one entry (automated verification log, consistent with a re-verification pass), `docs/REVIEW_LOG.md` gained the two rows for this round's original verdicts (already persisted in `30ab631`, matches what both reviewers filed). Nothing unexplained.
+
+**Issue #352 (mine, HIGH):** re-confirmed closed for real, not just reworded — commented and closed (`state_reason: completed`) on GitHub same turn.
+
+**Issue #351 (app-security's, MED):** out of my finding, but checked for collision per the task — the widened disclosure (file header + two test titles) is wording-only, does not touch the regex app-security flagged, and does not reopen anything in my ADR pass. No collision.
+
+### Updated Verdict
+
+**APPROVE.** Finding 1 (HIGH) is closed, demonstrated by a live re-run, not carried over from the PR's own claim. No new finding. No ADR collision. Open findings / failing tests: 0.
+
+### Updated Single next action
+
+None from this lane — ready for merge-handoff once app-security's own re-confirm is in.
+
+---
+
+RECEIPT (re-confirm addendum): verdict=APPROVE
+findings (this pass only; the original round's findings remain listed above for history):
+1. [CLEAN][demonstrated] src/qa/completeness-claim-checker.test.ts:236 — QA-15 gate genuinely green (33/33 pass, 0 fail, 0 skipped incl. the live-corpus zero-bare-claims assertion against current STATE.md/CHANGELOG.md text) — finding 1 (HIGH) closed for real.
+2. [CLEAN][demonstrated] docs/STATE.md, CHANGELOG.md — "1498"/bare-count claim dropped entirely (grep -c "1498" = 0/0), not reworded around the trip; "QA-15: PASS" claim now backed by the re-run above.
+3. [CLEAN][code-traced] src/policy/config/rule-reachability.test.ts — app-security's Issue #351 fix is comment/test-title wording only, REGISTRANT_CALL and all assertions byte-identical; no collision with any of the 37 cataloged ADRs.
+4. [CLEAN][code-traced] git diff 5710c88..30ab631 --stat — no file changed beyond CHANGELOG.md, docs/REVIEW_LOG.md, docs/STATE.md, docs/run-log.jsonl, rule-reachability.test.ts, and the two persisted review reports; nothing unexplained.
+counts: issues=0 suspicions=0 clean=4
+evidence: demonstrated=2 code-traced=2 derived=0
+checks=completeness-claim-checker.test.ts 33/0/0 skipped; grep -c "1498" docs/STATE.md CHANGELOG.md = 0/0; git diff --stat 5710c88..30ab631 = 7 files matching description
+adr=HIT(37, whole catalog, re-verified after fresh submodule init in this worktree)
+report=docs/reviews/s339-registrant-drift-instrument-cross-domain-2026-09-28.md
