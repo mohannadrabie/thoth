@@ -91,3 +91,25 @@ test("sanitize class literal matches userpromptsubmit-halt-relay.mjs", () => {
   assert.equal(implLiteral, hookLiteral);
   assert.equal(implLiteral, "/[\\p{Cc}\\p{Zl}\\p{Zp}]/gu");
 });
+
+// Issue #312 (AC-7): the PreToolUse gate hook is a SECOND consumer, but it does not carry its own
+// copy of the strip-class regex the way userpromptsubmit-halt-relay.mjs does above — it reuses this
+// module's `sanitizeForTerminal` directly (an injected port into renderHookOutput; src/policy/gate/**
+// and src/policy/kernel/** cannot import config/sanitize.ts themselves, see render-hook-output.ts's
+// header). So there is no third literal to compare here; instead this is a structural drift guard of
+// a different shape: it fails loud if a future refactor quietly drops the import (or the call site
+// that passes it to renderHookOutput), which would silently reopen the Issue #312 hole with zero
+// signal from the two-way literal comparison above.
+test("Issue #312: hooks/pretooluse-kernel-gate.mjs imports and wires sanitizeForTerminal from this module", () => {
+  const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
+  assert.match(
+    hook,
+    /import\(\s*["']\.\.\/src\/policy\/config\/sanitize\.ts["']\s*\)/,
+    "hooks/pretooluse-kernel-gate.mjs must dynamically import ../src/policy/config/sanitize.ts",
+  );
+  assert.match(
+    hook,
+    /renderHookOutput\([\s\S]*?\.sanitizeForTerminal\)/,
+    "hooks/pretooluse-kernel-gate.mjs must pass sanitizeForTerminal as renderHookOutput's second argument",
+  );
+});

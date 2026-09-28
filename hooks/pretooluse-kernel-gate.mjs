@@ -2,7 +2,8 @@
 // PreToolUse hook (ADR-0021 shape 4, "gate surfaces"): the in-session enforcement point that calls
 // S2's pure kernel (`decide()`) through S3's normalizer registry, S4's shell-command detector and
 // S7's tool-class normalizer. It is a THIN ADAPTER: it reads stdin, builds the real ports for the
-// gate module (src/policy/gate/decide-tool-call.ts), and writes what renderHookOutput returns.
+// gate module (src/policy/gate/decide-tool-call.ts), and writes what renderHookOutput returns (its
+// `reason` text is terminal-sanitized here — Issue #312, see renderHookOutput's own header).
 //
 // ACTIVATION STATUS (docs/plans/s7-kernel-gate-classification-phase1-2026-09-26.md): this script is
 // built and tested but NOT WIRED. `.claude/settings.json` has no `hooks.PreToolUse` entry for it, so
@@ -142,13 +143,19 @@ async function main() {
     // (hooks/pretooluse-kernel-gate-classification.test.ts) reads this spelling to discover the export it
     // wraps:
     //   import { decideToolCall } from "../src/policy/gate/decide-tool-call.ts"
-    const [raw, gate, render, loader, central, catalog] = await Promise.all([
+    //
+    // Issue #312: this hook is the one place allowed to import src/policy/config/ directly (G15 forbids
+    // it under src/policy/gate/**, kernel-purity-check.ts forbids it under src/policy/kernel/**), so it
+    // also supplies renderHookOutput's `sanitize` port with the real, canonical implementation — the
+    // same terminal-stripping helper #294 uses at the policy:print render boundary.
+    const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([
       readStdin(),
       import("../src/policy/gate/decide-tool-call.ts"),
       import("../src/policy/gate/render-hook-output.ts"),
       import("../src/policy/config/loader.ts"),
       import("../src/policy/config/central-source.ts"),
       import("../src/policy/tools/classification-catalog.ts"),
+      import("../src/policy/config/sanitize.ts"),
     ]);
 
     if (raw.trim() === "") {
@@ -181,7 +188,7 @@ async function main() {
       },
     };
 
-    const output = render.renderHookOutput(gate.decideToolCall(input, ports));
+    const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);
     if (output.stderr !== "") process.stderr.write(output.stderr);
     if (output.stdout !== "") await writeStdout(output.stdout);
     process.exit(output.exitCode);
