@@ -352,24 +352,34 @@ test("R1-6 single-merge-site: the only production files naming the merge or the 
 //      specifier is resolved against the importing file, so a barrel or another directory cannot hide it);
 //   B. holds a standalone path string literal ending in the fixture file name AND a file-read primitive;
 //   C. names ANY runtime export of the fixture module (enumerated from the live module, not typed here);
-//   D. calls import() or require() with a specifier it cannot resolve statically.
+//   D. calls import() or require() with a specifier it cannot resolve statically;
+//   E. (R1-6d, Issue #332) uses node:module's createRequire, strictly matched (an import binding or a
+//      call, never a bare substring in a comment/string) -- the funnel needs none of it, so ANY
+//      production use is flagged regardless of aliasing or specifier shape.
 // Allowed: the fixture module itself and classification-catalog.ts (the funnel), plus the one reviewed file
 // that only COPIES the fixture into a scratch tree (B). The self-test proves a synthetic bypass fails the leg
 // built for it and the controls pass; the red-team mutant (a production module reading DEFAULT_FIXTURE_PATH)
 // is killed through the mutation-harness engine (recorded in the build report, not committed).
 //
-// RESIDUAL, DISCLOSED (red-team round 2, Issue #332; this scan is a labelled heuristic, not a proof). Legs B
-// and D key on token spellings: the names of the file-read primitives (FILE_READ_PRIMITIVE) and the two
-// literal spellings of a module-loading call (import(...) and require(...)). So ANY loading or reading call
-// whose token spelling this scan does not enumerate is invisible to it, and the round-2 red-team demonstrated
-// four production modules reading the fixture with every leg green: (1) the standard-library module-loading
-// helper, aliased to a short local name, invoked with a specifier assembled from string pieces; (2) the same
-// helper invoked on a PLAIN, unsplit literal path to the fixture (it needs no read primitive and no parse call,
-// so leg B never fires, and a literal specifier never fires leg D); (3) a read through the promise-based
-// file-handle API with a file name assembled from string pieces; (4) a synchronous read with a file name
-// assembled from string pieces. A path literal split across string pieces is one instance, not the class.
-// Deferred to Issue #332 (named proof test R1-6d loader-helper-and-alias-legs). Also open, Issue #332's
-// sibling suspicion R1-6c one-catalog-source: nothing pins that every catalog handed to the gate came from
+// RESIDUAL, DISCLOSED (red-team round 2, Issue #332; this scan is a labelled heuristic, not a proof, and
+// R1-6d below closes only part of it). Legs B and D key on token spellings: the names of the file-read
+// primitives (FILE_READ_PRIMITIVE) and the two literal spellings of a module-loading call (import(...) and
+// require(...)). So ANY loading or reading call whose token spelling this scan does not enumerate is
+// invisible to it -- the underlying class is the token-spelling gap itself, not any one instance of it, and
+// no finite set of named primitives can close it for good. The round-2 red-team demonstrated four production
+// modules reading the fixture with every leg green: (1) the standard-library module-loading helper, aliased
+// to a short local name, invoked with a specifier assembled from string pieces; (2) the same helper invoked
+// on a PLAIN, unsplit literal path to the fixture (it needs no read primitive and no parse call, so leg B
+// never fires, and a literal specifier never fires leg D); (3) a read through the promise-based file-handle
+// API with a file name assembled from string pieces; (4) a synchronous read with a file name assembled from
+// string pieces. R1-6d below adds leg E and closes shapes (1) and (2), the createRequire class. Shapes (3)
+// and (4) stay open and disclosed, without a dedicated tracking Issue (an accepted, standing limitation of a
+// token-spelling heuristic, same category as this file's own R1-6 -> R1-6b precedent): a path literal split
+// across string pieces is one instance of the token-spelling gap leg E does not touch, not the whole class,
+// and neither shape needs a module-loading helper at all -- closing them needs new primitive names in
+// FILE_READ_PRIMITIVE or a structural rewrite of legs B/D, not an addition like E. Separately, Issue #332's
+// sibling suspicion R1-6c one-catalog-source stays open, deferred to Issue #308's activation precondition
+// list per that Issue's own scope: nothing pins that every catalog handed to the gate came from
 // assembleCatalog; a hand-built catalog needs neither the merge nor the fixture and satisfies R1-6 and R1-6b.
 import * as fixtureModule from "./central-classification.ts";
 import { DEFAULT_FIXTURE_PATH } from "./central-classification.ts";
@@ -388,6 +398,17 @@ function stripCommentsKeepingStrings(source: string): string {
 
 const FILE_READ_PRIMITIVE = /\b(readFileSync|readFile|createReadStream|readSync|openSync|JSON\.parse)\b/;
 
+// R1-6d (Issue #332, red-team round 2 finding 1): node:module's createRequire lets a caller load the
+// fixture (a plain .json file) with NO read primitive and NO JSON.parse call, so leg B (pathReaders)
+// never fires; and when the loader is aliased and its specifier assembled, leg A (importers), leg C
+// (symbolHolders, since the reached property is a runtime-computed key, not a literal export-name
+// token) and leg D (unresolvableImports, since the call site is the alias, never the literal `import(`
+// or `require(` token) all miss it too. The funnel needs none of this, so ANY production use of the
+// helper is flagged, matched strictly (an import binding or a call), never as a bare substring, so a
+// file that only MENTIONS the name in prose (a comment, stripped; a hint string with no call/import) is
+// not flagged -- same discipline the other legs' controls already prove for their own tokens.
+const MODULE_LOADING_HELPER = /\bimport\s*\{[^}]*\bcreateRequire\b[^}]*\}\s*from|\bcreateRequire\s*\(|\.createRequire\b/;
+
 interface Scanned {
   rel: string;
   text: string;
@@ -397,6 +418,7 @@ interface FixtureAccess {
   pathReaders: string[];
   symbolHolders: string[];
   unresolvableImports: string[];
+  moduleLoaderUses: string[];
 }
 
 function withoutExt(path: string): string {
@@ -404,7 +426,7 @@ function withoutExt(path: string): string {
 }
 
 function scanFixtureAccess(files: Scanned[], fixtureModuleRel: string, fixtureFileName: string, exportedSymbols: string[]): FixtureAccess {
-  const out: FixtureAccess = { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [] };
+  const out: FixtureAccess = { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [], moduleLoaderUses: [] };
   const target = withoutExt(fixtureModuleRel);
   const escapedName = fixtureFileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pathLiteral = new RegExp(`["'\`](?:[^"'\`\\s]*[\\\\/])?${escapedName}["'\`]`);
@@ -419,11 +441,13 @@ function scanFixtureAccess(files: Scanned[], fixtureModuleRel: string, fixtureFi
     if (pathLiteral.test(code) && FILE_READ_PRIMITIVE.test(code)) out.pathReaders.push(rel);
     if (exportedSymbols.some((sym) => new RegExp(`\\b${sym}\\b`).test(code))) out.symbolHolders.push(rel);
     if (/\b(?:import|require)\s*\(\s*(?!["'`])[^)\s]/.test(code)) out.unresolvableImports.push(rel);
+    if (MODULE_LOADING_HELPER.test(code)) out.moduleLoaderUses.push(rel);
   }
   out.importers.sort();
   out.pathReaders.sort();
   out.symbolHolders.sort();
   out.unresolvableImports.sort();
+  out.moduleLoaderUses.sort();
   return out;
 }
 
@@ -475,6 +499,22 @@ test("R1-6b self-test: a synthetic production module that reads the fixture with
       leg: "symbolHolders",
     },
     { label: "a computed dynamic import", file: synth("src/policy/config/computed.ts", `export const load = (p: string) => import(p);`), leg: "unresolvableImports" },
+    {
+      label: "R1-6d (Issue #332, red-team round 2 shape 2): node:module's createRequire invoked on a PLAIN, unsplit literal path -- no read primitive, no JSON.parse, so pathReaders never fires",
+      file: synth(
+        "src/policy/tools/bypass-loader-literal.ts",
+        `import { createRequire } from "node:module";\nconst req = createRequire(import.meta.url);\nexport const raw = () => req("../../../docs/qa/${FIXTURE_FILE_NAME}");`,
+      ),
+      leg: "moduleLoaderUses",
+    },
+    {
+      label: "R1-6d (Issue #332, red-team round 2 shape 1): the same helper aliased to a short name, invoked with an ASSEMBLED specifier, wanted key reached by a computed property",
+      file: synth(
+        "src/policy/config/bypass-loader-alias.ts",
+        `import { createRequire as mk } from "node:module";\nconst dir = "../../../docs/qa/";\nconst rq = mk(import.meta.url);\nconst key = "centralLayer";\nexport const raw = () => rq(dir + "${FIXTURE_FILE_NAME}")[key];`,
+      ),
+      leg: "moduleLoaderUses",
+    },
   ];
   for (const b of bypasses) {
     const found = scan([b.file]);
@@ -488,19 +528,26 @@ test("R1-6b self-test: a synthetic production module that reads the fixture with
     },
     { label: "an import of the funnel", file: synth("hooks/uses-funnel.mjs", `import { assembleCatalog } from "../src/policy/tools/classification-catalog.ts";`) },
     { label: "a literal dynamic import of another module", file: synth("hooks/gate.mjs", `export const m = () => import("../src/policy/tools/classification-catalog.ts");`) },
+    {
+      label: "R1-6d control: createRequire named only in a comment (stripped) and in a non-call string -- mere mention is not a bare-substring hit",
+      file: synth(
+        "src/policy/config/mentions-createrequire-only.ts",
+        `// see node:module's createRequire if this ever needs CJS interop\nexport const DOC = "this module intentionally avoids createRequire";\nexport const x = 1;`,
+      ),
+    },
   ];
   for (const c of controls) {
     const found = scan([c.file]);
-    assert.deepEqual(found, { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [] }, `${c.label}: not flagged; got ${JSON.stringify(found)}`);
+    assert.deepEqual(found, { importers: [], pathReaders: [], symbolHolders: [], unresolvableImports: [], moduleLoaderUses: [] }, `${c.label}: not flagged; got ${JSON.stringify(found)}`);
   }
   console.log(`R1-6b self-test: ${String(bypasses.length)} synthetic bypasses flagged on their own leg, ${String(controls.length)} controls clean; the fixture module exports ${JSON.stringify(FIXTURE_EXPORTS)}`);
 });
 
-test("R1-6b no-other-production-fixture-reader (Issue #332): the only production files that import the fixture module, read the fixture path, name one of its exports or hide a module specifier are the fixture module, the funnel and the one reviewed copy-only probe", () => {
+test("R1-6b/R1-6d no-other-production-fixture-reader (Issue #332): the only production files that import the fixture module, read the fixture path, name one of its exports, hide a module specifier or use createRequire are the fixture module, the funnel and the one reviewed copy-only probe", () => {
   const files = productionScanFiles();
   const found = scanFixtureAccess(files, FIXTURE_MODULE_REL, FIXTURE_FILE_NAME, FIXTURE_EXPORTS);
   console.log(
-    `R1-6b: ${String(files.length)} production files scanned (tests and hooks/test-support excluded); importers ${JSON.stringify(found.importers)}; path readers ${JSON.stringify(found.pathReaders)}; export holders ${JSON.stringify(found.symbolHolders)}; unresolvable imports ${JSON.stringify(found.unresolvableImports)}`,
+    `R1-6b/R1-6d: ${String(files.length)} production files scanned (tests and hooks/test-support excluded); importers ${JSON.stringify(found.importers)}; path readers ${JSON.stringify(found.pathReaders)}; export holders ${JSON.stringify(found.symbolHolders)}; unresolvable imports ${JSON.stringify(found.unresolvableImports)}; module-loader-helper uses ${JSON.stringify(found.moduleLoaderUses)}`,
   );
   assert.ok(files.some((f) => f.rel === FUNNEL_REL) && files.some((f) => f.rel === FIXTURE_MODULE_REL) && files.some((f) => f.rel.startsWith("hooks/")), "the scan covers src/ and hooks/ including the funnel");
   assert.deepEqual(found.importers, [FUNNEL_REL], `only the funnel imports the fixture module; got ${JSON.stringify(found.importers)}`);
@@ -515,5 +562,6 @@ test("R1-6b no-other-production-fixture-reader (Issue #332): the only production
     `no other production file names an export of the fixture module; got ${JSON.stringify(found.symbolHolders)}`,
   );
   assert.deepEqual(found.unresolvableImports, [], "no production file imports or requires a module by a specifier it computes");
+  assert.deepEqual(found.moduleLoaderUses, [], `no production file under src/ or hooks/ uses node:module's createRequire; the funnel needs none of it; got ${JSON.stringify(found.moduleLoaderUses)}`);
   assert.equal(dirname(FIXTURE_MODULE_REL), dirname(FUNNEL_REL), "the funnel sits beside the fixture module");
 });

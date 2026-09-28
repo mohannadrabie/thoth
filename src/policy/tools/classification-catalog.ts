@@ -20,10 +20,10 @@
 // the merge, on the merge's own key (exact name; R1-10 pins that a near-miss spelling loads), so the two
 // cannot disagree about which entries override a built-in. The guard FAILS CLOSED: an entry passes only
 // when both classes are in the rank table and the entry ranks at or above the built-in. This module is
-// the ONLY production caller of the merge and the only reader of the fixture (checked by instruments R1-6
-// and R1-6b, which are labelled heuristics: R1-6b's disclosed residual is in its test header, Issue #332),
-// so the guard applies to both hooks. Accepted cost: an MCP server literally named like a built-in tool
-// cannot be classified lower than that built-in.
+// the ONLY production caller of the merge and the only reader of the fixture (checked by instruments R1-6,
+// R1-6b and R1-6d, which are labelled heuristics, not a proof: the disclosed residual is in the test
+// header, Issue #332), so the guard applies to both hooks. Accepted cost: an MCP server literally named
+// like a built-in tool cannot be classified lower than that built-in.
 //
 // MESSAGE ORDER (Issue #330): the halt relay cuts every diagnostic line at a fixed length after the
 // SessionStart prefix, so the error text puts the first offender, its two classes and the Unlock clause
