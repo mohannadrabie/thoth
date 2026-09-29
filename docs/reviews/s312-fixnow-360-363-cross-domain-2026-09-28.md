@@ -107,7 +107,7 @@ No gold-plating found: all 15 changed files trace directly to the 4 named Issues
 
 ## Coverage gaps named
 
-None found outside what's already covered by the two lanes running alongside this pass. `package.json` (1-line script alias) and the new fixture (`selftest-fixture/kernel-purity/violating/string-literal-comment-opener.ts`) are both directly exercised by the new/changed tests reviewed above -- no orphaned file in this diff.
+None found outside what's already covered by the two lanes running alongside this pass. `package.json` (1-line script alias) and the new fixture (`src/qa/selftest-fixture/kernel-purity/violating/string-literal-comment-opener.ts`) are both directly exercised by the new/changed tests reviewed above -- no orphaned file in this diff.
 
 ## Verdict
 
@@ -134,3 +134,9 @@ evidence (checksum): demonstrated=1 code-traced=5 derived=0
 checks="typecheck clean|81/0/0 targeted (matches app-security's 81/0/0)|3 QA instruments PASS|full-suite 1523/1525 (2 environmental: adr submodule uninitialized in ad hoc worktree, Windows EBUSY temp-dir race -- neither in a touched file)"
 adr=HIT(37, whole catalog)
 report=docs/reviews/s312-fixnow-360-363-cross-domain-2026-09-28.md
+
+---
+
+## Addendum (fix-now round 4, appended not edited): a QA-14 false-positive citation reworded
+
+`node src/qa/reference-resolver.ts` (QA-14) flagged the "Coverage gaps named" section's path citation for the new fixture file as `unresolved-authority` -- the citation was missing its `src/qa/` directory prefix, an otherwise-correct repo-relative path, catching CI on the fix-now round 4 push. Same class of false positive as the already-disclosed precedent for this exact citation shape (this project's own qa1415fix/decisions.md history). Reworded, same session (by `story-implementer`, per this project's established precedent that the BUILDER fixes this specific false-positive class wherever it lands, not only the original author), to the correct full path `src/qa/selftest-fixture/kernel-purity/violating/string-literal-comment-opener.ts` -- the identical file, zero semantic change. This addendum discloses the edit per PRINCIPLES.md rule 11's spirit; the finding's substance, verdict, and RECEIPT counts above are unchanged.
