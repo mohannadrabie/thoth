@@ -1,0 +1,22 @@
+{
+  // QA-ONLY project (Issue #361 fix-now round, red-team round 2 findings R5/AC-10/AC-11/AC-13).
+  // Used SOLELY by src/qa/hook-typecheck-coverage-check.ts to measure real tsc diagnostics against
+  // ALL 3 production hooks. This is deliberately NOT wired into `npm run build`/`npm run
+  // typecheck` and is not its own CI step — widening the REAL build gate (tsconfig.hooks.json) to
+  // all 3 hooks is explicitly out of scope for this round: already tried and reverted for ~60
+  // pre-existing, unrelated implicit-any/type-mismatch errors in the 2 hooks below (see
+  // tsconfig.hooks.json's own header). This file exists only so the coverage instrument can run a
+  // real `ts.parseJsonConfigFileContent`-resolved project and a real typecheck pass against every
+  // production hook, so a hook's coverage state is MEASURED, not silently absent from every
+  // project — and so a NEW regression (e.g. a dropped required argument) on an otherwise-excepted
+  // hook still shows up as a diagnostic-count increase past its pinned baseline, rather than being
+  // invisible everywhere.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": ["hooks/pretooluse-kernel-gate.mjs", "hooks/sessionstart-tool-enum.mjs", "hooks/userpromptsubmit-halt-relay.mjs"],
+  "exclude": ["dist/**", "node_modules/**"]
+}

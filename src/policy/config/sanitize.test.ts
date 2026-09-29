@@ -114,43 +114,130 @@ test("sanitize class literal matches userpromptsubmit-halt-relay.mjs", () => {
 // ternary/conditional/function-wrapper in between. This is still a cheap SOURCE-TEXT smoke check,
 // not the load-bearing guard: AC-9 below (a real, spawned-hook behavioral test with env vars set and
 // unset) is what actually proves the sanitizer fires unconditionally at runtime.
-function isSanitizeForTerminalAccess(expr: ts.Expression): boolean {
-  return ts.isPropertyAccessExpression(expr) && expr.name.text === "sanitizeForTerminal";
+//
+// Issue #360 fix-now round 2 (red-team round 2 findings R2/R3, 2026-09-28): two composing gaps in
+// the round-1 fix, both closed here:
+//   - AC-7b: `isSanitizeForTerminalAccess` matched ANY property access NAMED "sanitizeForTerminal",
+//     never checking what the object actually WAS. A local object literal ported as
+//     `{ sanitizeForTerminal: cond ? identity : sanitizeMod.sanitizeForTerminal }` satisfied it
+//     while an env var still gated a raw-ESC/NUL leak (drill N4). Fixed by tracing the property
+//     access's OBJECT back to a real `import(".../config/sanitize.ts")` call — directly, or through
+//     the array-destructured `const [.., sanitizeMod] = await Promise.all([.., import(...)])` idiom
+//     the real hook uses — and rejecting anything else (an object literal, an unrelated module, a
+//     renamed but unrelated binding), regardless of the property's own name.
+//   - AC-7c: `findRenderHookOutputSecondArg` returned on the FIRST `renderHookOutput` call found,
+//     with no check that it was the ONLY one. A decoy call ahead of the real one (behind a
+//     never-taken env guard) satisfied AC-7 while the real call passed a raw identity function
+//     (drill N5). Fixed by finding ALL call sites and requiring exactly one.
+const SANITIZE_MODULE_SUFFIX = "/config/sanitize.ts";
+
+/** True when `expr` is a dynamic `import(".../config/sanitize.ts")` call — the one binding source
+ * AC-7b accepts as "the real sanitizer", independent of what property name is later read off it. */
+function isSanitizeModuleImportCall(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || expr.expression.kind !== ts.SyntaxKind.ImportKeyword || expr.arguments.length !== 1) return false;
+  const arg0 = expr.arguments[0];
+  return arg0 !== undefined && ts.isStringLiteralLike(arg0) && arg0.text.endsWith(SANITIZE_MODULE_SUFFIX);
 }
 
-/** Resolves `expr` to `*.sanitizeForTerminal`, directly or via exactly one local `const` alias
- * assignment found anywhere in `sourceFile` — never through a ternary, call, or other operator. */
-function resolvesToSanitizeForTerminal(expr: ts.Expression, sourceFile: ts.SourceFile, seen = new Set<string>()): boolean {
-  if (isSanitizeForTerminalAccess(expr)) return true;
+/** Finds the `VariableDeclaration` (anywhere in `sourceFile`) that binds `name`, either as a plain
+ * identifier or as an element of an array-binding pattern (`const [a, b] = ...`), and returns its
+ * initializer plus the array index `name` was bound at (`undefined` for a plain identifier). */
+function findBindingDeclaration(
+  name: string,
+  sourceFile: ts.SourceFile,
+): { initializer: ts.Expression; arrayIndex: number | undefined } | undefined {
+  let found: { initializer: ts.Expression; arrayIndex: number | undefined } | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && node.name.text === name) {
+        found = { initializer: node.initializer, arrayIndex: undefined };
+        return;
+      }
+      if (ts.isArrayBindingPattern(node.name)) {
+        const index = node.name.elements.findIndex((el) => ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name);
+        if (index !== -1) {
+          found = { initializer: node.initializer, arrayIndex: index };
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function unwrapAwait(expr: ts.Expression): ts.Expression {
+  return ts.isAwaitExpression(expr) ? expr.expression : expr;
+}
+
+/** Resolves identifier `name` back to the module-load expression it's bound to: directly
+ * (`const sanitizeMod = await import(...)`), or as the Nth element of the `await
+ * Promise.all([...imports])` array this hook's own destructuring idiom uses. Anything else
+ * (bound to an object literal, a function call result, an unresolvable pattern) yields `undefined`. */
+function resolveModuleBinding(name: string, sourceFile: ts.SourceFile): ts.Expression | undefined {
+  const binding = findBindingDeclaration(name, sourceFile);
+  if (!binding) return undefined;
+  const init = unwrapAwait(binding.initializer);
+  if (binding.arrayIndex === undefined) return init;
+  if (
+    !ts.isCallExpression(init) ||
+    !ts.isPropertyAccessExpression(init.expression) ||
+    !ts.isIdentifier(init.expression.expression) ||
+    init.expression.expression.text !== "Promise" ||
+    init.expression.name.text !== "all" ||
+    init.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const arrayArg = init.arguments[0];
+  if (!arrayArg || !ts.isArrayLiteralExpression(arrayArg)) return undefined;
+  return arrayArg.elements[binding.arrayIndex];
+}
+
+/** True when `objExpr` (the object side of a `<obj>.sanitizeForTerminal` access) resolves all the
+ * way back to a real `import(".../config/sanitize.ts")` call — never merely because a property
+ * happens to be named "sanitizeForTerminal" on some other value (Issue #360 finding R2/AC-7b). */
+function resolvesToSanitizeModuleImport(objExpr: ts.Expression, sourceFile: ts.SourceFile): boolean {
+  if (!ts.isIdentifier(objExpr)) return false;
+  const resolved = resolveModuleBinding(objExpr.text, sourceFile);
+  return resolved !== undefined && isSanitizeModuleImportCall(resolved);
+}
+
+function isSanitizeForTerminalAccess(expr: ts.Expression, sourceFile: ts.SourceFile): boolean {
+  return ts.isPropertyAccessExpression(expr) && expr.name.text === "sanitizeForTerminal" && resolvesToSanitizeModuleImport(expr.expression, sourceFile);
+}
+
+/** Resolves `expr` to `*.sanitizeForTerminal` sourced from the real sanitize module import,
+ * directly or via exactly one local `const` alias assignment found anywhere in `sourceFile` — never
+ * through a ternary, call, other operator, or an object literal masquerading under the same
+ * property name (Issue #360 findings R2/R3). */
+function resolvesToSanitizeForTerminal(expr: ts.Expression | undefined, sourceFile: ts.SourceFile, seen = new Set<string>()): boolean {
+  if (expr === undefined) return false;
+  if (isSanitizeForTerminalAccess(expr, sourceFile)) return true;
   if (!ts.isIdentifier(expr) || seen.has(expr.text)) return false;
   seen.add(expr.text);
-  let initializer: ts.Expression | undefined;
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === expr.text && node.initializer) {
-      initializer = node.initializer;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return initializer !== undefined && resolvesToSanitizeForTerminal(initializer, sourceFile, seen);
+  const binding = findBindingDeclaration(expr.text, sourceFile);
+  return binding !== undefined && binding.arrayIndex === undefined && resolvesToSanitizeForTerminal(binding.initializer, sourceFile, seen);
 }
 
-/** The second argument of the first `renderHookOutput(...)` call found in `sourceFile`, or undefined. */
-function findRenderHookOutputSecondArg(sourceFile: ts.SourceFile): ts.Expression | undefined {
-  let result: ts.Expression | undefined;
+/** ALL `renderHookOutput(...)` call sites found anywhere in `sourceFile`, in source order — never
+ * just the first (Issue #360 finding R3/AC-7c: the original implementation returned on the first
+ * match, so a decoy call ahead of the real one went unnoticed). */
+function findAllRenderHookOutputCalls(sourceFile: ts.SourceFile): ts.CallExpression[] {
+  const calls: ts.CallExpression[] = [];
   const visit = (node: ts.Node): void => {
-    if (result) return;
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "renderHookOutput") {
-      result = node.arguments[1];
-      return;
+      calls.push(node);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  return result;
+  return calls;
 }
 
-test("AC-7: hooks/pretooluse-kernel-gate.mjs unconditionally wires sanitizeForTerminal as renderHookOutput's second argument (no conditional/ternary bypass; a local-alias hoist is accepted)", () => {
+test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHookOutput call site, and its second argument unconditionally resolves to the real sanitizeForTerminal import (no conditional/ternary bypass, no port-object masquerade, no decoy call; a local-alias hoist is accepted)", () => {
   const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
   assert.match(
     hook,
@@ -158,11 +245,84 @@ test("AC-7: hooks/pretooluse-kernel-gate.mjs unconditionally wires sanitizeForTe
     "hooks/pretooluse-kernel-gate.mjs must dynamically import ../src/policy/config/sanitize.ts",
   );
   const sourceFile = ts.createSourceFile("pretooluse-kernel-gate.mjs", hook, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  const secondArg = findRenderHookOutputSecondArg(sourceFile);
-  assert.ok(secondArg, "no renderHookOutput(...) call with a second argument found");
+  const calls = findAllRenderHookOutputCalls(sourceFile);
+  assert.equal(calls.length, 1, `expected exactly one renderHookOutput(...) call site, found ${calls.length}`);
+  const call = calls[0];
+  assert.ok(call, "expected exactly one renderHookOutput(...) call site");
+  const secondArg = call.arguments[1];
+  assert.ok(secondArg, "the one renderHookOutput(...) call has no second argument");
   assert.ok(
     resolvesToSanitizeForTerminal(secondArg, sourceFile),
-    "hooks/pretooluse-kernel-gate.mjs must pass an UNCONDITIONAL reference to sanitizeForTerminal (directly, or via one local " +
-      `alias assignment) as renderHookOutput's second argument — no ternary/conditional. Got: ${hook.slice(secondArg.getStart(sourceFile), secondArg.getEnd())}`,
+    "hooks/pretooluse-kernel-gate.mjs must pass an UNCONDITIONAL reference to the real sanitizeForTerminal import (directly, or via one " +
+      `local alias assignment) as renderHookOutput's second argument — no ternary/conditional, no port-object masquerade. Got: ${hook.slice(secondArg.getStart(sourceFile), secondArg.getEnd())}`,
   );
+});
+
+// Issue #360 fix-now round 2 (red-team round 2 finding R2, drill N4, regression pin): an env-gated
+// object literal keyed "sanitizeForTerminal" — but not sourced from the real import — must be
+// rejected even though the property NAME matches exactly what AC-7 looks for.
+test("AC-7b regression: an env-gated object-literal port keyed \"sanitizeForTerminal\" is rejected, even though the property name matches — the object must resolve back to the real config/sanitize.ts import", () => {
+  const source = [
+    'const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([',
+    "  readStdin(),",
+    '  import("../src/policy/gate/decide-tool-call.ts"),',
+    '  import("../src/policy/gate/render-hook-output.ts"),',
+    '  import("../src/policy/config/loader.ts"),',
+    '  import("../src/policy/config/central-source.ts"),',
+    '  import("../src/policy/tools/classification-catalog.ts"),',
+    '  import("../src/policy/config/sanitize.ts"),',
+    "]);",
+    "const sanitizePort = { sanitizeForTerminal: process.env.THOTH_PLAIN_REASON ? ((s) => s) : sanitizeMod.sanitizeForTerminal };",
+    "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizePort.sanitizeForTerminal);",
+  ].join("\n");
+  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = findAllRenderHookOutputCalls(sourceFile);
+  assert.equal(calls.length, 1);
+  const call = calls[0];
+  assert.ok(call, "expected exactly one renderHookOutput(...) call site");
+  assert.equal(
+    resolvesToSanitizeForTerminal(call.arguments[1], sourceFile),
+    false,
+    "an object-literal port must NOT resolve, even with a property name that matches sanitizeForTerminal exactly",
+  );
+});
+
+// Round-1 M9 non-regression: a benign local-`const` alias hoist of the REAL sanitizeForTerminal
+// property access (`const sanitizePort = sanitizeMod.sanitizeForTerminal;`) must still resolve —
+// the AC-7b object-resolution fix above must not reintroduce round-1's own false positive (a guard
+// that blocks a benign refactor trains the next author to loosen the guard, not fix the code).
+test("AC-7b non-regression: a benign local-const alias of the real sanitizeForTerminal property access still resolves (round-1 M9 — must not regress)", () => {
+  const source = [
+    'const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([',
+    "  readStdin(),",
+    '  import("../src/policy/gate/decide-tool-call.ts"),',
+    '  import("../src/policy/gate/render-hook-output.ts"),',
+    '  import("../src/policy/config/loader.ts"),',
+    '  import("../src/policy/config/central-source.ts"),',
+    '  import("../src/policy/tools/classification-catalog.ts"),',
+    '  import("../src/policy/config/sanitize.ts"),',
+    "]);",
+    "const sanitizePort = sanitizeMod.sanitizeForTerminal;",
+    "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizePort);",
+  ].join("\n");
+  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = findAllRenderHookOutputCalls(sourceFile);
+  assert.equal(calls.length, 1);
+  const call = calls[0];
+  assert.ok(call, "expected exactly one renderHookOutput(...) call site");
+  assert.equal(resolvesToSanitizeForTerminal(call.arguments[1], sourceFile), true, "a benign local-const alias hoist of the real property access must still resolve");
+});
+
+// Issue #360 fix-now round 2 (red-team round 2 finding R3, drill N5, regression pin): a decoy
+// renderHookOutput call ahead of the real one must be VISIBLE to the scan, not silently ignored —
+// the original bug returned on the first match found, so this fixture's second (real) call, which
+// passes a raw identity function, was never inspected.
+test("AC-7c regression: findAllRenderHookOutputCalls finds every renderHookOutput call site, not just the first — a decoy call ahead of the real one is visible", () => {
+  const source = [
+    "if (process.env.THOTH_NEVER_SET) render.renderHookOutput(null, sanitizeMod.sanitizeForTerminal);",
+    "const output = render.renderHookOutput(gate.decideToolCall(input, ports), (s) => s);",
+  ].join("\n");
+  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = findAllRenderHookOutputCalls(sourceFile);
+  assert.equal(calls.length, 2, "both the decoy and the real call site must be found — the original bug stopped at the first match");
 });

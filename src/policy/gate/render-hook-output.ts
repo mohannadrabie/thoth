@@ -34,6 +34,8 @@
 // call either way, so this is a signal-shape choice, not a fail-open risk.
 import type { GateResult } from "./decide-tool-call.ts";
 
+/* See https://code.claude.com/docs/en/hooks for the PreToolUse hookSpecificOutput contract this renders. */
+
 export interface HookOutput {
   exitCode: 0 | 2;
   stdout: string;

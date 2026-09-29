@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkKernelPurity,
@@ -10,6 +10,7 @@ import {
   scanForbiddenGlobals,
   scanForbiddenGlobalsAst,
   stripComments,
+  stripCommentsAstOracle,
 } from "./kernel-purity-check.ts";
 
 const repoRoot = process.cwd();
@@ -57,6 +58,35 @@ test("every scanned kernel file reports its real import count", () => {
   // hand-derived: none may silently read as zero when the real file has an import the stripper is
   // supposed to see (that was exactly the F2 regression — kernel.ts read as 0 before this fix).
   assert.deepEqual(counts, { "action-record.ts": 0, "kernel.ts": 3, "rule-types.ts": 1, "verdict.ts": 0 });
+});
+
+// Issue #362/#363 fix-now (red-team round 2 finding R1, named proof-test): stripComments agrees
+// with an independently-coded, TypeScript-AST-derived oracle (stripCommentsAstOracle — a full
+// parse plus comment-range extraction, NOT a call into stripComments itself) on every scanned
+// PRODUCTION source in every lane this file's own consumers enforce: src/policy/kernel/**,
+// src/policy/normalizer/registry.ts, and the gate lane (src/policy/gate/**, non-test files —
+// gate-structure.test.ts's own G21 already covered this lane; this differential is the kernel and
+// normalizer half that R1 found missing, generalized here to cover all three in one place so a
+// future 4th consumer only needs to be added to this list). A disagreement here means
+// stripComments diverges from ground truth on a REAL file on disk, not a synthetic fixture.
+function enforcedLaneSources(): { file: string; source: string }[] {
+  const lanes: { dir: string; files: string[] }[] = [
+    { dir: "src/policy/kernel", files: ["action-record.ts", "kernel.ts", "rule-types.ts", "verdict.ts"] },
+    { dir: "src/policy/normalizer", files: ["registry.ts"] },
+    {
+      dir: "src/policy/gate",
+      files: readdirSync(join(repoRoot, "src", "policy", "gate")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")),
+    },
+  ];
+  return lanes.flatMap(({ dir, files }) => files.map((file) => ({ file: `${dir}/${file}`, source: readFileSync(join(repoRoot, dir, file), "utf8") })));
+}
+
+test("stripComments agrees with a TypeScript-scanner-derived oracle on every scanned production source (kernel, normalizer registry, gate)", () => {
+  const sources = enforcedLaneSources();
+  assert.ok(sources.length >= 7, "the enforced lanes must yield real files to scan");
+  for (const { file, source } of sources) {
+    assert.equal(stripComments(source), stripCommentsAstOracle(source), `${file}: stripComments disagrees with the AST-derived oracle`);
+  }
 });
 
 // --- scanForbiddenGlobals -----------------------------------------------------
@@ -473,6 +503,16 @@ test("checkKernelPurity (Issue #63 AC5 regression): a renamed non-relative impor
   assert.equal(result.ok, false);
   const details = result.details.join("\n");
   assert.match(details, /renamed-import\.ts: \[non-relative-import\] import "node:child_process"/);
+});
+
+// Issue #362/#363 fix-now (red-team round 2 finding R1, drill N2): a string literal holding a
+// `/*`-shaped substring (a path glob assigned to a constant, not written in a comment) must not
+// blind the import scan the way the original F1/F2 comment-based bug did one token kind earlier.
+test("checkKernelPurity (Issue #362 fix-now, non-vacuous): a string literal holding a block-comment-opener-like substring does NOT blind the scan to a real forbidden import placed after it", async () => {
+  const result = await checkKernelPurity(repoRoot, "src/qa/selftest-fixture/kernel-purity/violating");
+  assert.equal(result.ok, false);
+  const details = result.details.join("\n");
+  assert.match(details, /string-literal-comment-opener\.ts: \[non-relative-import\] import "node:fs"/);
 });
 
 test("checkKernelPurity: an empty/nonexistent root -> vacuous pass, disclosed loudly", async () => {
