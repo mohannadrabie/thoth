@@ -1,8 +1,8 @@
 {
   "scope": "s312-fixnow-360-363",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 1,
-  "reviewRoundsTotal": 1,
+  "reviewRoundsSinceClean": 2,
+  "reviewRoundsTotal": 2,
   "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
