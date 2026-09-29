@@ -251,6 +251,9 @@ jobs:
       - name: S3 normalizer-registry-purity-check (ADR-0021 POL-12 structural gate)
         run: node src/qa/normalizer-registry-purity-check.ts
 
+      - name: QA-18 hook-typecheck-coverage-check (Issue #361 fix-now round, red-team round 2 finding R5)
+        run: node src/qa/hook-typecheck-coverage-check.ts
+
       - name: S5 gate-command-path-check (SUR-13 precondition / Issue #87 fix, Milestone #23)
         run: node src/qa/gate-command-path-check.ts
 

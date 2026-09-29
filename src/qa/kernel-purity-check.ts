@@ -138,54 +138,148 @@ const FORBIDDEN_GLOBAL_PATTERNS: { name: string; re: RegExp }[] = [
 ];
 
 /**
- * Heuristic-only comment stripping (documented as such, not claimed exhaustive — this repo's own
- * completeness-claim-checker.ts sets this precedent). Removes `/* ... *\/` block comments and
- * `//` line comments before the forbidden-globals and import-specifier scans, so a header comment
- * that quotes ADR-0021 prose ("no filesystem, network, or process access") does not false-positive
- * on the word "process" appearing in English text rather than in real code.
+ * Lexer-derived comment stripping. Removes `/* ... *\/` block comments and `//` line comments
+ * before the forbidden-globals and import-specifier scans, so a header comment that quotes
+ * ADR-0021 prose ("no filesystem, network, or process access") does not false-positive on the
+ * word "process" appearing in English text rather than in real code.
  *
  * Issue #359/#312 fix-now (red-team F1/F2, 2026-09-28): the ORIGINAL implementation was two
  * sequential regex passes — strip every `/* *\/` block first, THEN strip every `//` line — which
- * let the two interact: a `//` line comment whose text happens to contain a `/*`-shaped substring
- * (e.g. a glob written in prose, `src/policy/kernel/**`) was read by the block-comment pass as a
- * REAL block-comment opener, before the line-comment pass ever ran, and the fake block then
- * swallowed every real line of code up to the next unrelated `*\/` (a JSDoc closer, in the
- * demonstrated case) — silently, with no scan anywhere reporting a hole. `qa:kernel-purity` and
- * this same helper's other consumers (gate-structure.test.ts's G11/G11b/G15/G18,
- * normalizer-registry-purity-check.ts) all depend on this function seeing every real import and
- * every real forbidden-global token; a blind spot here made every one of them pass a planted
- * `node:fs` import in the kernel and a planted filesystem write, undetected across the whole
- * 1504-test suite.
+ * let a `//` line comment whose text happened to contain a `/*`-shaped substring (e.g. a glob
+ * written in prose, `src/policy/kernel/**`) be read as a REAL block-comment opener, silently
+ * swallowing real code up to the next unrelated `*\/`. The immediate fix-now (a single
+ * left-to-right hand-rolled scan) closed that specific interaction but was still character-level,
+ * not lexical: it had no notion of a string, template, or regex literal, so a STRING literal
+ * containing a `/*`-shaped substring (a path glob assigned to a constant, not written in a
+ * comment) reopened the identical blind spot one token kind later — Issue #362/#363 (red-team
+ * round 2 finding R1, 2026-09-28).
  *
- * FIX: a single left-to-right scan, not two independent regex passes. Whichever comment-opener
- * (`//` or `/*`) is encountered FIRST in the raw text is the one that fires; once inside either
- * comment kind, the other kind's opener is never inspected (a `/*` inside a `//` line is just
- * text, exactly as a `//` inside a `/* *\/` block is just text) — so the two strips can no longer
- * interact in either direction, which the two-pass version could not guarantee for either order.
- * Same net stripping behavior as before for every well-formed, non-interacting input (block
- * comments are still removed in full, including embedded newlines; line comments still stop
- * before, not consuming, the trailing newline) — verified by the pre-existing stripComments unit
- * tests below, unchanged.
+ * FIX: derive stripComments from `ts.createScanner`'s own tokenization instead of any hand-rolled
+ * character scan. The scanner already knows how to find the end of a string, template, or
+ * no-substitution-template literal without being fooled by `/*` or `//`-shaped bytes inside it
+ * (that is what tokenizing a language means); comment trivia is returned as its own token kind
+ * (`SingleLineCommentTrivia` / `MultiLineCommentTrivia`, since the scanner is constructed with
+ * `skipTrivia: false`) and every other token's raw text is copied through unchanged. This removes
+ * the entire class of bugs above at once: neither a `//` inside a real string/template, nor a
+ * `/*`-shaped substring inside one, can ever be misread as a comment opener, because the scanner
+ * never treats string/template content as anything but the literal it is.
+ *
+ * DISCLOSED RESIDUAL (documented, not guessed past — same convention this file's forbidden-globals
+ * AST layer already uses; widened Issue #362/#363 fix-now round 2, red-team round-3 finding R5,
+ * after the original wording named only the first of three demonstrated shapes): the raw scanner,
+ * used standalone without a parser driving it, resolves a bare `/` as division (`SlashToken`),
+ * never as the start of a regex literal, unless the caller explicitly calls `reScanSlashToken()` at
+ * a grammar position where a regex is valid — this function does not, so it does not attempt
+ * regex-literal recognition. Three demonstrated exploitable shapes, all requiring a regex literal
+ * (not a comment) whose text is misread once the leading `/` is taken as division:
+ *   1. A character class containing an UNESCAPED, adjacent `//` (`/[//]/` — legal JS: `/` need not
+ *      be escaped inside `[...]`), misread as a line-comment start.
+ *   2. A regex containing an escaped block-comment opener (`/a\/\*b/`) — the `\/` is misread as
+ *      division-then-a-real-`/`, and the following `*` is then read as opening a REAL block
+ *      comment that swallows everything up to the next unrelated `*` `/` pair, across lines.
+ *   3. A regex ENDING in an escaped slash immediately before its closing delimiter
+ *      (`/(^|\/)config\//`, byte sequence `\//`) — the final `\/` is misread the same way, and the
+ *      two characters immediately after it are read as a `//` line comment, blinding the REST OF
+ *      THAT LINE (this is the shape red-team round-3's drill N7b planted in a new kernel file,
+ *      hiding a live `process.env` read from the regex-dependent forbidden-globals layer — closed
+ *      independently by adding `process` to the AST layer's `FORBIDDEN_ROOTS` below, which parses
+ *      `source` directly and is not vulnerable to this residual at all).
+ * Measured, not assumed: zero regex literals of any shape exist today in the three lanes this
+ * function's production consumers enforce (`src/policy/kernel/**`, `src/policy/normalizer/registry.ts`,
+ * `src/policy/gate/**` production sources) — see the differential tests in kernel-purity-check.test.ts,
+ * which oracle this function against an independent full-parse comment extraction (immune to this
+ * residual, since the real parser resolves regex-vs-divide with grammar context) on every file in
+ * those lanes, AND (red-team round-3 finding R5, a second, wider correction: an earlier version of
+ * this disclosure claimed "a future 4th consumer only needs to be added" as though this covered
+ * every consumer — it does not) a SEPARATE, wider differential in the same test file checks the
+ * DANGEROUS direction only (real code lost) against every `.ts`/`.mjs`/`.js` source under `src/`
+ * and `hooks/`, not only the three enforced lanes. `stripComments` has at least 8 importers today;
+ * `src/policy/tools/classification-builtin-override.test.ts`'s Issue #332 single-merge-site scanner
+ * alone runs it over 104 production files with no per-lane differential of its own — the wider,
+ * all-source differential is what actually backstops that consumer, not the three-lane one.
  */
 export function stripComments(source: string): string {
-  let out = "";
-  let i = 0;
-  const n = source.length;
-  while (i < n) {
-    if (source[i] === "/" && source[i + 1] === "*") {
-      const end = source.indexOf("*/", i + 2);
-      i = end === -1 ? n : end + 2;
-      continue;
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, /* skipTrivia */ false, ts.LanguageVariant.Standard, source);
+  const parts: string[] = [];
+  // A plain `.scan()` loop does not know when a `}` closes a template-literal substitution
+  // (`${...}`) rather than an ordinary block/object brace — that disambiguation normally comes
+  // from the PARSER driving the scanner via `reScanTemplateToken()`, which this function has no
+  // parser for. Without it, the `}` closing e.g. `` `text ${expr}` `` is mis-read as a plain
+  // CloseBraceToken, and the scanner then hunts for the NEXT bare backtick to start what it thinks
+  // is a fresh template literal — swallowing everything in between (including real code and real
+  // comments) as one bogus string-like token, verbatim. This stack tracks which currently-open `{`
+  // was opened by a template substitution (push `true`) vs. an ordinary brace (push `false`), so a
+  // matching `}` can be correctly re-scanned as a `TemplateMiddle`/`TemplateTail` continuation —
+  // the same bookkeeping the real parser does, just scoped to this one disambiguation.
+  const templateBraceStack: boolean[] = [];
+  let kind = scanner.scan();
+  while (kind !== ts.SyntaxKind.EndOfFileToken) {
+    if (kind === ts.SyntaxKind.CloseBraceToken && templateBraceStack.pop() === true) {
+      kind = scanner.reScanTemplateToken(/* isTaggedTemplate */ false);
     }
-    if (source[i] === "/" && source[i + 1] === "/") {
-      const nl = source.indexOf("\n", i + 2);
-      i = nl === -1 ? n : nl; // stop right before the newline; the next loop iteration appends it
-      continue;
+    if (kind === ts.SyntaxKind.TemplateHead || kind === ts.SyntaxKind.TemplateMiddle) {
+      templateBraceStack.push(true);
+    } else if (kind === ts.SyntaxKind.OpenBraceToken) {
+      templateBraceStack.push(false);
     }
-    out += source[i];
-    i++;
+    if (kind !== ts.SyntaxKind.SingleLineCommentTrivia && kind !== ts.SyntaxKind.MultiLineCommentTrivia) {
+      parts.push(scanner.getTokenText());
+    }
+    kind = scanner.scan();
   }
-  return out;
+  return parts.join("");
+}
+
+/**
+ * Independent oracle for `stripComments`, used ONLY by the differential tests below (never by
+ * production code) — deliberately a DIFFERENT code path, not a call into `stripComments` itself,
+ * so a bug shared by both would not silently cancel out. Rather than a token-loop, this walks a
+ * full parse tree (`ts.createSourceFile`, which resolves regex-vs-divide correctly because the
+ * real parser drives the scanner with grammar context — the one residual `stripComments` above
+ * discloses) and extracts every comment range via `ts.getLeadingCommentRanges` /
+ * `ts.getTrailingCommentRanges` at each token's own boundaries, walking EVERY token (not just
+ * semantic AST nodes) via `getChildren()` so a comment sitting before a bare punctuation token
+ * (e.g. a closing paren with no comment-bearing sibling node) is still found.
+ */
+export function stripCommentsAstOracle(source: string): string {
+  const sourceFile = ts.createSourceFile("stripComments-oracle.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  const ranges: { pos: number; end: number }[] = [];
+  const seen = new Set<string>();
+
+  function collect(found: readonly ts.CommentRange[] | undefined): void {
+    for (const r of found ?? []) {
+      const key = `${r.pos}:${r.end}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        ranges.push({ pos: r.pos, end: r.end });
+      }
+    }
+  }
+
+  // Issue #366/#367 fix-now round (red-team round-3 finding R2, 2026-09-28): this function's OWN
+  // doc comment above always claimed both leading AND trailing ranges were collected, but only
+  // `getLeadingCommentRanges` was ever called. `ts.getLeadingCommentRanges(text, pos)` only reports
+  // a comment when it is preceded by a line break (or sits at position 0) — a comment sharing a
+  // line with the code before it (`const n = a + /* c */ b;`) is invisible to a leading-only scan
+  // and is instead reachable ONLY via `ts.getTrailingCommentRanges(text, priorNode.getEnd())`.
+  // Calling both, at every node's own boundaries, closes that gap: `collectAt` below fires at each
+  // node's full-start (leading) AND its own end (trailing) during the same walk.
+  function visit(node: ts.Node): void {
+    collect(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    collect(ts.getTrailingCommentRanges(source, node.getEnd()));
+    for (const child of node.getChildren(sourceFile)) visit(child);
+  }
+  visit(sourceFile);
+
+  ranges.sort((a, b) => a.pos - b.pos);
+  let cursor = 0;
+  const out: string[] = [];
+  for (const r of ranges) {
+    if (r.pos > cursor) out.push(source.slice(cursor, r.pos));
+    cursor = Math.max(cursor, r.end);
+  }
+  out.push(source.slice(cursor));
+  return out.join("");
 }
 
 export function scanForbiddenGlobals(source: string): { name: string }[] {
@@ -200,9 +294,17 @@ export function scanForbiddenGlobals(source: string): { name: string }[] {
 // --- AST-based forbidden-globals layer (Issue #63 AST hardening) ---------------------------
 // See the header comment above for what this layer catches and its disclosed residual.
 
+// "process" added (Issue #362/#363 fix-now round, red-team round-3 finding R1/drill N7b): the
+// regex layer's own `process` pattern is entirely dependent on `stripComments` seeing the real
+// code — a regex-vs-divide misread (the disclosed residual above) blinds it completely, exactly
+// what drill N7b demonstrated with a live `process.env` read hidden on a blinded line. This AST
+// layer parses `source` directly (never through `stripComments`), so it is not vulnerable to that
+// same residual and gives `process` a real, independent backstop — the one forbidden global that
+// previously had none at this layer.
 const FORBIDDEN_ROOTS = new Set([
   "globalThis",
   "global",
+  "process",
   "Reflect",
   "eval",
   "Function",

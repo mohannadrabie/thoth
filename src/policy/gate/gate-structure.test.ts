@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractImportSpecifiers, stripComments } from "../../qa/kernel-purity-check.ts";
+import { extractImportSpecifiers, stripComments, stripCommentsAstOracle } from "../../qa/kernel-purity-check.ts";
 import { ROUTES } from "./tool-routing.ts";
 
 const GATE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -49,7 +49,12 @@ test("G15: the gate directory has no node:* import and no import from src/policy
   for (const { file, source } of gateSources()) {
     for (const spec of extractImportSpecifiers(source)) {
       assert.ok(!spec.startsWith("node:"), `${file}: node import ${spec}`);
-      assert.ok(!/(^|\/)config\//.test(spec), `${file}: import from config/ ${spec}`);
+      // Written as `[/]` rather than `\/` immediately before the closing delimiter (red-team round-3
+      // finding R5, drill N7b): a regex literal ending `\//` is byte-for-byte the same "blinds the
+      // rest of the line" shape that made stripComments lose real code in this exact file
+      // (measured: 55 characters after this line vanished before the fix) — a bracketed single-char
+      // class is regex-equivalent to the escaped slash and does not end in that byte sequence.
+      assert.ok(!/(^|\/)config[/]/.test(spec), `${file}: import from config/ ${spec}`);
     }
   }
 });
@@ -85,29 +90,36 @@ const STORY_TEST_FILES = [
   "src/policy/config/loader-reachability.test.ts",
 ];
 
-// Issue #359/#312 fix-now (red-team F1, named proof-test): a `//` comment that happens to contain a
-// `/*`-shaped substring must not silently widen the hole stripComments leaves — this fails loud if
-// it ever does, instead of every G11/G11b/G15/G18 scan above staying silently blind to real code a
-// header comment accidentally hid. `lineFirstThenBlock` is an INDEPENDENT re-implementation of the
-// naive two-pass order (strip `//` first, THEN strip `/* */`) — not a call into stripComments
-// itself — so a future regression that reopens the interaction (in either direction: a `//` eating
-// into a real block comment, or a `/*` inside a `//` line eating real code) shows up as a length
-// mismatch between the two differently-reasoned implementations, on the REAL files, not a
-// synthetic fixture.
-function lineFirstThenBlock(source: string): string {
-  return source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-}
-
-test("G21: every gate source is fully visible to the structural scanner (no // comment opens an unterminated block comment)", () => {
+// Issue #359/#312 fix-now (red-team F1, named proof-test), re-oracled Issue #362/#363 (red-team
+// round 2, findings R1/R4): a `//` comment that happens to contain a `/*`-shaped substring must
+// not silently widen the hole stripComments leaves — this fails loud if it ever does, instead of
+// every G11/G11b/G15/G18 scan above staying silently blind to real code a header comment
+// accidentally hid.
+//
+// ORIGINAL ORACLE, why it was replaced: `lineFirstThenBlock` stripped `//` line comments FIRST,
+// then `/* */` blocks — an independent re-implementation of the naive two-pass order, chosen so a
+// regression showed up as a disagreement between two differently-reasoned strippers. But that
+// oracle had its OWN bug, orthogonal to the one it was built to catch: stripping `//` first eats a
+// SINGLE-LINE block comment's own `*/` terminator whenever the block's text contains `//` (e.g. a
+// URL, `/* see https://example.com */`) — the line-strip regex is greedy-to-end-of-line and has no
+// notion of "this `//` is inside an unclosed `/*`". `stripComments` and `lineFirstThenBlock` then
+// disagreed BY CONSTRUCTION on entirely correct code, a false positive that blocked a benign
+// documentation edit with a message asserting the wrong direction of data loss (red-team round 2,
+// finding R4).
+//
+// FIX: oracle against `stripCommentsAstOracle` (kernel-purity-check.ts) instead — a full TypeScript
+// parse plus comment-range extraction, a genuinely different code path from stripComments' own
+// scanner-token-loop, but one with no "which comment kind wins" ordering to get wrong, so it has no
+// disagreement to false-positive on for this shape.
+// Red-team round-3 finding R2's editorial (carried from round-2 R4): a disagreement message that
+// doesn't say which side lost content leaves the reader guessing which stripper is wrong.
+test("G21: every gate source is fully visible to the structural scanner (stripComments agrees with the TypeScript-AST-derived oracle)", () => {
   for (const { file, source } of gateSources()) {
-    const strippedLen = stripComments(source).length;
-    const otherOrderLen = lineFirstThenBlock(source).length;
-    assert.equal(
-      strippedLen,
-      otherOrderLen,
-      `${file}: stripComments (${strippedLen} chars) disagrees with an independently-ordered strip (${otherOrderLen} chars) — ` +
-        "a // comment is opening a real block comment (or vice versa) and swallowing real code",
-    );
+    const actual = stripComments(source);
+    const expected = stripCommentsAstOracle(source);
+    const direction =
+      actual.length < expected.length ? "stripComments is SHORTER (may have lost real code)" : "stripComments is LONGER (kept something the oracle stripped)";
+    assert.equal(actual, expected, `${file}: stripComments (${actual.length} chars) disagrees with the AST-derived oracle (${expected.length} chars) — ${direction}`);
   }
 });
 
