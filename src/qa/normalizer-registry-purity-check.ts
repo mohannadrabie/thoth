@@ -64,7 +64,11 @@ export function scanRegistrySource(source: string, registryRepoRelPath: string):
   return violations;
 }
 
-const REGISTRY_PATH = "src/policy/normalizer/registry.ts";
+// Exported (Issue #362/#363 fix-now round, red-team round-3 finding R1) so consumers that need to
+// know exactly which file this instrument enforces — e.g. kernel-purity-check.test.ts's
+// cross-lane differential — derive it from this one constant instead of a second, hand-typed copy
+// of the same path that could drift from this file's own enforced scope.
+export const REGISTRY_PATH = "src/policy/normalizer/registry.ts";
 
 /**
  * `registryRepoRelPath` is repo-relative and overridable, so this is testable against a fixture

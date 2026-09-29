@@ -63,5 +63,26 @@ export default tseslint.config(
         console: "readonly",
       },
     },
+    // This block is a plain config object, not one of the tseslint.configs.recommendedTypeChecked
+    // entries mapped above (those are scoped to src/**/*.ts only) — flat config does not inherit a
+    // plugin registration across separate config objects, so `@typescript-eslint` must be
+    // registered here explicitly for `ban-ts-comment` below to resolve.
+    plugins: { "@typescript-eslint": tseslint.plugin },
+    rules: {
+      // Issue #367 (app-security HIGH, 2026-09-28): src/qa/hook-typecheck-coverage-check.ts's
+      // pinned-baseline ratchet compares diagnostic IDENTITIES (see that file's own header), which
+      // closes the "pay down one, introduce one elsewhere" offset attack — but a `@ts-ignore` or
+      // `@ts-expect-error` directly above a real new bug removes that bug's diagnostic from
+      // `ts.getPreEmitDiagnostics`'s output ENTIRELY (demonstrated: 0 diagnostics on a file with a
+      // real dropped-required-argument call, checkJs mode), which no diagnostic-counting or
+      // -identity scheme can detect after the fact — the diagnostic that would prove the bug simply
+      // never exists. Closing the suppression vector directly, at the only two files
+      // (`hooks/sessionstart-tool-enum.mjs`, `hooks/userpromptsubmit-halt-relay.mjs`) the
+      // pinned-baseline exception list applies to today, is cheaper and more durable than trying to
+      // detect its effect: neither pragma may appear anywhere under `hooks/`, full stop — this repo
+      // has never needed one here (measured: zero pre-existing uses), so the rule costs nothing
+      // today and removes the vector for every hook, not just the two currently excepted.
+      "@typescript-eslint/ban-ts-comment": "error",
+    },
   },
 );

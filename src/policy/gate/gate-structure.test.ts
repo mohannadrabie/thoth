@@ -49,7 +49,12 @@ test("G15: the gate directory has no node:* import and no import from src/policy
   for (const { file, source } of gateSources()) {
     for (const spec of extractImportSpecifiers(source)) {
       assert.ok(!spec.startsWith("node:"), `${file}: node import ${spec}`);
-      assert.ok(!/(^|\/)config\//.test(spec), `${file}: import from config/ ${spec}`);
+      // Written as `[/]` rather than `\/` immediately before the closing delimiter (red-team round-3
+      // finding R5, drill N7b): a regex literal ending `\//` is byte-for-byte the same "blinds the
+      // rest of the line" shape that made stripComments lose real code in this exact file
+      // (measured: 55 characters after this line vanished before the fix) — a bracketed single-char
+      // class is regex-equivalent to the escaped slash and does not end in that byte sequence.
+      assert.ok(!/(^|\/)config[/]/.test(spec), `${file}: import from config/ ${spec}`);
     }
   }
 });
@@ -106,13 +111,15 @@ const STORY_TEST_FILES = [
 // parse plus comment-range extraction, a genuinely different code path from stripComments' own
 // scanner-token-loop, but one with no "which comment kind wins" ordering to get wrong, so it has no
 // disagreement to false-positive on for this shape.
+// Red-team round-3 finding R2's editorial (carried from round-2 R4): a disagreement message that
+// doesn't say which side lost content leaves the reader guessing which stripper is wrong.
 test("G21: every gate source is fully visible to the structural scanner (stripComments agrees with the TypeScript-AST-derived oracle)", () => {
   for (const { file, source } of gateSources()) {
-    assert.equal(
-      stripComments(source),
-      stripCommentsAstOracle(source),
-      `${file}: stripComments disagrees with the AST-derived oracle — real code or a real comment is being handled differently by the two`,
-    );
+    const actual = stripComments(source);
+    const expected = stripCommentsAstOracle(source);
+    const direction =
+      actual.length < expected.length ? "stripComments is SHORTER (may have lost real code)" : "stripComments is LONGER (kept something the oracle stripped)";
+    assert.equal(actual, expected, `${file}: stripComments (${actual.length} chars) disagrees with the AST-derived oracle (${expected.length} chars) — ${direction}`);
   }
 });
 

@@ -165,20 +165,38 @@ const FORBIDDEN_GLOBAL_PATTERNS: { name: string; re: RegExp }[] = [
  * never treats string/template content as anything but the literal it is.
  *
  * DISCLOSED RESIDUAL (documented, not guessed past — same convention this file's forbidden-globals
- * AST layer already uses): the raw scanner, used standalone without a parser driving it, resolves
- * a bare `/` as division (`SlashToken`), never as the start of a regex literal, unless the caller
- * explicitly calls `reScanSlashToken()` at a grammar position where a regex is valid — this
- * function does not, so it does not attempt regex-literal recognition. In the overwhelming
- * majority of shapes this is harmless (a misread `/` just causes the following characters to be
- * re-tokenized as ordinary code, which still can't manufacture a comment out of characters that
- * were genuinely part of a regex pattern in well-formed source). The one narrow exploitable shape
- * is a regex character class containing an UNESCAPED, adjacent `//` (`/[//]/` — legal JS: `/` need
- * not be escaped inside `[...]`), which this function would misread as a line-comment start.
+ * AST layer already uses; widened Issue #362/#363 fix-now round 2, red-team round-3 finding R5,
+ * after the original wording named only the first of three demonstrated shapes): the raw scanner,
+ * used standalone without a parser driving it, resolves a bare `/` as division (`SlashToken`),
+ * never as the start of a regex literal, unless the caller explicitly calls `reScanSlashToken()` at
+ * a grammar position where a regex is valid — this function does not, so it does not attempt
+ * regex-literal recognition. Three demonstrated exploitable shapes, all requiring a regex literal
+ * (not a comment) whose text is misread once the leading `/` is taken as division:
+ *   1. A character class containing an UNESCAPED, adjacent `//` (`/[//]/` — legal JS: `/` need not
+ *      be escaped inside `[...]`), misread as a line-comment start.
+ *   2. A regex containing an escaped block-comment opener (`/a\/\*b/`) — the `\/` is misread as
+ *      division-then-a-real-`/`, and the following `*` is then read as opening a REAL block
+ *      comment that swallows everything up to the next unrelated `*` `/` pair, across lines.
+ *   3. A regex ENDING in an escaped slash immediately before its closing delimiter
+ *      (`/(^|\/)config\//`, byte sequence `\//`) — the final `\/` is misread the same way, and the
+ *      two characters immediately after it are read as a `//` line comment, blinding the REST OF
+ *      THAT LINE (this is the shape red-team round-3's drill N7b planted in a new kernel file,
+ *      hiding a live `process.env` read from the regex-dependent forbidden-globals layer — closed
+ *      independently by adding `process` to the AST layer's `FORBIDDEN_ROOTS` below, which parses
+ *      `source` directly and is not vulnerable to this residual at all).
  * Measured, not assumed: zero regex literals of any shape exist today in the three lanes this
- * function's consumers enforce (`src/policy/kernel/**`, `src/policy/normalizer/registry.ts`,
- * `src/policy/gate/**` production sources) — see the differential tests below, which oracle this
- * function against an independent full-parse comment extraction (immune to this residual, since
- * the real parser resolves regex-vs-divide with grammar context) on every file in those lanes.
+ * function's production consumers enforce (`src/policy/kernel/**`, `src/policy/normalizer/registry.ts`,
+ * `src/policy/gate/**` production sources) — see the differential tests in kernel-purity-check.test.ts,
+ * which oracle this function against an independent full-parse comment extraction (immune to this
+ * residual, since the real parser resolves regex-vs-divide with grammar context) on every file in
+ * those lanes, AND (red-team round-3 finding R5, a second, wider correction: an earlier version of
+ * this disclosure claimed "a future 4th consumer only needs to be added" as though this covered
+ * every consumer — it does not) a SEPARATE, wider differential in the same test file checks the
+ * DANGEROUS direction only (real code lost) against every `.ts`/`.mjs`/`.js` source under `src/`
+ * and `hooks/`, not only the three enforced lanes. `stripComments` has at least 8 importers today;
+ * `src/policy/tools/classification-builtin-override.test.ts`'s Issue #332 single-merge-site scanner
+ * alone runs it over 104 production files with no per-lane differential of its own — the wider,
+ * all-source differential is what actually backstops that consumer, not the three-lane one.
  */
 export function stripComments(source: string): string {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, /* skipTrivia */ false, ts.LanguageVariant.Standard, source);
@@ -228,8 +246,8 @@ export function stripCommentsAstOracle(source: string): string {
   const ranges: { pos: number; end: number }[] = [];
   const seen = new Set<string>();
 
-  function collectAt(pos: number): void {
-    for (const r of ts.getLeadingCommentRanges(source, pos) ?? []) {
+  function collect(found: readonly ts.CommentRange[] | undefined): void {
+    for (const r of found ?? []) {
       const key = `${r.pos}:${r.end}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -238,14 +256,20 @@ export function stripCommentsAstOracle(source: string): string {
     }
   }
 
+  // Issue #366/#367 fix-now round (red-team round-3 finding R2, 2026-09-28): this function's OWN
+  // doc comment above always claimed both leading AND trailing ranges were collected, but only
+  // `getLeadingCommentRanges` was ever called. `ts.getLeadingCommentRanges(text, pos)` only reports
+  // a comment when it is preceded by a line break (or sits at position 0) — a comment sharing a
+  // line with the code before it (`const n = a + /* c */ b;`) is invisible to a leading-only scan
+  // and is instead reachable ONLY via `ts.getTrailingCommentRanges(text, priorNode.getEnd())`.
+  // Calling both, at every node's own boundaries, closes that gap: `collectAt` below fires at each
+  // node's full-start (leading) AND its own end (trailing) during the same walk.
   function visit(node: ts.Node): void {
-    collectAt(node.getFullStart());
+    collect(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    collect(ts.getTrailingCommentRanges(source, node.getEnd()));
     for (const child of node.getChildren(sourceFile)) visit(child);
   }
   visit(sourceFile);
-  // Trailing comments after the very last real token (before EOF) are LEADING comments of the
-  // synthetic end-of-file token itself, already covered by visiting sourceFile's own children
-  // (the EndOfFileToken is the last child returned by getChildren()) — no separate EOF pass needed.
 
   ranges.sort((a, b) => a.pos - b.pos);
   let cursor = 0;
@@ -270,9 +294,17 @@ export function scanForbiddenGlobals(source: string): { name: string }[] {
 // --- AST-based forbidden-globals layer (Issue #63 AST hardening) ---------------------------
 // See the header comment above for what this layer catches and its disclosed residual.
 
+// "process" added (Issue #362/#363 fix-now round, red-team round-3 finding R1/drill N7b): the
+// regex layer's own `process` pattern is entirely dependent on `stripComments` seeing the real
+// code — a regex-vs-divide misread (the disclosed residual above) blinds it completely, exactly
+// what drill N7b demonstrated with a live `process.env` read hidden on a blinded line. This AST
+// layer parses `source` directly (never through `stripComments`), so it is not vulnerable to that
+// same residual and gives `process` a real, independent backstop — the one forbidden global that
+// previously had none at this layer.
 const FORBIDDEN_ROOTS = new Set([
   "globalThis",
   "global",
+  "process",
   "Reflect",
   "eval",
   "Function",

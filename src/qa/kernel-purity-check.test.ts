@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { listFilesRecursive } from "../lib/fs-walk.ts";
+import { REGISTRY_PATH } from "./normalizer-registry-purity-check.ts";
 import {
   checkKernelPurity,
   classifyImport,
@@ -66,26 +68,104 @@ test("every scanned kernel file reports its real import count", () => {
 // PRODUCTION source in every lane this file's own consumers enforce: src/policy/kernel/**,
 // src/policy/normalizer/registry.ts, and the gate lane (src/policy/gate/**, non-test files —
 // gate-structure.test.ts's own G21 already covered this lane; this differential is the kernel and
-// normalizer half that R1 found missing, generalized here to cover all three in one place so a
-// future 4th consumer only needs to be added to this list). A disagreement here means
-// stripComments diverges from ground truth on a REAL file on disk, not a synthetic fixture.
-function enforcedLaneSources(): { file: string; source: string }[] {
-  const lanes: { dir: string; files: string[] }[] = [
-    { dir: "src/policy/kernel", files: ["action-record.ts", "kernel.ts", "rule-types.ts", "verdict.ts"] },
-    { dir: "src/policy/normalizer", files: ["registry.ts"] },
-    {
-      dir: "src/policy/gate",
-      files: readdirSync(join(repoRoot, "src", "policy", "gate")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")),
-    },
-  ];
-  return lanes.flatMap(({ dir, files }) => files.map((file) => ({ file: `${dir}/${file}`, source: readFileSync(join(repoRoot, dir, file), "utf8") })));
+// normalizer half that R1 found missing).
+//
+// Issue #362/#363 fix-now round 2 (red-team round-3 finding R1, 2026-09-28): the kernel lane was
+// ORIGINALLY four hand-typed filenames, independent of the directory checkKernelPurity itself
+// walks — a NEW kernel file (drill N7b: an ordinary-looking pure helper with a path-matching regex
+// and a live `process.env` read on the same line) was invisible to this differential while
+// `qa:kernel-purity` also stayed blind (the same stripComments residual), leaving zero defense.
+// FIX: the kernel lane is now generated via the SAME `listFilesRecursive` call, with the SAME
+// predicate, `checkKernelPurity` uses internally — not two independently maintained lists that
+// happen to agree today, but one generation mechanism reused, so a new kernel file joins this
+// differential's coverage the moment it lands, with no second edit required. The normalizer lane
+// is derived from `normalizer-registry-purity-check.ts`'s own exported `REGISTRY_PATH` constant
+// for the same reason (one source of truth for "which file that instrument enforces", not a
+// second hand-typed copy of the same string). This still does not widen CLAIMED coverage beyond
+// what it enumerates today — see the "8 importers, this covers 3 lanes" disclosure below for the
+// primitive's own wider blast radius.
+async function enforcedLaneSources(): Promise<{ file: string; source: string }[]> {
+  const kernelPrefix = "src/policy/kernel/";
+  const kernelFiles = await listFilesRecursive(repoRoot, (p) => p.startsWith(kernelPrefix) && p.endsWith(".ts") && !p.endsWith(".test.ts"));
+  const gateDir = "src/policy/gate";
+  const gateFiles = readdirSync(join(repoRoot, gateDir))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .map((f) => `${gateDir}/${f}`);
+  const files = [...kernelFiles, REGISTRY_PATH, ...gateFiles].sort();
+  return files.map((file) => ({ file, source: readFileSync(join(repoRoot, file), "utf8") }));
 }
 
-test("stripComments agrees with a TypeScript-scanner-derived oracle on every scanned production source (kernel, normalizer registry, gate)", () => {
-  const sources = enforcedLaneSources();
+/** Reports which side retained more characters (red-team round-2 R4 / round-3 R2's own editorial:
+ * a disagreement message that doesn't say which direction lost content leaves the reader guessing
+ * which stripper is wrong). */
+function stripDisagreementMessage(file: string, actual: string, expected: string): string {
+  const direction = actual.length < expected.length ? "stripComments is SHORTER (may have lost real code)" : "stripComments is LONGER (kept something the oracle stripped)";
+  return `${file}: stripComments (${actual.length} chars) disagrees with the AST-derived oracle (${expected.length} chars) — ${direction}`;
+}
+
+test("stripComments agrees with a TypeScript-scanner-derived oracle on every scanned production source (kernel, normalizer registry, gate)", async () => {
+  const sources = await enforcedLaneSources();
   assert.ok(sources.length >= 7, "the enforced lanes must yield real files to scan");
   for (const { file, source } of sources) {
-    assert.equal(stripComments(source), stripCommentsAstOracle(source), `${file}: stripComments disagrees with the AST-derived oracle`);
+    const actual = stripComments(source);
+    const expected = stripCommentsAstOracle(source);
+    assert.equal(actual, expected, stripDisagreementMessage(file, actual, expected));
+  }
+});
+
+// Red-team round-3 finding R5 (named proof-test): stripComments must never lose real code on ANY
+// .ts/.mjs/.js under src/ or hooks/ — not only the 8 files the three enforced lanes cover. Uses
+// LENGTH, not full equality, as the safety check: stripCommentsAstOracle is proven (round-3 K8) to
+// never over-strip (never remove a non-comment range), so a case where stripComments's output is
+// STRICTLY SHORTER than the oracle's can only mean stripComments struck out real code the oracle
+// correctly kept — a mathematically sound "dangerous direction only" proxy, deliberately wider than
+// (and not a replacement for) the exact-equality check above, which stays scoped to the 3 lanes
+// this file's production consumers actually enforce. stripComments being LONGER than the oracle
+// (the benign direction — the known regex-vs-divide residual understating a comment, not deleting
+// code) is not flagged here; that direction costs nothing dangerous and remains disclosed above.
+test("stripComments never loses real code, measured against the AST oracle, on every .ts/.mjs/.js source under src/ and hooks/ (not only the 3 enforced lanes)", async () => {
+  const allFiles = await listFilesRecursive(
+    repoRoot,
+    (p) => (p.startsWith("src/") || p.startsWith("hooks/")) && (p.endsWith(".ts") || p.endsWith(".mjs") || p.endsWith(".js")),
+  );
+  assert.ok(allFiles.length >= 150, `expected a large real corpus, found ${allFiles.length}`);
+  const lossy: string[] = [];
+  for (const file of allFiles) {
+    const source = readFileSync(join(repoRoot, file), "utf8");
+    const actualLen = stripComments(source).length;
+    const oracleLen = stripCommentsAstOracle(source).length;
+    if (actualLen < oracleLen) lossy.push(`${file} (lost ${oracleLen - actualLen} char(s))`);
+  }
+  assert.deepEqual(lossy, [], `stripComments loses real code on: ${lossy.join(", ")}`);
+});
+
+// Red-team round-3 finding R2 (named proof-test): stripCommentsAstOracle's own doc comment claimed
+// leading AND trailing comment-range extraction, but only leading was ever called — invisible to
+// EVERY comment sharing a line with preceding code (ts.getLeadingCommentRanges only reports a
+// comment preceded by a line break). These are the 14 ordinary shapes red-team demonstrated
+// disagreeing before the getTrailingCommentRanges fix; pinned here individually so a future
+// regression names exactly which position broke, not just "some file, somewhere".
+test("stripCommentsAstOracle agrees with stripComments on every same-line trailing comment position (the 14 shapes red-team round 3 demonstrated)", () => {
+  const cases: [string, string][] = [
+    ["block comment in template substitution", "const s = `a${ /* c */ b}c`;"],
+    ["line comment in template substitution", "const s = `a${ b /* c */ }c`;"],
+    ["block comment between divisions", "const n = a / /* c */ b;"],
+    ["block comment mid-expression", "const n = a + /* c */ b;"],
+    ["block comment before close paren", "f(a /* c */);"],
+    ["block comment after the last token", "const n = 1; /* c */"],
+    ["block comment inside an array", "const a = [1, /* c */ 2];"],
+    ["block comment in arrow body template", "const f = () => `x${ /* c */ 1}`;"],
+    ["block comment inside type args", "const m = new Map< /* c */ string, number>();"],
+    ["block comment in nested template", "const s = `a${`b${ /* c */ 1}c`}d`;"],
+    ["comment between export and const", "export /* c */ const x = 1;"],
+    ["comment in a default parameter", "function f(x = /* c */ 1) {}"],
+    ["comment in template, no spaces", "const s = `a${/* c */b}c`;"],
+    ["jsdoc in a template substitution", "const s = `a${/** c */ b}c`;"],
+  ];
+  for (const [label, source] of cases) {
+    const actual = stripComments(source);
+    const expected = stripCommentsAstOracle(source);
+    assert.equal(actual, expected, `${label}: ${stripDisagreementMessage(JSON.stringify(source), actual, expected)}`);
   }
 });
 
@@ -376,12 +456,17 @@ test("classifyImport: a relative import resolving outside kernelRoot is an out-o
 
 // --- scanFileContent -------------------------------------------------------------
 
+// Issue #362/#363 fix-now round (red-team round-3 finding R1): `process` was added to
+// FORBIDDEN_ROOTS, so `process.cwd()` now fires BOTH the regex layer (the literal `process`
+// pattern) AND the new AST layer (a property access on the forbidden root `process`) — 2 forbidden
+// global findings, additively, not 1 — matching the "both layers feed the same violation kind and
+// run independently" behavior this file's own test elsewhere already documents for `globalThis`.
 test("scanFileContent: combines import and forbidden-global violations for one file", () => {
   const source = ['import { readFile } from "node:fs";', "export function f() { return process.cwd(); }"].join("\n");
   const violations = scanFileContent("src/policy/kernel/kernel.ts", source, "src/policy/kernel");
-  assert.equal(violations.length, 2);
+  assert.equal(violations.length, 3);
   assert.ok(violations.some((v) => v.kind === "non-relative-import"));
-  assert.ok(violations.some((v) => v.kind === "forbidden-global"));
+  assert.equal(violations.filter((v) => v.kind === "forbidden-global").length, 2, "both the regex layer and the new AST process backstop must fire");
 });
 
 test("scanFileContent: a clean file produces zero violations", () => {

@@ -279,7 +279,10 @@ test("QA-14 marker-corpus-probe (Issue #178, regression): a nested untracked git
       cwd: repoDir,
       encoding: "utf8",
     });
-    assert.match(othersRun.stdout, /zz-nested\//, "sanity: git itself must report the nested repo as a directory entry");
+    // `[/]` rather than `\/` immediately before the closing delimiter (red-team round-3 finding R5):
+    // a regex literal ending `\//` is the exact "blinds the rest of the line" shape that made
+    // stripComments lose real code in this file (measured: 75 characters vanished before the fix).
+    assert.match(othersRun.stdout, /zz-nested[/]/, "sanity: git itself must report the nested repo as a directory entry");
 
     const texts = await collectFullTreeFileTexts(repoDir);
     assert.ok(![...texts.keys()].some((f) => f.startsWith("zz-nested")), "the nested repo's directory entry must not be scanned as a file");

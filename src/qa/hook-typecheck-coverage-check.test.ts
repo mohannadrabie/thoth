@@ -8,6 +8,20 @@ import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES } fro
 
 const repoRoot = process.cwd();
 
+// Issue #367 (app-security HIGH, demonstrated): a `// @ts-ignore`/`@ts-expect-error` directly above
+// a real new bug removes that bug's diagnostic from `ts.getPreEmitDiagnostics`'s output ENTIRELY —
+// no diagnostic-counting or -identity scheme (this file's own PINNED_BASELINES fix included) can
+// detect a bug whose own diagnostic never exists. Closed instead at the source: `eslint.config.mjs`
+// bans both pragmas (and `@ts-nocheck`) under `hooks/**/*.mjs` via `@typescript-eslint/ban-ts-comment`
+// — this test is the direct, always-current proof that the real tree has none today, backing up
+// (not replacing) the ESLint rule itself, which is what actually gates a future reintroduction in CI.
+test("Issue #367: no hooks/*.mjs file contains @ts-ignore, @ts-expect-error, or @ts-nocheck — the suppression vector the pinned-baseline ratchet alone cannot detect", () => {
+  for (const hook of listProductionHooks(repoRoot)) {
+    const source = readFileSync(join(repoRoot, hook), "utf8");
+    assert.ok(!/@ts-(?:ignore|expect-error|nocheck)\b/.test(source), `${hook}: must not contain a TypeScript suppression pragma (banned by eslint.config.mjs under hooks/**/*.mjs)`);
+  }
+});
+
 // --- listProductionHooks (AC-10: generated, not hand-derived) -------------------------------
 
 test("listProductionHooks: enumerates exactly the 3 real production hooks from disk, generated via readdirSync, never hand-typed", () => {
@@ -100,7 +114,49 @@ test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionst
     assert.ok(realBaseline !== undefined, "precondition: the real hook must have a pinned baseline to compare against");
     const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath);
     assert.equal(after.ok, false, "the mutated file must exceed the pinned baseline (a NEW TS2554 arity diagnostic), even though it is a currently-excepted hook");
-    assert.match(after.details.join("\n"), /exceeds its pinned Issue #361 baseline/);
+    assert.match(after.details.join("\n"), /exceed the pinned Issue #361 baseline/);
+    assert.match(after.details.join("\n"), /2554:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named, not just a count delta");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// Red-team round-3 finding R4, drill C2 (demonstrated): a raw COUNT comparison is gameable by
+// OFFSET — pay down one pre-existing diagnostic while introducing one real new bug elsewhere, and
+// the total count stays exactly at baseline. Both edits are derived by literal string-replace
+// against the REAL file's CURRENT content (same AC-13 convention: never a hand-copied snapshot),
+// so this pin cannot silently go stale either.
+test("R4 regression (drill C2): paying down one pre-existing diagnostic while introducing one real new bug elsewhere must still fail — a raw count comparison would see no change at all", () => {
+  const real = readFileSync(join(repoRoot, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
+  const paydownTarget = "function isValidSessionId(id) {";
+  const arityTarget = "} else if (wasReasonActive(initialHaltState, reasonKey)) {";
+  assert.ok(real.includes(paydownTarget), `precondition: the exact paydown target "${paydownTarget}" must exist in the real file`);
+  assert.ok(real.includes(arityTarget), `precondition: the exact arity-drop target "${arityTarget}" must exist in the real file`);
+  const mutated = real
+    // Same-line inline JSDoc param annotation (not a new line above) so no OTHER diagnostic's own
+    // line number shifts — isolates this drill to exactly one diagnostic removed, one added.
+    .replace(paydownTarget, "function isValidSessionId(/** @type {string} */ id) {") // -1 diagnostic: kills one TS7006
+    .replace(arityTarget, "} else if (wasReasonActive(initialHaltState)) {"); // +1 diagnostic: drops a required argument
+
+  const tmpDir = join(repoRoot, `.qa-tmp-c2-${process.pid}-${Date.now()}`);
+  const tmpHookRel = "sessionstart-tool-enum.mjs";
+  const tmpConfigPath = join(tmpDir, "tsconfig.json");
+  try {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, tmpHookRel), mutated, "utf8");
+    writeFileSync(
+      tmpConfigPath,
+      JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { allowJs: true, checkJs: true, noEmit: true }, include: [tmpHookRel] }, null, 2),
+      "utf8",
+    );
+    const tmpRel = `${tmpDir.slice(repoRoot.length + 1).split("\\").join("/")}/${tmpHookRel}`;
+    const realBaseline = PINNED_BASELINES["hooks/sessionstart-tool-enum.mjs"];
+    assert.ok(realBaseline !== undefined, "precondition: the real hook must have a pinned baseline to compare against");
+    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath);
+    assert.equal(after.ok, false, "an offsetting paydown-plus-new-bug edit must still fail, even though the total diagnostic count is unchanged");
+    const afterDetails = after.details.join("\n");
+    assert.match(afterDetails, /30 diagnostic\(s\) found/, "the total count must be UNCHANGED from the pinned baseline (30) — proving this is a genuine offset, not merely a net increase a raw count would also catch");
+    assert.match(afterDetails, /\d+:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named even though one other identity vanished in the same run");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

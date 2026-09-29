@@ -73,8 +73,23 @@ test("AC-8: a hostile project-rule id (no rationale, the kernel's id-fallback re
 // of arbitrary environment variables including the exact name red-team's drill used
 // (THOTH_RAW_REASON) plus unrelated ones, to prove sanitization does not depend on ambient
 // environment state today.
+//
+// Issue #360 fix-now round 3 (red-team round-3 finding R3, drill N9, 2026-09-28): `THOTH_PLAIN_REASON`
+// added — the exact env-var name drill N9 used to gate a scope-shadowed identity sanitizer. This is
+// a cheap, targeted addition, not a claim that a finite list now proves the unconditional property
+// over the open set of possible env-var names (it does not, and AC-7b/sanitize.test.ts's own
+// structural fix is what actually closes the shadow shape at the source level) — a defense-in-depth
+// behavioral pin against the ONE name a real, demonstrated drill used, the same way THOTH_RAW_REASON
+// itself was added for the ORIGINAL round-1 drill.
 test("AC-9: the hook sanitizes a hostile rationale unconditionally, regardless of environment variables (behavioral drift guard, not a source-text pattern)", () => {
-  const envCases: NodeJS.ProcessEnv[] = [{}, { THOTH_RAW_REASON: "1" }, { THOTH_RAW_REASON: "true" }, { NODE_ENV: "production" }, { THOTH_DEBUG: "1" }];
+  const envCases: NodeJS.ProcessEnv[] = [
+    {},
+    { THOTH_RAW_REASON: "1" },
+    { THOTH_RAW_REASON: "true" },
+    { NODE_ENV: "production" },
+    { THOTH_DEBUG: "1" },
+    { THOTH_PLAIN_REASON: "1" },
+  ];
   for (const env of envCases) {
     const sb = createGateSandbox();
     const name = firstCommittedEntryName();
