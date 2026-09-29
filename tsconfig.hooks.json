@@ -1,0 +1,42 @@
+{
+  // Issue #361 (S312 fix-now round, red-team finding F5): tsconfig.json's own "include" is
+  // "src/**/*.ts" only, so the 3 production enforcement hooks (plain `.mjs` Node ESM scripts,
+  // hooks/pretooluse-kernel-gate.mjs, hooks/sessionstart-tool-enum.mjs,
+  // hooks/userpromptsubmit-halt-relay.mjs — the actual PreToolUse/SessionStart/UserPromptSubmit
+  // call sites) were NEVER typechecked. Dropping a required argument (e.g.
+  // renderHookOutput's `sanitize` port) gave `npm run build` rc=0; only ESLint's incidental
+  // no-unused-vars catch on the now-dead import binding caught it, and only when the binding
+  // happened to become unused.
+  //
+  // A separate project file, not a widened `include` on tsconfig.json, for the same reason
+  // eslint.config.mjs already lints `hooks/**/*.mjs` in its own file block, deliberately apart from
+  // `src/**/*.ts` (see that file's header comment): `hooks/**/*.ts` (the test files and test-support
+  // helpers under hooks/) stay OUT of this project too, same lane-scoping precedent — test-writer's
+  // and story-implementer's own test files are not pulled into a production-code compile gate, and
+  // widening this project to include them risks unrelated pre-existing test-file typecheck noise
+  // this fix-now round did not scope in. `checkJs`/`allowJs` are ON here only, not on the base
+  // project, so `src/**/*.ts`'s own strict-TS compile is unaffected either way.
+  //
+  // NARROWER THAN "all 3 production hooks" ON PURPOSE (checked first, per the task brief): running
+  // this same strict/checkJs project against `hooks/**/*.mjs` (all 3 hooks) surfaced ~60
+  // pre-existing implicit-any / type-mismatch errors in `hooks/sessionstart-tool-enum.mjs` and
+  // `hooks/userpromptsubmit-halt-relay.mjs` — unrelated to Issue #312/#361 (neither file has this
+  // story's "required parameter, fails loud" pattern at stake), and fixing them is a real,
+  // separate undertaking this fix-now round does not scope in. Scoped here to the ONE file the
+  // red-team drill (M11) actually demonstrated the gap against —
+  // `hooks/pretooluse-kernel-gate.mjs`, the only production caller of `renderHookOutput` — whose
+  // own 4 pre-existing implicit-any / return-type-widening errors were fixed alongside this file
+  // (minimal JSDoc annotations, no behavior change) so it type-checks clean. Widening this project
+  // to the other 2 hooks (hooks/sessionstart-tool-enum.mjs, hooks/userpromptsubmit-halt-relay.mjs)
+  // is tracked by the still-open Issue #361 — not silently expanded into this round, and not a
+  // dangling reference to a docs/backlog.md line that was never written (red-team round 2 finding,
+  // s312-kernel-hook-sanitize-red-team-round2-2026-09-28.md, attack 5).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": ["hooks/pretooluse-kernel-gate.mjs"],
+  "exclude": ["dist/**", "node_modules/**"]
+}

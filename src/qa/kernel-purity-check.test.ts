@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   checkKernelPurity,
   classifyImport,
@@ -21,6 +23,40 @@ test("stripComments: removes // line comments", () => {
 test("stripComments: removes block comments, including multi-line ones", () => {
   const source = "/* no filesystem, network, or process access */\nconst x = 1;";
   assert.equal(stripComments(source), "\nconst x = 1;");
+});
+
+// Issue #359/#312 fix-now (red-team F1/F2, named proof-test): a `//` line comment whose text
+// happens to contain a `/*`-shaped substring (a glob written in prose, exactly the shape this PR's
+// own render-hook-output.ts header comment used) must NOT be read as a real block-comment opener —
+// the two comment kinds must not interact in either direction.
+test("stripComments: a // line comment containing a block-comment opener does not swallow the code below it", () => {
+  const source = ['// see src/policy/kernel/**', 'import x from "node:fs";', '/** a real JSDoc block */', "x();"].join("\n");
+  const stripped = stripComments(source);
+  assert.ok(stripped.includes('import x from "node:fs";'), `the import line must survive stripping, got: ${JSON.stringify(stripped)}`);
+  assert.ok(stripped.includes("x();"), `code after the real JSDoc must survive stripping, got: ${JSON.stringify(stripped)}`);
+});
+
+test("stripComments: a /* block comment containing // text does not end early at that embedded //", () => {
+  const source = "/* the // here is just text, not a real line comment */\nconst kept = 1;";
+  assert.equal(stripComments(source), "\nconst kept = 1;");
+});
+
+// Regression pin (red-team's second named proof-test): every production kernel file's real import
+// count, measured directly against the file on disk — not a self-test fixture — so a future
+// regression in stripComments (or a future header comment that happens to trigger it again) shows
+// up as a wrong count here, not just as a silent zero.
+test("every scanned kernel file reports its real import count", () => {
+  const kernelDir = join(repoRoot, "src", "policy", "kernel");
+  const files = ["action-record.ts", "kernel.ts", "rule-types.ts", "verdict.ts"];
+  const counts: Record<string, number> = {};
+  for (const file of files) {
+    const source = readFileSync(join(kernelDir, file), "utf8");
+    counts[file] = extractImportSpecifiers(source).length;
+  }
+  // Real counts as of this fix (Issue #359/#312), measured against the files on disk, not
+  // hand-derived: none may silently read as zero when the real file has an import the stripper is
+  // supposed to see (that was exactly the F2 regression — kernel.ts read as 0 before this fix).
+  assert.deepEqual(counts, { "action-record.ts": 0, "kernel.ts": 3, "rule-types.ts": 1, "verdict.ts": 0 });
 });
 
 // --- scanForbiddenGlobals -----------------------------------------------------

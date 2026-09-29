@@ -2,7 +2,8 @@
 // PreToolUse hook (ADR-0021 shape 4, "gate surfaces"): the in-session enforcement point that calls
 // S2's pure kernel (`decide()`) through S3's normalizer registry, S4's shell-command detector and
 // S7's tool-class normalizer. It is a THIN ADAPTER: it reads stdin, builds the real ports for the
-// gate module (src/policy/gate/decide-tool-call.ts), and writes what renderHookOutput returns.
+// gate module (src/policy/gate/decide-tool-call.ts), and writes what renderHookOutput returns (its
+// `reason` text is terminal-sanitized here — Issue #312, see renderHookOutput's own header).
 //
 // ACTIVATION STATUS (docs/plans/s7-kernel-gate-classification-phase1-2026-09-26.md): this script is
 // built and tested but NOT WIRED. `.claude/settings.json` has no `hooks.PreToolUse` entry for it, so
@@ -103,6 +104,11 @@ function readStdin() {
  * into a model-visible channel); anything else prints as the bare type `Error`. The exit runs in a finally
  * so that even a broken stderr cannot turn this into a non-blocking exit 1. The name lookup is inside the same
  * try: a thrown value whose `name` getter throws (app-security finding 1) reads as the bare type `Error`. */
+/**
+ * @param {string} what
+ * @param {any} err — deliberately untyped: a thrown value can be any shape, including one whose
+ *   `name` getter itself throws (app-security finding 1), so this reads it defensively.
+ */
 function failClosed(what, err) {
   try {
     let name = "Error";
@@ -122,6 +128,7 @@ const STDOUT_FAILED = "decision could not be written to stdout";
 
 /** Writes the decision and resolves only when the stream reports it flushed. A failed write (the callback
  * receives an error) fails closed here, so a decided deny that never reached the reader is never an exit 0. */
+/** @param {string} text */
 function writeStdout(text) {
   return new Promise((resolvePromise) => {
     process.stdout.write(text, (err) => (err ? failClosed(STDOUT_FAILED, err) : resolvePromise(undefined)));
@@ -142,13 +149,19 @@ async function main() {
     // (hooks/pretooluse-kernel-gate-classification.test.ts) reads this spelling to discover the export it
     // wraps:
     //   import { decideToolCall } from "../src/policy/gate/decide-tool-call.ts"
-    const [raw, gate, render, loader, central, catalog] = await Promise.all([
+    //
+    // Issue #312: this hook is the one place allowed to import src/policy/config/ directly (G15 forbids
+    // it under src/policy/gate/**, kernel-purity-check.ts forbids it under src/policy/kernel/**), so it
+    // also supplies renderHookOutput's `sanitize` port with the real, canonical implementation — the
+    // same terminal-stripping helper #294 uses at the policy:print render boundary.
+    const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([
       readStdin(),
       import("../src/policy/gate/decide-tool-call.ts"),
       import("../src/policy/gate/render-hook-output.ts"),
       import("../src/policy/config/loader.ts"),
       import("../src/policy/config/central-source.ts"),
       import("../src/policy/tools/classification-catalog.ts"),
+      import("../src/policy/config/sanitize.ts"),
     ]);
 
     if (raw.trim() === "") {
@@ -163,6 +176,7 @@ async function main() {
     // failure), and renderHookOutput maps it to what this script writes. A port that throws (for example a
     // malformed fixture) propagates to the catch below: exit 2.
     const ports = {
+      /** @returns {import("../src/policy/gate/decide-tool-call.ts").GatePolicyResult} */
       loadPolicy() {
         const loaded = loader.loadEffectivePolicy({
           shippedDefaultsPath: SHIPPED_DEFAULTS_PATH,
@@ -181,7 +195,7 @@ async function main() {
       },
     };
 
-    const output = render.renderHookOutput(gate.decideToolCall(input, ports));
+    const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);
     if (output.stderr !== "") process.stderr.write(output.stderr);
     if (output.stdout !== "") await writeStdout(output.stdout);
     process.exit(output.exitCode);
