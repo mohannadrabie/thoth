@@ -1,9 +1,0 @@
-Continue thoth S7 work. Read docs/STATE.md's newest resume point first (2026-09-28 session-handoff entry, or PR #357 if unmerged) for full context — it's the source of truth.
-
-Immediate: 4 PRs (#349, #350, #353, #354) should be merged by now — confirm, and if #354's merge auto-closed Issue #332 via its first commit's trailer, reopen #332 same-day with a comment (same pattern already used for #252/PR #346 this session).
-
-Then resume Issue #312 (CRITICAL tier, ratified) from branch story/312-kernel-hook-sanitize (commit 43d26a1, pushed, WIP — implementation complete, verification interrupted by a build-agent stall after the latency-budget check passed). Re-dispatch story-implementer Phase 2 to finish: full local CI-equivalent (npm test, QA-14 diff+full-tree, QA-15, secret scan, kernel-purity, normalizer-registry-purity, gate-structure G15, gate-manifest, gate-matcher-drift), the docs/decisions.md row, CHANGELOG/STATE entries, open the PR, then dispatch red-team + app-security-reviewer + cross-domain-reviewer (isolated worktrees) in parallel.
-
-After #312 ships, continue down the S7 backlog in this order: S7 plan findings (#300, #301, #302, #307), S6 follow-ups feeding S7 (#93, #107, #288), Issue #325 (LOW, optional). Do NOT attempt Issues #338, #340, or #308 without me — they each need a human ruling (a reject-vs-disclose security-design call for #338/#340, and AP-7/Q-C(a) for #308) that I have not made yet; surface them plainly when you reach them rather than guessing.
-
-Also: local master still carries 2 harmless orphaned commits (6b76d28, de6f4f2) from before this session — safe to ignore, or reset once PR #353 merges. And Issue #356 (nested .claude/worktrees/ polluting QA-14 full-tree scans) is filed but not fixed — low priority, pick up if convenient.
