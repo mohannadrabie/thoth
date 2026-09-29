@@ -141,3 +141,4 @@
 {"at":"2026-09-28T12:18:26.795Z","event":"stage","scope":"s339-registrant-drift-instrument","stage":"review-close","outcome":"re-confirm round clean: app-security=APPROVE, cross-domain=APPROVE; both prior findings (Issues #351, #352) closed; reviewRoundsSinceClean reset to 0, reviewRoundsTotal stays 1"}
 {"at":"2026-09-28T12:47:29.215Z","event":"story-shipped","scope":"s252-qa14-wording-amendment","rounds":"0","reports":"0","findings":"0","adrTokensSaved":"0","councilFired":"false"}
 {"at":"2026-09-28T12:47:29.277Z","event":"story-shipped","scope":"s339-registrant-drift-instrument","rounds":"1","reports":"2","findings":"3","adrTokensSaved":"39000","councilFired":"false"}
+{"at":"2026-09-28T13:58:04.862Z","event":"story-shipped","scope":"docs-pr346-audit-trail-backfill","rounds":"0","reports":"2","findings":"0","adrTokensSaved":"0","councilFired":"false"}
