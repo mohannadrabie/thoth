@@ -753,3 +753,35 @@ test("AC-3b positive control: a plain string-literal dynamic import() and ordina
   const source = 'const m = await import("../src/policy/config/sanitize.ts");\nconst f = m.sanitizeForTerminal;\nprocess.exit(2);';
   assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
 });
+
+// Issue #370 residual (disclosed by the build, closed here): the forbidden-specifier list was still a
+// deny-list (a literal import("node:vm") passed). Every module specifier in the hook — static
+// `import ... from`, `export ... from`, and runtime `import()` — must now be one of an EXACT
+// allow-list: node:path, node:url, plus the 6 pinned Promise.all specifiers. JSDoc type-only
+// `import("...")` in a comment is not code and stays legal.
+const SPECIFIER_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["static import of node:vm", 'import vm from "node:vm";'],
+  ["static import of node:child_process", 'import { execSync } from "node:child_process";'],
+  ["dynamic import of node:vm", 'const vm = await import("node:vm");'],
+  ["dynamic import of node:worker_threads", 'const w = await import("node:worker_threads");'],
+  ["export-star from node:fs", 'export * from "node:fs";'],
+  ["named re-export from node:fs", 'export { readFileSync } from "node:fs";'],
+  ["dynamic import of a project module outside the pinned six", 'const m = await import("../src/policy/gate/evil-render.ts");'],
+];
+
+for (const [name, source] of SPECIFIER_SHAPES) {
+  test(`AC-3c (#370): a module specifier outside the exact allow-list is flagged — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+test("AC-3c positive control: the allow-listed specifiers (node:path, node:url, the 6 pinned imports) and a JSDoc type-only import() in a comment are not flagged", () => {
+  const source = [
+    'import { dirname, join } from "node:path";',
+    'import { fileURLToPath } from "node:url";',
+    "/** @returns {import(\"node:vm\").Script} */",
+    "function typed() { return undefined; }",
+    ...PROMISE_ALL_SHAPE.filter((e) => e.specifier !== undefined).map((e) => `const m_${e.name} = await import("${e.specifier}");`),
+  ].join("\n");
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
+});
