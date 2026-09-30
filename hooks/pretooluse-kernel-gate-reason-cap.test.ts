@@ -16,10 +16,13 @@ import { createGateSandbox, denyReason, describeRun, wasPolicyDenied, type GateR
 // (linear in input). AFTER the fix each reflected entry is at most 512 UTF-16 units plus the marker
 // (about 45). The terminal sanitizer strips control bytes first, so the worst JSON expansion left is
 // a LONE SURROGATE (JSON.stringify escapes each as a 6-byte \u-escape; a 3-byte BMP character stays
-// 3 bytes, a quote/backslash 2x). Worst case: two entries (verb, resource) x (512 x 6 + 45) = 6234,
-// plus about 700 bytes of fixed reason text and JSON framing = about 6.9 KB (measured 6254 for the
-// two-entry lone-surrogate input). 7168 (7 KiB) bounds that with headroom and stays well under the
-// runtime's documented 10,000-character hook-output cap. Tighter 3-byte bound: MAX_STDOUT_3BYTE below.
+// 3 bytes, a quote/backslash 2x). Worst case: two entries (verb, resource) x (512 x 6 + 45) = 6234 (an
+// upper bound: the entry prefixes are ASCII and sit inside the 512 units), plus about 210 bytes of
+// fixed reason text and JSON framing (measured 6254 for the two-entry lone-surrogate input). 7168
+// (7 KiB) bounds that with headroom. It is also under 10,000 characters, the figure the hooks docs give
+// for additionalContext, systemMessage, initialUserMessage and plain stdout; the docs do not name
+// permissionDecisionReason, so this test pins its own bound and does not rely on that figure.
+// Tighter 3-byte bound: MAX_STDOUT_3BYTE below.
 const MAX_STDOUT = 7168;
 
 function assertDenied(run: GateRun, what: string): void {
@@ -54,7 +57,7 @@ test("AC-326-2: 524 KB input yields stdout within a constant of the 16 KB case",
   );
 });
 
-test("AC-326-3: maximal-expansion input stays under the pinned max stdout", () => {
+test("AC-326-3: an escape-heavy input stays under the pinned max stdout", () => {
   const sb = createGateSandbox();
   // Control characters (6 bytes each once JSON-escaped) plus quotes/backslashes inside a newline span.
   const nasty = "\u0001\u0002\u001f\"\\€\n";
