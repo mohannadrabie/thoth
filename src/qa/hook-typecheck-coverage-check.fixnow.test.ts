@@ -270,38 +270,39 @@ test("#374: a planted `@param {any}` / `@param {Object}` in a fully-typed hook F
   });
 });
 
-test("#374: JSDOC_ANY_ALLOWLIST is pinned to exactly this reviewed set (extending it is a visible edit of this test)", () => {
-  const actual = JSDOC_ANY_ALLOWLIST.map((e) => `${e.hook} | ${e.annotation} | x${e.count}`).sort();
-  assert.deepEqual(actual, [
-    "hooks/pretooluse-kernel-gate.mjs | @param {any} err | x1",
-    "hooks/sessionstart-tool-enum.mjs | @param {any} initialHaltState | x2",
-    "hooks/sessionstart-tool-enum.mjs | @param {any} projectSettings | x1",
-    "hooks/userpromptsubmit-halt-relay.mjs | @param {Array<[string, any]>} activeReasons | x2",
-    "hooks/userpromptsubmit-halt-relay.mjs | @param {any} haltState | x1",
-    "hooks/userpromptsubmit-halt-relay.mjs | @type {Array<[string, any]>} | x1",
-  ]);
-  for (const e of JSDOC_ANY_ALLOWLIST) assert.ok(e.reason.trim().length > 0, `${e.hook} ${e.annotation}: every allow-list entry needs a one-line reason`);
-});
-
-test("#374: every real hook scans clean against the allow-list, every entry is live at exactly its pinned count, and no hook carries a fixtureLocation any", () => {
+// The exact-contents pin of JSDOC_ANY_ALLOWLIST (now keyed by SITE) lives in
+// hook-typecheck-coverage-check.round3.test.ts.
+test("#374: every real hook scans clean against the allow-list, every entry is live (a real any-site at exactly its pinned count: a stale or extended entry fails), and no hook carries a fixtureLocation any", () => {
   for (const hook of listProductionHooks(repoRoot)) {
     const source = readFileSync(join(repoRoot, hook), "utf8");
     assert.deepEqual(scanHookSuppressions(source, hook), [], `${hook} must scan clean against the allow-list`);
     for (const e of JSDOC_ANY_ALLOWLIST.filter((x) => x.hook === hook)) {
-      const occurrences = source.split(e.annotation).length - 1;
-      assert.equal(occurrences, e.count, `${hook}: allow-list entry "${e.annotation}" is pinned x${e.count} but the hook has ${occurrences} (stale or extended)`);
+      // Live at exactly its pinned count: with this one entry dropped the scan reports the site; with its count lowered by one, too.
+      const without = JSDOC_ANY_ALLOWLIST.filter((x) => x !== e);
+      assert.ok(scanHookSuppressions(source, hook, without).some((f) => f.endsWith(`[site ${e.site}]`)), `${hook}: allow-list entry "${e.site}" is stale (no any at that site)`);
+      const lowered = JSDOC_ANY_ALLOWLIST.map((x) => (x === e ? { ...x, count: e.count - 1 } : x));
+      assert.ok(scanHookSuppressions(source, hook, lowered).some((f) => f.endsWith(`[site ${e.site}]`)), `${hook}: allow-list entry "${e.site}" is pinned x${e.count} but the site has fewer any nodes`);
     }
     assert.ok(!/@param\s*\{any\}\s*fixtureLocation/.test(source), `${hook}: fixtureLocation must be typed honestly (Issue #374)`);
   }
 });
 
-test("#374: one more allow-listed-looking annotation, a brand-new site, or `Object` in place of `any` all fail (the count and the type are pinned)", () => {
+test("#374: a brand-new any site, a 2nd any at an allowed site's function, or `Object` all fail against the real relay", () => {
   const hook = "hooks/userpromptsubmit-halt-relay.mjs";
   const real = readFileSync(join(repoRoot, hook), "utf8");
   assert.deepEqual(scanHookSuppressions(real, hook), []);
-  assert.ok(scanHookSuppressions(`${real}\n/** @param {any} haltState */\n`, hook).length > 0, "a 2nd `@param {any} haltState` exceeds the pinned x1");
-  assert.ok(scanHookSuppressions(`${real}\n/** @param {any} brandNew */\n`, hook).length > 0, "a brand-new `any` site is not on the list");
-  assert.ok(scanHookSuppressions(`${real}\n/** @param {Object} haltState */\n`, hook).length > 0, "an allow-list entry for `any` does not cover `Object`");
+  assert.ok(scanHookSuppressions(`${real}
+/** @param {any} brandNew */
+function brandNewFn(brandNew) { return brandNew; }
+`, hook).length > 0, "a brand-new `any` site is not on the list");
+  assert.ok(scanHookSuppressions(`${real}
+/** @param {any} haltState */
+function another(haltState) { return haltState; }
+`, hook).length > 0, "the same annotation text in ANOTHER function is a new site");
+  assert.ok(scanHookSuppressions(`${real}
+/** @param {Object} haltState */
+function inspectHaltState2(haltState) { return haltState; }
+`, hook).length > 0, "an allow-list entry for `any` does not cover `Object`");
 });
 
 // --- red-team finding 6 (LOW): mutant M8 — collapsing countByIdentity's occurrence count to a set ---

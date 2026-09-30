@@ -51,8 +51,9 @@
 //
 // Suppressions (Issue #367 / N2 / N4): none of the above can see a diagnostic that a suppression
 // removes from the compiler's output. So this instrument also fails any hook containing a `@ts-*`
-// pragma, an `eslint-disable` directive, or a JSDoc `@type {any}`/`{*}` cast — see
-// `scanHookSuppressions` — independent of lint config.
+// pragma, an `eslint-disable` directive, or a JSDoc type the TypeScript CHECKER resolves to `any` (or an
+// `Object` reference), outside 8 pinned SITES — see `scanHookSuppressions`, which also records what it
+// does not catch (a double cast through `unknown`) — independent of lint config.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
@@ -140,86 +141,185 @@ export function listProductionHooks(repoRoot: string): string[] {
     .sort();
 }
 
-/** One reviewed exception to the JSDoc `any`/`Object`/`*` ban (Issue #374): a hook annotation that
- * stays `any` because it types an untrusted JSON-input shape whose narrowing would need a runtime
- * code-token change in a hook whose inline sanitize copy must stay token-identical (Issue #361
- * AC-7: JSDoc-only). `annotation` is the whitespace-normalised tag text, `@tag {type} name`. Each
- * entry is pinned at an exact occurrence `count`; anything not listed here (or beyond its count)
- * fails the scan. Extending this list is a visible edit, mirrored by the exact-contents pin in
- * hook-typecheck-coverage-check.fixnow.test.ts. */
+/** One reviewed exception to the JSDoc `any` ban (Issue #374), keyed by SITE, not annotation text: a
+ * hook annotation that stays `any` because it types an untrusted JSON-input shape whose narrowing
+ * would need a runtime code-token change in a hook whose inline sanitize copy must stay token-identical
+ * (Issue #361 AC-7: JSDoc-only). `site` is `<enclosing function>: @<tag> <target>` (target = the
+ * parameter/variable/property the tag types, empty for `@returns`), so moving an allowed `any` to a
+ * different function or parameter is a NEW site and fails, even when the annotation text and the
+ * count are unchanged. `count` is the exact number of any-typed type nodes at that site. Extending
+ * this list is a visible edit, mirrored by the exact-contents pin in
+ * hook-typecheck-coverage-check.round3.test.ts. */
 export interface JsdocAnyAllowance {
   hook: string;
-  annotation: string;
+  site: string;
   count: number;
   reason: string;
 }
 export const JSDOC_ANY_ALLOWLIST: readonly JsdocAnyAllowance[] = [
-  { hook: "hooks/pretooluse-kernel-gate.mjs", annotation: "@param {any} err", count: 1, reason: "a thrown value can be any shape; the handler deliberately probes it defensively" },
-  { hook: "hooks/sessionstart-tool-enum.mjs", annotation: "@param {any} initialHaltState", count: 2, reason: "untrusted halt-state JSON read from disk; every property access is guarded at runtime" },
-  { hook: "hooks/sessionstart-tool-enum.mjs", annotation: "@param {any} projectSettings", count: 1, reason: "untrusted .claude/settings.json content; shape-checked at runtime" },
-  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@param {any} haltState", count: 1, reason: "untrusted halt-state JSON; inspectHaltState is the runtime shape validator, and narrowing needs a code-token change in the relay" },
-  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@type {Array<[string, any]>}", count: 1, reason: "activeReasons entries are validated JSON entries, produced by inspectHaltState" },
-  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@param {Array<[string, any]>} activeReasons", count: 2, reason: "same validated entries, passed on to the two renderers" },
+  { hook: "hooks/pretooluse-kernel-gate.mjs", site: "failClosed: @param err", count: 1, reason: "a thrown value can be any shape; the handler deliberately probes it defensively" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "wasReasonActive: @param initialHaltState", count: 1, reason: "untrusted halt-state JSON read from disk; every property access is guarded at runtime" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "reconcileReason: @param initialHaltState", count: 1, reason: "same untrusted halt-state JSON, passed on to the reconciler" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "isProjectMcpServerEnabled: @param projectSettings", count: 1, reason: "untrusted .claude/settings.json content; shape-checked at runtime" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "inspectHaltState: @param haltState", count: 1, reason: "untrusted halt-state JSON; inspectHaltState is the runtime shape validator, and narrowing needs a code-token change in the relay" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "inspectHaltState: @type activeReasons", count: 1, reason: "activeReasons entries are validated JSON entries, produced by inspectHaltState" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "composeTrustedSummary: @param activeReasons", count: 1, reason: "same validated entries, passed on to the trusted-summary renderer" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "composeDiagnosticLines: @param activeReasons", count: 1, reason: "same validated entries, passed on to the diagnostic-lines renderer" },
 ];
 
-/** `any`, `Object` or a bare `*` (whole-word) anywhere in a JSDoc type expression. */
-const ANY_LIKE_TYPE = /\bany\b|\bObject\b|(?<![\w.$*/])\*(?![\w.$*/])/;
+/** A program plus the absolute path of the hook source file being scanned inside it. */
+export interface ScanContext {
+  program: ts.Program;
+  fileName: string;
+}
 
-/** Every `@tag {type} [name]` in the source, brace-balanced (types nest braces: `{{ a: any }}`),
- * returned as a whitespace-normalised annotation string plus its type text. Scans the whole source,
- * not just doc-comment blocks: deny-by-default, so a line-comment `@param {any}` counts too. */
-function collectJsdocTypeAnnotations(source: string): Array<{ annotation: string; type: string }> {
-  const out: Array<{ annotation: string; type: string }> = [];
-  const tag = /@([A-Za-z]+)[ \t]*\{/g;
-  let m: RegExpExecArray | null;
-  while ((m = tag.exec(source)) !== null) {
-    let depth = 1;
-    let i = tag.lastIndex;
-    while (i < source.length && depth > 0) {
-      const ch = source[i];
-      if (ch === "{") depth++;
-      else if (ch === "}") depth--;
-      i++;
-    }
-    if (depth !== 0) continue;
-    const type = source.slice(tag.lastIndex, i - 1);
-    const name = /^\s+(\[?[A-Za-z_$][\w$.]*)/.exec(source.slice(i, i + 200))?.[1] ?? "";
-    const annotation = `@${m[1]} {${type}}${name ? ` ${name}` : ""}`.replace(/\s+/g, " ");
-    out.push({ annotation, type });
-    tag.lastIndex = i;
+interface JsdocAnyHit {
+  site: string;
+  /** `@param {any} x`-style text for the finding message. */
+  text: string;
+  kind: "any" | "Object";
+}
+
+function isFunctionLike(n: ts.Node): n is ts.FunctionLikeDeclaration {
+  return ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n) || ts.isConstructorDeclaration(n);
+}
+
+function functionName(fn: ts.FunctionLikeDeclaration): string {
+  if (fn.name && ts.isIdentifier(fn.name)) return fn.name.text;
+  const parent = fn.parent;
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+  return "<anonymous>";
+}
+
+/** The function a JSDoc block belongs to: the annotated function itself, else the nearest enclosing one. */
+function enclosingFunctionName(owner: ts.Node): string {
+  for (let n: ts.Node | undefined = owner; n; n = n.parent) if (isFunctionLike(n)) return functionName(n);
+  return "<module>";
+}
+
+function tagTarget(tag: ts.JSDocTag, owner: ts.Node, sf: ts.SourceFile): string {
+  const name = (tag as { name?: ts.Node }).name;
+  if (name) return name.getText(sf);
+  if (ts.isVariableStatement(owner)) {
+    const decl = owner.declarationList.declarations[0];
+    if (decl && ts.isIdentifier(decl.name)) return decl.name.text;
   }
-  return out;
+  return "";
+}
+
+/** Every JSDoc type node (any tag, any position, either `@param` order, nested in generics, unions,
+ * `@typedef` properties and `@callback` signatures) whose type the CHECKER resolves to `any`, plus any
+ * explicit `Object` reference. Spelling-independent by construction: `{?}`, `{*}`, `{any}`, `{"}" | any}`,
+ * a type on the next line, an alias, `ReturnType<typeof JSON.parse>` are all just types that resolve to
+ * `any`. A flagged `any` node is not descended into, so `{"}" | any}` (a union that absorbs to `any`)
+ * is one hit. */
+function collectJsdocAnySites(program: ts.Program, sf: ts.SourceFile): JsdocAnyHit[] {
+  const checker = program.getTypeChecker();
+  const hits: JsdocAnyHit[] = [];
+  const seenTags = new Set<number>();
+  const visitType = (n: ts.Node, tag: ts.JSDocTag, owner: ts.Node): void => {
+    const isTypeLike = ts.isTypeNode(n) || n.kind === ts.SyntaxKind.JSDocAllType || n.kind === ts.SyntaxKind.JSDocUnknownType;
+    if (isTypeLike) {
+      const kind: "any" | "Object" | undefined =
+        checker.getTypeFromTypeNode(n as ts.TypeNode).flags & ts.TypeFlags.Any
+          ? "any"
+          : ts.isTypeReferenceNode(n) && ts.isIdentifier(n.typeName) && n.typeName.text === "Object"
+            ? "Object"
+            : undefined;
+      if (kind !== undefined) {
+        const target = tagTarget(tag, owner, sf);
+        const site = `${enclosingFunctionName(owner)}: @${tag.tagName.text}${target ? ` ${target}` : ""}`;
+        const typeText = n.getText(sf).replace(/\s+/g, " ");
+        hits.push({ site, kind, text: `@${tag.tagName.text} {${typeText}}${target ? ` ${target}` : ""}` });
+        if (kind === "any") return;
+      }
+    }
+    ts.forEachChild(n, (c) => visitType(c, tag, owner));
+  };
+  const visit = (node: ts.Node): void => {
+    for (const doc of (node as { jsDoc?: ts.JSDoc[] }).jsDoc ?? []) {
+      for (const tag of doc.tags ?? []) {
+        if (seenTags.has(tag.pos)) continue;
+        seenTags.add(tag.pos);
+        const expr = (tag as { typeExpression?: ts.Node }).typeExpression;
+        if (expr) visitType(expr, tag, node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return hits;
+}
+
+// One in-memory program per scan of a bare source string (tests, ad-hoc use). The virtual file lives
+// at <cwd>/hooks/ so relative `import("../src/...")` types resolve like a real hook's; every other
+// file (lib.d.ts, imported modules) is read from disk once and cached.
+let virtualScanOptions: ts.CompilerOptions | undefined;
+const diskSourceCache = new Map<string, ts.SourceFile | undefined>();
+const slashed = (p: string): string => p.split("\\").join("/");
+function scanContextForSource(source: string): ScanContext {
+  if (virtualScanOptions === undefined) {
+    const cfgPath = join(process.cwd(), COVERAGE_TSCONFIG);
+    const read = ts.readConfigFile(cfgPath, (p) => ts.sys.readFile(p));
+    virtualScanOptions = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(cfgPath)).options;
+  }
+  const fileName = slashed(join(process.cwd(), "hooks", "__jsdoc-scan__.mjs"));
+  const host = ts.createCompilerHost(virtualScanOptions);
+  const realGetSourceFile = host.getSourceFile.bind(host);
+  const realFileExists = host.fileExists.bind(host);
+  const realReadFile = host.readFile.bind(host);
+  host.getSourceFile = (name, languageVersionOrOptions, ...rest) => {
+    if (slashed(name) === fileName) return ts.createSourceFile(name, source, languageVersionOrOptions, true, ts.ScriptKind.JS);
+    if (!diskSourceCache.has(name)) diskSourceCache.set(name, realGetSourceFile(name, languageVersionOrOptions, ...rest));
+    return diskSourceCache.get(name);
+  };
+  host.fileExists = (name) => slashed(name) === fileName || realFileExists(name);
+  host.readFile = (name) => (slashed(name) === fileName ? source : realReadFile(name));
+  return { program: ts.createProgram({ rootNames: [fileName], options: virtualScanOptions, host }), fileName };
 }
 
 /** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29;
- * widened by Issue #374, 2026-09-30). A suppression removes a real diagnostic from
- * `ts.getPreEmitDiagnostics`' output entirely, so no baseline, count or identity scheme can see it:
- * it has to be refused at the source. The class, not a list of spellings: every `@ts-*` pragma, any
- * `eslint-disable` directive (it can switch the lint ban off), and an explicit `any`, `Object` or
- * `*` in ANY JSDoc type (`@param`, `@returns`, `@type`, `@typedef` properties, generic arguments):
- * `@param {any} fixtureLocation` hid a live TS2345 with no pragma at all. Occurrences pinned in
- * JSDOC_ANY_ALLOWLIST for the named `hook` (repo-relative) are excused up to their pinned count;
- * with no `hook`, nothing is excused. A plain text scan on purpose: deny-by-default. It also flags
- * the same text inside a string literal, and that false positive is the accepted price of not having
- * to parse comments; the unlock is to reword. Returns one finding per distinct class hit, empty when
- * the source is clean. */
-export function scanHookSuppressions(source: string, hook?: string, allowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST): string[] {
+ * JSDoc-any half rebuilt on the TypeScript checker by Issue #374 round 3, 2026-09-30).
+ *
+ * WHAT IT CATCHES: (1) every `@ts-*` pragma and any `eslint-disable` directive (a text scan: a
+ * suppression removes a diagnostic from the compiler's output, so nothing downstream can see it);
+ * (2) every JSDoc type node, in any tag and any position, that the checker resolves to `any` (`{any}`,
+ * `{?}`, `{*}`, unions and aliases that absorb to any, lib-derived any such as
+ * `ReturnType<typeof JSON.parse>`), excused only by an exact-count SITE in JSDOC_ANY_ALLOWLIST for the
+ * named `hook`; (3) an explicit `Object` reference in a JSDoc type: not `any` under strict, so the
+ * checker does not subsume it, and it stays a separate type-node-level ban that is never allow-listed.
+ *
+ * WHAT IT DOES NOT CATCH (recorded residuals): a double cast through `unknown` in runtime-visible code,
+ * for example `/** @type {Foo} *\/ (/** @type {unknown} *\/ (x))`, is a legitimate `unknown` plus a
+ * legitimate narrowing and sits outside the JSDoc-`any` class; and a JSDoc block the TypeScript parser
+ * does not attach to any node is not compiled either, so it is not seen. Returns one finding per
+ * distinct hit, empty when the source is clean. */
+export function scanHookSuppressions(
+  source: string,
+  hook?: string,
+  allowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST,
+  context?: ScanContext,
+): string[] {
   const findings: string[] = [];
   const pragma = /@ts-(?:ignore|expect-error|nocheck|check)\b/.exec(source);
   if (pragma) findings.push(pragma[0]);
   if (/eslint-disable/.test(source)) findings.push("eslint-disable");
 
+  const ctx = context ?? scanContextForSource(source);
+  const sf = ctx.program.getSourceFile(ctx.fileName);
+  if (!sf) return [...findings, `${ctx.fileName}: not in the scan program (its JSDoc types cannot be checked)`];
   const allowed = new Map<string, number>();
-  for (const a of allowlist) if (a.hook === hook) allowed.set(a.annotation, (allowed.get(a.annotation) ?? 0) + a.count);
+  for (const a of allowlist) if (a.hook === hook) allowed.set(a.site, (allowed.get(a.site) ?? 0) + a.count);
   const seen = new Map<string, number>();
   const reported = new Set<string>();
-  for (const { annotation, type } of collectJsdocTypeAnnotations(source)) {
-    if (!ANY_LIKE_TYPE.test(type)) continue;
-    const n = (seen.get(annotation) ?? 0) + 1;
-    seen.set(annotation, n);
-    if (n <= (allowed.get(annotation) ?? 0) || reported.has(annotation)) continue;
-    reported.add(annotation);
-    findings.push(annotation);
+  for (const hit of collectJsdocAnySites(ctx.program, sf)) {
+    const key = `${hit.kind}|${hit.site}`;
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    if (hit.kind === "any" && n <= (allowed.get(hit.site) ?? 0)) continue;
+    if (reported.has(key)) continue;
+    reported.add(key);
+    findings.push(`${hit.text} [site ${hit.site}]`);
   }
   return findings;
 }
@@ -243,7 +343,7 @@ function countByIdentity(identities: readonly string[]): Map<string, number> {
 function resolveProjectAndDiagnostics(
   repoRoot: string,
   configPathOverride?: string,
-): { fileNames: string[]; diagnosticsByFile: Map<string, DiagnosticInfo[]> } {
+): { fileNames: string[]; diagnosticsByFile: Map<string, DiagnosticInfo[]>; program: ts.Program } {
   const configPath = configPathOverride ?? join(repoRoot, COVERAGE_TSCONFIG);
   const readResult = ts.readConfigFile(configPath, (path) => ts.sys.readFile(path));
   if (readResult.error) {
@@ -262,7 +362,7 @@ function resolveProjectAndDiagnostics(
     if (list) list.push(info);
     else diagnosticsByFile.set(rel, [info]);
   }
-  return { fileNames: parsed.fileNames.map((f) => toRepoRelative(repoRoot, f)), diagnosticsByFile };
+  return { fileNames: parsed.fileNames.map((f) => toRepoRelative(repoRoot, f)), diagnosticsByFile, program };
 }
 
 /**
@@ -292,7 +392,8 @@ export function checkHookTypecheckCoverage(
       details.push(`${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — no tsconfig project covers it at all`);
       continue;
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(repoRoot, hook), "utf8"), hook, jsdocAnyAllowlist);
+    const abs = resolve(repoRoot, hook);
+    const suppressions = scanHookSuppressions(readFileSync(abs, "utf8"), hook, jsdocAnyAllowlist, { program: project.program, fileName: abs });
     if (suppressions.length > 0) {
       failures++;
       details.push(
@@ -407,7 +508,8 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
     if (!project.fileNames.includes(hook)) {
       return { ok: false, added, removed, refusal: `${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — nothing to measure.` };
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(options.repoRoot, hook), "utf8"), hook);
+    const abs = resolve(options.repoRoot, hook);
+    const suppressions = scanHookSuppressions(readFileSync(abs, "utf8"), hook, JSDOC_ANY_ALLOWLIST, { program: project.program, fileName: abs });
     if (suppressions.length > 0) {
       return { ok: false, added, removed, refusal: `${hook}: contains a type-suppression (${suppressions.join(", ")}); remove it before re-pinning — a baseline generated around a hidden diagnostic launders it.` };
     }
