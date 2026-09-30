@@ -154,3 +154,7 @@
 {"at":"2026-09-30T02:07:27.534Z","event":"story-shipped","scope":"s325-separator-meter-proof-test","rounds":"0","reports":"2","findings":"0","adrTokensSaved":"54900","councilFired":"false"}
 {"at":"2026-09-30T04:02:04.103Z","event":"deadlock-ruled","scope":"s7-closeout","topic":"rulings-338-340-325-107","ruling":"reject;close;blocked","_incomplete":"agents,decision,row"}
 {"at":"2026-09-30T04:02:32.013Z","event":"deadlock-ruled","scope":"s7-closeout","agents":"manager","decision":"338/340 reject; 325 close; 107 blocked","row":"2026-09-30"}
+{"at":"2026-09-30T04:07:04.492Z","event":"tier-ratified","scope":"s361-hooks-typecheck","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"two session-gate hooks; catch casts are code tokens"}
+{"at":"2026-09-30T04:07:13.924Z","event":"tier-ratified","scope":"s326-deny-reason-cap","proposed":"STANDARD","ratified":"CRITICAL","changed":"true","reason":"kernel.ts decision engine; defends a fail-open parse path"}
+{"at":"2026-09-30T04:07:34.992Z","event":"tier-ratified","scope":"s320-probe-node-version","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"test-only evidence probe, one row"}
+{"at":"2026-09-30T04:07:35.072Z","event":"tier-ratified","scope":"s338-340-allow-redirect-reject","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"policy delivery; allow-widening control"}
