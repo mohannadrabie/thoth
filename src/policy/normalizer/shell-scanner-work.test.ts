@@ -56,6 +56,27 @@ for (const [shape, unit] of Object.entries(TRAILING_UNITS)) {
   });
 }
 
+// Issue #325: the inner whitespace walk in scanTrailingSensitiveSeparator (the `while` that finds the end of the run
+// after a separator) visits one character per step. Dropping its meterAdd leaves the output and the linearity bounds
+// above unchanged (the meter still reads about n), so it needs its own floor: the meter must read at least the text
+// (outer walk) PLUS the inner run. Real code measures about 2n; the mutant measures about n.
+const INNER_WALK_SLACK = 16;
+
+test("separator-scan-meter-counts-the-inner-whitespace-walk", () => {
+  for (const [shape, unit] of Object.entries(TRAILING_UNITS)) {
+    const text = build("echo hello", unit, "", 4 * 1024);
+    const firstNewline = text.indexOf("\n");
+    assert.ok(firstNewline > 0, `${shape}: the fixture must contain a separator newline`);
+    const innerRun = text.length - firstNewline - 1;
+    const meter: ScanWorkMeter = { chars: 0 };
+    findLiveTrailingSensitiveSeparator(text, meter);
+    assert.ok(
+      meter.chars >= text.length + innerRun - INNER_WALK_SLACK,
+      `${shape}: meter read ${meter.chars} for a ${text.length}-character text with a ${innerRun}-character inner whitespace run: the inner walk must be counted (expected about ${text.length + innerRun})`,
+    );
+  }
+});
+
 test("separator-scan-work-is-linear-on-trailing-whitespace: the meter is optional and the answer does not depend on it", () => {
   for (const text of ["echo a\n\n\n", "echo a &\n\n x", "echo a\r\n\r\nb", "", "\n", "&", "a & b"]) {
     const meter: ScanWorkMeter = { chars: 0 };

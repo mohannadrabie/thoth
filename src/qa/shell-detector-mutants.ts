@@ -469,6 +469,13 @@ const MUTANTS: Mutant[] = [
     "break; // the whitespace run reached the end of the text: nothing later can find live content",
     "continue; // the whitespace run reached the end of the text: nothing later can find live content",
   ),
+  textMutant(
+    "separator-scan-inner-whitespace-walk-uncounted",
+    "Issue #325: dropping the meterAdd for the inner whitespace walk in scanTrailingSensitiveSeparator leaves the output identical and the meter still linear (about n instead of about 2n), so only a test that floors the meter at text length plus the inner run can see that a walk went uncounted",
+    SCANNER,
+    "meterAdd(j - i - 1);",
+    "",
+  ),
   // --- Round 3, council-approved path (docs/reviews/s4-shell-semantic-detector-council-path-
   // forward-2026-09-03.md): mutants for the new/changed branches Issues #80/#81/#82 introduced,
   // beyond the anchor updates above to mutants that already existed pre-round-3.
