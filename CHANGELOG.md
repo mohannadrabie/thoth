@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #325 (test-only: the shell scanner's work meter now covers the inner whitespace walk)
+
+STANDARD tier, test-only. `scanTrailingSensitiveSeparator` in `src/policy/normalizer/shell-scanner.ts` has a `while` that walks the whitespace run after a separator; its `meterAdd(j - i - 1);` was the one increment no test could see, because dropping it leaves the answer identical and the meter still under the 4x linearity bound (it reads about n instead of about 2n). No production file changed.
+
+- New test `separator-scan-meter-counts-the-inner-whitespace-walk` in `src/policy/normalizer/shell-scanner-work.test.ts`: for the newline, CRLF and mixed trailing-whitespace shapes at 4 KB, the meter must read at least the text length plus the inner run (16-character slack). Verified to fail with the increment removed (meter read 4107 against about 8181 expected).
+- New mutant `separator-scan-inner-whitespace-walk-uncounted` in `src/qa/shell-detector-mutants.ts`; `npm run qa:mutation-shell` reports 60 of 60 killed (59 before), no no-op, no anchor throw.
+- Not done: the Issue's optional sweep early-exit (out of scope, stays on the Issue). Issue #325 stays open pending review; commits use `Refs #325`, not `Closes`.
+
 ### Fixed — Issues #360, #367, #368, #369, #370 (post-merge fix-now of PR #365, scope `s312-fixnow-360-363`)
 
 CRITICAL tier. Findings from the 2026-09-29 post-merge reports (red-team round 4, app-security round 2, cross-domain round 2). Hooks are unchanged and still unwired (Issue #308); the changes are to CI guards. `hooks/*.mjs` and `.github/workflows/ci.yml` have zero diff.
