@@ -17,32 +17,22 @@
   // this fix-now round did not scope in. `checkJs`/`allowJs` are ON here only, not on the base
   // project, so `src/**/*.ts`'s own strict-TS compile is unaffected either way.
   //
-  // NARROWER THAN "all 3 production hooks" ON PURPOSE (checked first, per the task brief): running
-  // this same strict/checkJs project against `hooks/**/*.mjs` (all 3 hooks) surfaced ~60
-  // pre-existing implicit-any / type-mismatch errors in `hooks/sessionstart-tool-enum.mjs` and
-  // `hooks/userpromptsubmit-halt-relay.mjs` — unrelated to Issue #312/#361 (neither file has this
-  // story's "required parameter, fails loud" pattern at stake), and fixing them is a real,
-  // separate undertaking this fix-now round does not scope in. Scoped here to the ONE file the
-  // red-team drill (M11) actually demonstrated the gap against —
-  // `hooks/pretooluse-kernel-gate.mjs`, the only production caller of `renderHookOutput` — whose
-  // own 4 pre-existing implicit-any / return-type-widening errors were fixed alongside this file
-  // (minimal JSDoc annotations, no behavior change) so it type-checks clean.
+  // Covers ALL 3 production enforcement hooks (Issue #361 closed the last gap: the two hooks that
+  // used to be excluded here, hooks/sessionstart-tool-enum.mjs and
+  // hooks/userpromptsubmit-halt-relay.mjs, were annotated with JSDoc only -- no runtime change,
+  // no @ts-ignore/@ts-expect-error/@ts-nocheck -- and now typecheck clean under strict + checkJs,
+  // so a dropped required argument or a type mismatch in any of them fails `npm run build` /
+  // `npm run typecheck`).
   //
-  // Widening THIS project (the real `npm run build`/`npm run typecheck` gate) to the other 2 hooks
-  // is tracked by the still-open Issue #361 — not silently expanded into this round. The residual
-  // is registered for real, not as a dangling reference to a docs/backlog.md line that was never
-  // written (red-team round 2, s312-kernel-hook-sanitize-red-team-round2-2026-09-28.md, finding
-  // R5): `src/qa/hook-typecheck-coverage-check.ts` (CI step "QA-18") is a SEPARATE, QA-only project
-  // (`tsconfig.hooks-coverage.json`, never wired into this build gate) that DOES cover all 3 hooks,
-  // holding the 2 not-yet-clean ones to a pinned diagnostic-count baseline — cited by name, dated,
-  // against Issue #361 — instead of leaving them with zero coverage anywhere while the ~60
-  // pre-existing errors get paid down.
+  // `tsconfig.hooks-coverage.json` + `src/qa/hook-typecheck-coverage-check.ts` (CI step "QA-18")
+  // stay as a COMPLEMENTARY guard, not a duplicate: QA-18 additionally scans for suppressions no
+  // compiler can see, and fails CI if a NEW hook under hooks/ is not covered by a tsconfig project.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
     "noEmit": true
   },
-  "include": ["hooks/pretooluse-kernel-gate.mjs"],
+  "include": ["hooks/pretooluse-kernel-gate.mjs", "hooks/sessionstart-tool-enum.mjs", "hooks/userpromptsubmit-halt-relay.mjs"],
   "exclude": ["dist/**", "node_modules/**"]
 }
