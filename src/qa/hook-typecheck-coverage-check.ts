@@ -5,18 +5,17 @@
 //
 // The 3 production hooks (hooks/*.mjs, non-recursive — hooks/*.test.ts and hooks/test-support/**
 // are a different, non-production concern, same lane-scoping tsconfig.hooks.json's own header
-// already establishes) are checked against tsconfig.hooks-coverage.json — a QA-ONLY project
-// (never wired into `npm run build`/`npm run typecheck`) that includes all 3, unlike the real
-// build gate's tsconfig.hooks.json, which includes only the one hook (pretooluse-kernel-gate.mjs)
-// that's fully clean today.
+// already establishes) are checked against tsconfig.hooks-coverage.json, a QA-only project
+// resolved by this instrument. Since Issue #361 closed, all 3 hooks are ALSO in the real build
+// gate's tsconfig.hooks.json and typecheck clean; the pinned baseline is empty. This instrument
+// stays as a complementary guard: it fails CI if a NEW hook under hooks/ is not covered, and it
+// scans for suppressions no compiler can see.
 //
-// EXCEPTION LIST (dated, named — Issue #361, not a phantom docs/backlog.md line, red-team round 2
-// finding R5): hooks/sessionstart-tool-enum.mjs and hooks/userpromptsubmit-halt-relay.mjs each
-// carry pre-existing, unrelated implicit-any/type-mismatch diagnostics (measured 2026-09-28: 30
-// and 22 respectively) that this fix-now round does not scope in fixing. Rather than exempting
-// them from coverage entirely (which would make a NEW regression on either file invisible again —
-// exactly the Issue #361 gap this instrument exists to close), each is held to a PINNED set of
-// diagnostic IDENTITIES instead of a raw count.
+// HISTORY (kept because the ratchet mechanics below still apply to any future pinned entry): until
+// Issue #361 closed (2026-09-30), hooks/sessionstart-tool-enum.mjs and
+// hooks/userpromptsubmit-halt-relay.mjs carried pre-existing implicit-any/type-mismatch
+// diagnostics (measured 2026-09-28: 30 and 22) and were held to a PINNED set of diagnostic
+// IDENTITIES instead of a raw count, so a NEW regression stayed visible while the debt was paid down.
 //
 // Issue #367 (app-security HIGH) + red-team round-3 finding R4 (2026-09-28), same defect, two
 // routes: the ORIGINAL implementation compared a raw COUNT (`count > baseline`). A `// @ts-ignore`
@@ -264,7 +263,11 @@ export function checkHookTypecheckCoverage(
         `${hook}: ${current.length} diagnostic(s) found, ${newOrExcess.length} identity(ies) exceed the pinned Issue #361 baseline — a NEW regression, not the known pre-existing debt: ${newOrExcess.join(", ")}`,
       );
     } else {
-      details.push(`${hook}: ${current.length} diagnostic(s) (pinned Issue #361 baseline: ${pinned.length}, pre-existing debt, not yet fixed)`);
+      details.push(
+        pinned.length === 0
+          ? `${hook}: 0 diagnostic(s), fully covered (empty pinned baseline)`
+          : `${hook}: ${current.length} diagnostic(s) (pinned Issue #361 baseline: ${pinned.length}, pre-existing debt, not yet fixed)`,
+      );
     }
   }
 
