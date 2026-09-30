@@ -38,9 +38,9 @@
 // Paying down debt (an identity's current count drops below its pinned count, or disappears
 // entirely) still passes silently, same as before — lowering the pin itself remains a deliberate,
 // visible-in-review edit to PINNED_BASELINES, not something this instrument does automatically.
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import * as ts from "typescript";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
@@ -129,12 +129,32 @@ export const PINNED_BASELINES: Readonly<Record<string, readonly string[]>> = {
 /** Every production hook under hooks/, generated from disk — never hand-typed (CLAUDE.md's "no
  * hand-derived completeness claims"). Non-recursive: hooks/*.test.ts and hooks/test-support/** are
  * a different, non-production concern (same lane-scoping tsconfig.hooks.json's own header already
- * establishes for `checkJs`/`allowJs`). */
+ * establishes for `checkJs`/`allowJs`). `.mjs` AND `.js` (red-team N5, 2026-09-29): package.json is
+ * "type": "module", so a hooks/*.js file is ESM and runs as a hook unchanged — the extension must
+ * not be the way out of coverage, linting or the suppression scan. */
 export function listProductionHooks(repoRoot: string): string[] {
   return readdirSync(join(repoRoot, "hooks"))
-    .filter((f) => f.endsWith(".mjs"))
+    .filter((f) => f.endsWith(".mjs") || f.endsWith(".js"))
     .map((f) => `hooks/${f}`)
     .sort();
+}
+
+/** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29).
+ * A suppression removes a real diagnostic from `ts.getPreEmitDiagnostics`' output entirely, so no
+ * baseline, count or identity scheme can see it: it has to be refused at the source. The class, not
+ * a list of spellings: every `@ts-*` pragma, any `eslint-disable` directive (it can switch the lint
+ * ban off), and a JSDoc `@type {any}` / `@type {*}` cast (kills the diagnostic with no pragma at all).
+ * A plain text scan on purpose: deny-by-default. It also flags the same text inside a string literal,
+ * and that false positive is the accepted price of not having to parse comments; the unlock is to
+ * reword. Returns one finding per distinct class hit, empty when the source is clean. */
+export function scanHookSuppressions(source: string): string[] {
+  const findings: string[] = [];
+  const pragma = /@ts-(?:ignore|expect-error|nocheck|check)\b/.exec(source);
+  if (pragma) findings.push(pragma[0]);
+  if (/eslint-disable/.test(source)) findings.push("eslint-disable");
+  const cast = /@type\s*\{\s*(?:any|\*)\s*\}/.exec(source);
+  if (cast) findings.push(cast[0]);
+  return findings;
 }
 
 function toRepoRelative(repoRoot: string, absolutePath: string): string {
@@ -202,6 +222,14 @@ export function checkHookTypecheckCoverage(
     if (!project.fileNames.includes(hook)) {
       failures++;
       details.push(`${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — no tsconfig project covers it at all`);
+      continue;
+    }
+    const suppressions = scanHookSuppressions(readFileSync(resolve(repoRoot, hook), "utf8"));
+    if (suppressions.length > 0) {
+      failures++;
+      details.push(
+        `${hook}: type-suppression found (${suppressions.join(", ")}) — a suppression removes a real diagnostic from the compiler's output, which no baseline can see. Unlock: delete the suppression and fix the diagnostic (or pin it by a reviewed hand edit of the baseline snapshot).`,
+      );
       continue;
     }
     const currentIdentities = project.identitiesByFile.get(hook) ?? [];
