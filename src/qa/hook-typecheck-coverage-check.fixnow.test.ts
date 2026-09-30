@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ESLint } from "eslint";
-import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES, regenerateBaseline } from "./hook-typecheck-coverage-check.ts";
+import { checkHookTypecheckCoverage, JSDOC_ANY_ALLOWLIST, listProductionHooks, PINNED_BASELINES, regenerateBaseline, scanHookSuppressions } from "./hook-typecheck-coverage-check.ts";
 
 const repoRoot = process.cwd();
 let tmpCounter = 0;
@@ -226,5 +226,95 @@ test("N3 regenerate: with NO committed snapshot at all, an explicit hook list bo
     assert.equal(r.ok, true, r.refusal);
     const written = JSON.parse(readSnapshot()) as { pinned: Record<string, Array<{ code: number; excerpt: string; count: number }>> };
     assert.deepEqual(written.pinned[hookRel]?.map((e) => [e.code, e.excerpt, e.count]), [[7006, F_LINE, 1], [7006, G_LINE, 1]]);
+  });
+});
+
+// --- Issue #374 (red-team #361 round-1 finding 1): an explicit `any`/`Object`/`*` in ANY JSDoc tag hides a live diagnostic ---
+// `@param {any} fixtureLocation` hid a real TS2345 in hooks/sessionstart-tool-enum.mjs and passed the
+// old scan, which only looked at `@type`. The scan now flags the class in every tag; the JSON-input
+// sites that legitimately stay `any` are pinned in JSDOC_ANY_ALLOWLIST, so a NEW one fails.
+
+const ANY_CLASS_CASES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["@param {any}", "/**\n * @param {any} x\n */\nfunction f(x) { return x; }\n"],
+  ["@param {Object}", "/**\n * @param {Object} x\n */\nfunction f(x) { return x; }\n"],
+  ["@param {*}", "/**\n * @param {*} x\n */\nfunction f(x) { return x; }\n"],
+  ["@returns {any}", "/** @returns {any} */\nfunction f() { return 1; }\n"],
+  ["@returns {Object}", "/** @returns {Object} */\nfunction f() { return {}; }\n"],
+  ["@type generic arg Array<[string, any]>", "/** @type {Array<[string, any]>} */\nconst a = [];\n"],
+  ["@typedef property any", "/** @typedef {{ a: any }} T */\n"],
+  ["@property {Object}", "/**\n * @typedef {object} T\n * @property {Object} p\n */\n"],
+  ["union containing any", "/** @param {string | any} x */\nfunction f(x) { return x; }\n"],
+];
+
+for (const [name, source] of ANY_CLASS_CASES) {
+  test(`#374: scanHookSuppressions flags ${name} (deny by default, no allow-list entry)`, () => {
+    assert.ok(scanHookSuppressions(source).length > 0, `expected a finding for: ${source}`);
+  });
+}
+
+test("#374: honest annotations and prose containing the word 'any' are NOT flagged", () => {
+  const clean = "/**\n * Accepts any string; not an Object annotation.\n * @param {unknown} x\n * @param {string} y\n * @param {Array<[string, string]>} z\n * @returns {Record<string, unknown>}\n */\nfunction f(x, y, z) { return {}; }\n";
+  assert.deepEqual(scanHookSuppressions(clean), []);
+});
+
+test("#374: a planted `@param {any}` / `@param {Object}` in a fully-typed hook FAILS the coverage instrument even though the compiler is clean", () => {
+  withTmpProject("anyparam", { "hook.mjs": "/**\n * @param {any} x\n */\nfunction f(x) { return x; }\nf(1);\n" }, ({ rel, configPath }) => {
+    const r = checkHookTypecheckCoverage(repoRoot, [rel("hook.mjs")], {}, configPath);
+    assert.equal(r.ok, false);
+    assert.match(r.details.join("\n"), /@param \{any\}/);
+  });
+  withTmpProject("objparam", { "hook.mjs": "/**\n * @param {Object} x\n */\nfunction f(x) { return x; }\nf(1);\n" }, ({ rel, configPath }) => {
+    const r = checkHookTypecheckCoverage(repoRoot, [rel("hook.mjs")], {}, configPath);
+    assert.equal(r.ok, false);
+    assert.match(r.details.join("\n"), /@param \{Object\}/);
+  });
+});
+
+test("#374: JSDOC_ANY_ALLOWLIST is pinned to exactly this reviewed set (extending it is a visible edit of this test)", () => {
+  const actual = JSDOC_ANY_ALLOWLIST.map((e) => `${e.hook} | ${e.annotation} | x${e.count}`).sort();
+  assert.deepEqual(actual, [
+    "hooks/pretooluse-kernel-gate.mjs | @param {any} err | x1",
+    "hooks/sessionstart-tool-enum.mjs | @param {any} initialHaltState | x2",
+    "hooks/sessionstart-tool-enum.mjs | @param {any} projectSettings | x1",
+    "hooks/userpromptsubmit-halt-relay.mjs | @param {Array<[string, any]>} activeReasons | x2",
+    "hooks/userpromptsubmit-halt-relay.mjs | @param {any} haltState | x1",
+    "hooks/userpromptsubmit-halt-relay.mjs | @type {Array<[string, any]>} | x1",
+  ]);
+  for (const e of JSDOC_ANY_ALLOWLIST) assert.ok(e.reason.trim().length > 0, `${e.hook} ${e.annotation}: every allow-list entry needs a one-line reason`);
+});
+
+test("#374: every real hook scans clean against the allow-list, every entry is live at exactly its pinned count, and no hook carries a fixtureLocation any", () => {
+  for (const hook of listProductionHooks(repoRoot)) {
+    const source = readFileSync(join(repoRoot, hook), "utf8");
+    assert.deepEqual(scanHookSuppressions(source, hook), [], `${hook} must scan clean against the allow-list`);
+    for (const e of JSDOC_ANY_ALLOWLIST.filter((x) => x.hook === hook)) {
+      const occurrences = source.split(e.annotation).length - 1;
+      assert.equal(occurrences, e.count, `${hook}: allow-list entry "${e.annotation}" is pinned x${e.count} but the hook has ${occurrences} (stale or extended)`);
+    }
+    assert.ok(!/@param\s*\{any\}\s*fixtureLocation/.test(source), `${hook}: fixtureLocation must be typed honestly (Issue #374)`);
+  }
+});
+
+test("#374: one more allow-listed-looking annotation, a brand-new site, or `Object` in place of `any` all fail (the count and the type are pinned)", () => {
+  const hook = "hooks/userpromptsubmit-halt-relay.mjs";
+  const real = readFileSync(join(repoRoot, hook), "utf8");
+  assert.deepEqual(scanHookSuppressions(real, hook), []);
+  assert.ok(scanHookSuppressions(`${real}\n/** @param {any} haltState */\n`, hook).length > 0, "a 2nd `@param {any} haltState` exceeds the pinned x1");
+  assert.ok(scanHookSuppressions(`${real}\n/** @param {any} brandNew */\n`, hook).length > 0, "a brand-new `any` site is not on the list");
+  assert.ok(scanHookSuppressions(`${real}\n/** @param {Object} haltState */\n`, hook).length > 0, "an allow-list entry for `any` does not cover `Object`");
+});
+
+// --- red-team finding 6 (LOW): mutant M8 — collapsing countByIdentity's occurrence count to a set ---
+// Two diagnostics can share one identity (same code, same source line, e.g. two implicit-any params
+// on one line). Pinned x1 with two current occurrences MUST fail (+1 new); pinned x2 must pass.
+test("M8: the multiset occurrence count is enforced — a 2nd occurrence of an already-pinned identity fails, an equal count passes", () => {
+  withTmpProject("m8", { "hook.mjs": "function f(a, b) { return [a, b]; }\nf(1, 2);\n" }, ({ rel, configPath }) => {
+    const id = "7006|function f(a, b) { return [a, b]; }";
+    const file = rel("hook.mjs");
+    const exact = checkHookTypecheckCoverage(repoRoot, [file], { [file]: [id, id] }, configPath);
+    assert.equal(exact.ok, true, `control: x2 pinned vs x2 current must pass: ${exact.details.join("\n")}`);
+    const short = checkHookTypecheckCoverage(repoRoot, [file], { [file]: [id] }, configPath);
+    assert.equal(short.ok, false, "x1 pinned vs x2 current must FAIL: the duplicate occurrence is a new diagnostic");
+    assert.match(short.details.join("\n"), /\+1 new/);
   });
 });
