@@ -3,7 +3,17 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 **Last updated:** 2026-09-29 (PR #365 MERGED by human decision, ahead of the round-2 re-confirm this file had called for — Issues #362/#363 closed correctly, #360/#361/#366/#367 still OPEN and still need independent re-verification post-merge; repo-wide branch cleanup done, ~90 stale branches removed; CLAUDE.md gained a "Branch discipline" section). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-29 (newest, latest): branch `review/365-post-merge-reconfirm` SHIPPABLE, not pushed; PR open and merge are human-only
+## Resume point — 2026-09-29 (newest, final): PR #373 open, #371 and #372 fixed on it; merge is human-only
+
+- **PR #373** (`review/365-post-merge-reconfirm` → `master`), opened by the human. Its body closes #360, #367, #368, #369, #370, #371 and #372; refs #325.
+- **#371 and #372 fixed before merge (human ruled fix-now):** the AC-3 environment guard is now deny-by-default. Free globals are limited to a pinned allow-set, dangerous names are banned in every position, member writes must be on a pinned allow-list (empty for the real hook), and allowed globals cannot be aliased. App-security round 6 `APPROVE`; reports `docs/reviews/s312-fixnow-360-363-app-security-round{5,6}-reconfirm-2026-09-29.md`.
+- **Deferred to #308 activation (commented there):** LOW, env reads through an imported export (`catalog.projectDir()`); proposed `AC-3j` pins `namespace.member` pairs.
+- **Trade-off:** any future member write in the gate hook fails AC-3h until it is added to the pinned allow-list and reviewed.
+- **Still human-only / held:** merge PR #373 after CI is green (it also carries the unpushed `master` docs commits `d2cfaad` and `dfc574b`); #308, #338, #340; `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5` (empty worktree folders Windows would not release).
+
+**Single next action:** merge PR #373 once CI is green.
+
+## Prior entry (superseded above): branch `review/365-post-merge-reconfirm` SHIPPABLE, not pushed; PR open and merge are human-only
 
 - **Branch contents (not pushed, no upstream):** fix-now for #360, #367, #368, #369, #370 (commits `463ad9a`..`a1f3d27`) and #325 meter proof-test (`457d62c`, `9f993c9`, `bc457a5`), plus review records. `hooks/*.mjs` and `ci.yml` have zero diff.
 - **Verify (Manager, quiet tree):** build rc=0, lint rc=0, every `qa:*` gate instrument PASS, full `node --test` green with no failures and no skips. Under concurrent load: gate-latency, scaling-sweep and pre-commit-scan R4 `EBUSY` flake; each passes alone.
