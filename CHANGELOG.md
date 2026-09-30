@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #320 (the systemroot probe row no longer depends on the Node version)
+
+STANDARD tier (evidence surface: the SUR-10 fail-open probe record). On Windows the `systemroot-nonexistent` fault gives a different result by Node version: Node 22.18 starts and the hook denies (BLOCKS), Node 24.15 aborts at start-up (exit 134, PROCEEDS). The G9 probe test assumed PROCEEDS only and failed on 22.18.
+
+- `RecordedDecision` gains an optional `alsoAccepts`; the new exported pure `outcomeAccepted(row, observed)` is true for the row's `expect` or any `alsoAccepts` outcome. Only `systemroot-nonexistent` sets it (`["BLOCKS"]`); every other row stays exact-match.
+- The row stays probed on win32 (no skip), keeps `expect: PROCEEDS`, `ap: AP-13` and the residual/launcher wording; its note now states that either outcome is accepted (human ruling 2026-09-30). Any third outcome still fails G9, and the PROCEEDS-list check counts the row only when it was observed PROCEEDS.
+- Written failing-first: A20 (row shape) and A21 (the predicate, including a third outcome and a row without `alsoAccepts`); both were red before the fix. Verified on Node 24.15 only: the BLOCKS branch is covered through the predicate test, not a live 22.18 run. The launcher fault itself stays with Issue #308.
+
 ### Fixed - Issue #326 (the POL-05 deny reason no longer reflects unbounded command text)
 
 CRITICAL tier (Manager-raised; sensitive area: guard / policy engine, defends a fail-open parse path). `pol05Rule` in `src/policy/kernel/kernel.ts` built its deny reason from the normalizer's `unresolved` entries, which carry untrusted command text verbatim, so hook stdout grew linearly with input: 14294 bytes out for a 15 KB span and 449654 for 487 KB (measured through the real hook before the fix).
