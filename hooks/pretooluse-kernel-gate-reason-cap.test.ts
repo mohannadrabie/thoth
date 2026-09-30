@@ -14,10 +14,13 @@ import { createGateSandbox, denyReason, describeRun, wasPolicyDenied, type GateR
 // Derivation (measured, spike rule 17): BEFORE the fix, stdout was 14294 bytes for a 15 KB span,
 // 449654 for 487 KB, 54869 for the 64 KB escape-heavy case, 22298 for a two-entry 31 KB case
 // (linear in input). AFTER the fix each reflected entry is at most 512 UTF-16 units plus the marker
-// (about 40); the terminal sanitizer strips control bytes first, so the worst JSON expansion left
-// is a 3-byte BMP character (3x) or a quote/backslash (2x): about 1.7 KB per entry, two entries
-// (verb, resource) plus fixed text and JSON framing. 4096 bytes bounds that with headroom.
-const MAX_STDOUT = 4096;
+// (about 45). The terminal sanitizer strips control bytes first, so the worst JSON expansion left is
+// a LONE SURROGATE (JSON.stringify escapes each as a 6-byte \u-escape; a 3-byte BMP character stays
+// 3 bytes, a quote/backslash 2x). Worst case: two entries (verb, resource) x (512 x 6 + 45) = 6234,
+// plus about 700 bytes of fixed reason text and JSON framing = about 6.9 KB (measured 6254 for the
+// two-entry lone-surrogate input). 7168 (7 KiB) bounds that with headroom and stays well under the
+// runtime's documented 10,000-character hook-output cap. Tighter 3-byte bound: MAX_STDOUT_3BYTE below.
+const MAX_STDOUT = 7168;
 
 function assertDenied(run: GateRun, what: string): void {
   assert.ok(wasPolicyDenied(run), `${what}: expected a strict policy DENY; got ${describeRun(run)}`);
