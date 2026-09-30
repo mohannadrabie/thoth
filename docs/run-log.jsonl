@@ -158,3 +158,4 @@
 {"at":"2026-09-30T04:07:13.924Z","event":"tier-ratified","scope":"s326-deny-reason-cap","proposed":"STANDARD","ratified":"CRITICAL","changed":"true","reason":"kernel.ts decision engine; defends a fail-open parse path"}
 {"at":"2026-09-30T04:07:34.992Z","event":"tier-ratified","scope":"s320-probe-node-version","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"test-only evidence probe, one row"}
 {"at":"2026-09-30T04:07:35.072Z","event":"tier-ratified","scope":"s338-340-allow-redirect-reject","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"policy delivery; allow-widening control"}
+{"at":"2026-09-30T04:43:30.654Z","event":"severity-triaged","scope":"s361-hooks-typecheck","finding":"#374 MED","decision":"fix-now","reason":"in-scope hidden type error; cheap","_incomplete":"agent,from,to,exposure,basis,category"}
