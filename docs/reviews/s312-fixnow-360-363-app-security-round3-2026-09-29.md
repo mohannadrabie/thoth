@@ -16,7 +16,7 @@ Own worktree `../thoth-as3` at e63cd4b (node_modules junction), mutants planted 
 | V2 `// @ts-expect-error legacy shim, tracked elsewhere` | coverage FAIL "type-suppression found (@ts-expect-error)", eslint rc=1 | demonstrated |
 | V3 `eslint-disable-next-line` + `@ts-ignore` | coverage FAIL "(@ts-ignore, eslint-disable)", eslint rc=1 (noInlineConfig: "has no effect") | demonstrated |
 | block-comment `@ts-ignore`, `@TS-IGNORE` | block: FAIL + lint rc=1; uppercase is not a TS pragma (diagnostic surfaces, FAIL) | demonstrated |
-| `hooks/x.js` with `@ts-ignore` | lint 2 errors, coverage FAIL (enumerated, not in tsconfig include) | demonstrated |
+| a planted hooks/x.js with `@ts-ignore` | lint 2 errors, coverage FAIL (enumerated, not in tsconfig include) | demonstrated |
 | AC-7d shapes (let-reassign, param/catch/for-of/var shadow, spread, bracket/destructured call, module-object assign) | all rejected by the 14-row table; real-hook mutants let-reassign, bracket call, module-object assign, ternary each 38 pass / 1 fail; positive control 39/0 | demonstrated |
 | sandbox ESC/NUL probe on the clean hook | env={} rawESC=false rawNUL=false; env={THOTH_X=ESC[2J} rawESC=false | demonstrated |
 

@@ -60,11 +60,11 @@ These stay with the human, always. No agent runs them, and no review report chan
 ## Sensitive areas
 
 These areas always draw a named reviewer before a change to them is shippable — the tier picks who:
-- **Policy enforcement / session gates** — anything that halts or gates an in-session action: `hooks/report-subject-gate.mjs` and any other `hooks/*` enforcement point wired to `PreToolUse` / `UserPromptSubmit`.
+- **Policy enforcement / session gates** — anything that halts or gates an in-session action: `hooks/pretooluse-kernel-gate.mjs` and any other `hooks/*` enforcement point wired to `PreToolUse` / `UserPromptSubmit`.
 - **Guard / policy engine** — `scripts/guard/*`, `src/policy/guard/*`: the mechanism that decides what a session may do.
-- **Evidence / audit trail** — `hooks/audit-log.mjs` and any component that records or verifies the incapability/assurance evidence (Plane A/C verification per `docs/REQUIREMENTS.md` §0.3).
+- **Evidence / audit trail** — any component that records or verifies the incapability/assurance evidence (Plane A/C verification per `REQUIREMENTS.md` §0.3).
 - **Secret scanning / CI gates** — `.github/workflows/ci.yml`, `.gitleaks.toml`, `.gitleaksignore`, `scripts/secret-scan/*`.
-- **Policy delivery / config surface** — anything that changes how policy is authored or delivered to the enforcement point (`docs/REQUIREMENTS.md` §"Policy is centralized"). Exception (THOTH-ADR-0001, human ruling 2026-09-19): adding or removing an entry in docs/qa/s5-central-classification.json is not, by itself, a change needing a fresh dated review report -- the merged PR diff is the approval; changes to the loader or hooks that read it still are.
+- **Policy delivery / config surface** — anything that changes how policy is authored or delivered to the enforcement point (`REQUIREMENTS.md` §"Policy is centralized"). Exception (THOTH-ADR-0001, human ruling 2026-09-19): adding or removing an entry in docs/qa/s5-central-classification.json is not, by itself, a change needing a fresh dated review report -- the merged PR diff is the approval; changes to the loader or hooks that read it still are.
 - **Halt-state directory** — `.thoth/halt-state/` (S5, Milestone #23): session-readable, and partly derived from secrets-adjacent config (the MCP-declaration input files `hooks/sessionstart-tool-enum.mjs` reads via `src/policy/tools/mcp-enumeration.ts`) — a future edit to its contents or the code that reads/writes it draws the same named-reviewer ceremony as this project's other named sensitive surfaces above.
 
 ## Architecture Decisions

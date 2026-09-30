@@ -14,7 +14,7 @@ Baseline: `node --test` on kernel-purity-check, hook-typecheck-coverage-check, s
 
 | Issue | Shape | Result on merged code | Evidence |
 |---|---|---|---|
-| #366 | import path `../../attacker-controlled/config/sanitize.ts` + dead-code decoy of the real literal | sanitize.test.ts 12 pass / 1 fail (caught: exact-specifier equality, raw-text regex removed) | demonstrated |
+| #366 | import path ../../attacker-controlled/config/sanitize.ts (hypothetical attacker path) + dead-code decoy of the real literal | sanitize.test.ts 12 pass / 1 fail (caught: exact-specifier equality, raw-text regex removed) | demonstrated |
 | #366 | import attributes `import(spec, {with:{...}})` | 1 fail (arity != 1) | demonstrated |
 | #366 | template literal with substitution | 1 fail | demonstrated |
 | #366 | alias chain `a = sanitizeMod; b = a; b.sanitizeForTerminal` | 1 fail (rejected, conservative) | demonstrated |

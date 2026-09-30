@@ -5,7 +5,7 @@
 ADR cache: HIT, 37 ADRs (devops 12, software-engineering 23, docs/adr 2), whole catalog read unfiltered.
 
 ## Tier
-The Manager's STANDARD holds; I agree. CLAUDE.md Sensitive areas name `src/policy/guard/*`, `hooks/audit-log.mjs` and evidence/incapability verification. A test file under src/policy/normalizer/ and the QA-06 mutant list (src/qa/shell-detector-mutants.ts) are neither. The mutant list is a CI instrument, not a runtime evidence recorder, and it adds a mutant without weakening any existing one. Same class as precedent s332.
+The Manager's STANDARD holds; I agree. CLAUDE.md Sensitive areas name `src/policy/guard/*`, the audit-log hook and evidence/incapability verification. A test file under src/policy/normalizer/ and the QA-06 mutant list (src/qa/shell-detector-mutants.ts) are neither. The mutant list is a CI instrument, not a runtime evidence recorder, and it adds a mutant without weakening any existing one. Same class as precedent s332.
 
 ## ADR verdicts
 - SE ADR-0021 POL-11/POL-12 (kernel/normalizer purity): test-only diff. `npm run qa:kernel-purity` PASS (4 files); `npm run qa:normalizer-registry-purity` PASS. No collision.
