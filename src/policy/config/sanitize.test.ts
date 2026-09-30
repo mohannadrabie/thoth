@@ -972,16 +972,85 @@ for (const [name, source] of GLOBAL_MUTATION_SHAPES) {
   });
 }
 
-test("AC-3d/3e positive control: a benign refactor (a local const helper, a local object mutated, JSON, Error, Promise, undefined) is not flagged", () => {
+// #372 narrowed this control: member WRITES are now deny-by-default (AC-3h), so the benign refactor
+// it models builds its object literal in one expression instead of mutating it afterwards.
+test("AC-3d/3e positive control: a benign refactor (a local const helper, a local object literal, JSON, Error, Promise, undefined) is not flagged", () => {
   const source = [
     "const helper = (s) => s.trim();",
     'const label = helper("x");',
-    "const local = {};",
-    "local.value = 1;",
-    "local.count += 1;",
+    "const local = { value: 1, count: 2 };",
     'const parsed = JSON.parse("{}");',
     "const p = new Promise((resolve) => resolve(undefined));",
     'const e = new Error("x");',
   ].join("\n");
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
+});
+
+// Issue #372 (app-security round 5, MED, demonstrated; successor to #371): the "no write rooted at a
+// global" rule rooted only at a global IDENTIFIER, and banned `__proto__`/`prototype` only as strings.
+// A literal or local root (`"".__proto__.replace = ...`), a destructuring write target, a
+// `__defineGetter__` call, and an alias of an allowed global (`const J = JSON; J.stringify = ...`) all
+// patch a built-in and disable the sanitizer with AC-3/3e/3f green. Deny by default on the vehicles:
+// AC-3g bans the dangerous property NAMES in every position; AC-3h denies every member write not on an
+// allow-list pinned to the real hook; AC-3i lets an allowed global appear only as a member-access
+// object or a call/new callee, never as a value that could be aliased.
+const BANNED_NAME_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["__proto__ property access on a string literal root", '"".__proto__.replace = function () { return ""; };'],
+  ["__proto__ property access on a local root", 'const s = "";\ns.__proto__.replace = function () { return ""; };'],
+  ["__proto__ destructuring write target", '[("").__proto__.replace] = [() => ""];'],
+  ["__defineGetter__ call", 'const o = {};\no.__defineGetter__("x", () => 1);'],
+  ["__defineSetter__ call", 'const o = {};\no.__defineSetter__("x", () => 1);'],
+  ["__lookupGetter__ call", 'const o = {};\nconst g = o.__lookupGetter__("x");'],
+  ["__lookupSetter__ call", 'const o = {};\nconst g = o.__lookupSetter__("x");'],
+  ["prototype as an identifier property", "function F() {}\nconst p = F.prototype;"],
+  ["__proto__ as an object-literal key", "const o = { __proto__: null };"],
+  ["__proto__ as a destructuring key", "const { __proto__: p } = {};"],
+  ["__proto__ as a shorthand property", "const __proto__ = 1;\nconst o = { __proto__ };"],
+  ["__defineGetter__ as a method name", "const o = { __defineGetter__() {} };"],
+];
+
+for (const [name, source] of BANNED_NAME_SHAPES) {
+  test(`AC-3g (#372): a dangerous property name is banned in every position — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+const MEMBER_WRITE_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["assignment to a member of a local object", "const o = {};\no.x = 1;"],
+  ["assignment to a member of a string literal", '"".x = 1;'],
+  ["assignment to a member of a call result", "const f = () => ({});\nf().x = 1;"],
+  ["compound assignment to a local member", "const o = { n: 1 };\no.n += 1;"],
+  ["increment of a local member", "const o = { n: 1 };\no.n++;"],
+  ["delete of a local member", "const o = { n: 1 };\ndelete o.n;"],
+  ["destructuring write to a local member", "const o = {};\n[o.x] = [1];"],
+  ["for-of target that is a local member", "const o = {};\nfor (o.x of [1]) {}"],
+];
+
+for (const [name, source] of MEMBER_WRITE_SHAPES) {
+  test(`AC-3h (#372): a member write not on the pinned allow-list is flagged — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+const ALIAS_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["JSON aliased, then written", 'const J = JSON;\nJ.stringify = () => "";'],
+  ["Promise aliased as a value", "const P = Promise;"],
+  ["Error aliased as a value", "const E = Error;"],
+  ["JSON passed as an argument", "const f = (x) => x;\nf(JSON);"],
+  ["JSON returned as a value", "const f = () => JSON;"],
+  ["JSON destructured from", 'const { stringify } = JSON;'],
+  ["JSON as a shorthand property value", "const o = { JSON };"],
+  ["JSON spread", "const o = { ...JSON };"],
+  ["class extending Promise", "class X extends Promise {}"],
+];
+
+for (const [name, source] of ALIAS_SHAPES) {
+  test(`AC-3i (#372): an allowed global may only be a member-access object or a call/new callee, never a bare value — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+test("AC-3i positive control: allowed globals used as member-access objects and call/new callees, and undefined as a value, are not flagged", () => {
+  const source = ['const a = JSON.parse("{}");', "const b = new Error(String_ok);", "const c = Promise.all([]);", "const d = new Promise((r) => r(undefined));", "process.exit(2);", "const String_ok = 1;"].join("\n");
   assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
 });
