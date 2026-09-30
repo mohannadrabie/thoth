@@ -6,6 +6,7 @@
 //
 // story-implementer's own tests, written FIRST (red) per the approved Phase 1 plan.
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { createGateSandbox, denyReason, describeRun, wasPolicyDenied, type GateRun } from "./test-support/gate-sandbox.ts";
 
@@ -89,4 +90,54 @@ test("AC-326-8: hostile bytes inside a capped span are still sanitized on real s
   assert.ok(!reason.includes("\u001b"), "no raw ESC byte may reach stdout");
   assert.ok(!reason.includes("\u0000"), "no raw NUL byte may reach stdout");
   assert.ok(!reason.includes("\u009b"), "no raw CSI byte may reach stdout");
+});
+
+
+// ---- Round 2 (Issue #375): pin 512 itself, real worst cases, cap-constant parity ----
+// Tighter bound for 3-byte BMP characters (raw in JSON, 3 B each): 2 entries x (512*3 + ~45 marker)
+// = about 3.2 KB plus about 150 B envelope. A cap of 750 gives 4718 B, so 4096 kills it.
+const MAX_STDOUT_3BYTE = 4096;
+const EURO = "€";
+
+test("AC-326-3b: two entries of ~64K 3-byte characters each stay under the 3-byte bound", () => {
+  const sb = createGateSandbox();
+  const big = EURO.repeat(64 * 1024);
+  const run = sb.bash(`kubectl '${big}' 'a/b/${big}'`);
+  assertDenied(run, "two-entry 3-byte span");
+  assert.ok(stdoutBytes(run) < MAX_STDOUT_3BYTE, `stdout ${stdoutBytes(run)} bytes must be under ${MAX_STDOUT_3BYTE}`);
+});
+
+test("AC-326-4b: the reason never carries 513 consecutive original characters (pins cap at 512)", () => {
+  const sb = createGateSandbox();
+  const total = 64 * 1024;
+  const run = sb.bash(`kubectl '${EURO.repeat(total)}'`);
+  assertDenied(run, "3-byte span");
+  const reason = denyReason(run);
+  // The reflected entry is a short leading fragment, the span, then a trailing quote (past the cap).
+  // The marker states the entry's true length N, so leading = N - total - 1, and exactly
+  // 512 - leading euro characters must survive the cap.
+  const marker = /\[truncated, (\d+) characters in all\]/.exec(reason);
+  assert.ok(marker, "truncation marker must be present");
+  const leading = Number(marker[1]) - total - 1;
+  const longest = Math.max(...(reason.match(/€+/g) ?? [""]).map((r) => r.length));
+  assert.equal(longest, 512 - leading, `exactly ${512 - leading} original characters must be reflected (cap 512); got ${longest}`);
+  assert.ok(!reason.includes(EURO.repeat(513)), "513 consecutive original characters must not be reflected");
+});
+
+test("AC-326-3c: two entries of lone surrogates (6 B each once JSON-escaped) stay under MAX_STDOUT", () => {
+  const sb = createGateSandbox();
+  const lone = "\ud800".repeat(64 * 1024);
+  const run = sb.bash(`kubectl '${lone}' 'a/b/${lone}'`);
+  assertDenied(run, "two-entry lone-surrogate span");
+  assert.ok(stdoutBytes(run) < MAX_STDOUT, `stdout ${stdoutBytes(run)} bytes must be under ${MAX_STDOUT}`);
+});
+
+test("AC-326-9: the two 512 cap constants (gate REASON_NAME_CAP, kernel UNRESOLVED_FRAGMENT_CAP) stay equal", () => {
+  // Source-scrape: the kernel must keep zero imports (qa:kernel-purity), so neither value is exported.
+  const read = (p: string): string => readFileSync(new URL(p, import.meta.url), "utf8");
+  const gate = /const REASON_NAME_CAP = (\d+);/.exec(read("../src/policy/gate/decide-tool-call.ts"));
+  const kernel = /const UNRESOLVED_FRAGMENT_CAP = (\d+);/.exec(read("../src/policy/kernel/kernel.ts"));
+  assert.ok(gate && kernel, "both cap constants must be found by the scrape");
+  assert.equal(gate[1], kernel[1], "the two caps must be equal");
+  assert.equal(Number(kernel[1]), 512);
 });
