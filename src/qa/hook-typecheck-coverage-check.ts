@@ -76,7 +76,8 @@ export interface BaselineEntry {
 }
 export interface BaselineSnapshot {
   version: 1;
-  hooks: Record<string, BaselineEntry[]>;
+  /** Keyed `pinned`, not `hooks`: qa:gate-manifest (SUR-13) treats any JSON with a top-level "hooks" key as a gate manifest. */
+  pinned: Record<string, BaselineEntry[]>;
 }
 
 /** A diagnostic identity, position-independent (Issue #368): `${code}|${normalised line text}`. */
@@ -106,7 +107,7 @@ function describeDiagnostic(diagnostic: ts.Diagnostic): DiagnosticInfo | undefin
 
 function parseSnapshot(text: string, where: string): BaselineSnapshot {
   const parsed = JSON.parse(text) as Partial<BaselineSnapshot>;
-  if (parsed.version !== 1 || typeof parsed.hooks !== "object" || parsed.hooks === null) {
+  if (parsed.version !== 1 || typeof parsed.pinned !== "object" || parsed.pinned === null) {
     throw new Error(`${where}: not a version-1 hook-typecheck baseline snapshot`);
   }
   return parsed as BaselineSnapshot;
@@ -114,7 +115,7 @@ function parseSnapshot(text: string, where: string): BaselineSnapshot {
 
 function expandSnapshot(snapshot: BaselineSnapshot): Record<string, readonly string[]> {
   const out: Record<string, readonly string[]> = {};
-  for (const [hook, entries] of Object.entries(snapshot.hooks)) {
+  for (const [hook, entries] of Object.entries(snapshot.pinned)) {
     out[hook] = entries.flatMap((e) => Array.from({ length: e.count }, () => identityKey(e.code, e.excerpt)));
   }
   return out;
@@ -318,7 +319,7 @@ function entriesFromDiagnostics(diagnostics: DiagnosticInfo[]): BaselineEntry[] 
 export function regenerateBaseline(options: RegenerateOptions): RegenerateResult {
   const snapshotPath = options.snapshotPath ?? BASELINE_SNAPSHOT_PATH;
   const committed = existsSync(snapshotPath) ? parseSnapshot(readFileSync(snapshotPath, "utf8"), snapshotPath) : undefined;
-  const hooks = options.hooks ?? (committed ? Object.keys(committed.hooks) : []);
+  const hooks = options.hooks ?? (committed ? Object.keys(committed.pinned) : []);
   if (hooks.length === 0) {
     return {
       ok: false,
@@ -331,7 +332,7 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
   const project = resolveProjectAndDiagnostics(options.repoRoot, options.configPathOverride);
   const added: string[] = [];
   const removed: string[] = [];
-  const nextHooks: Record<string, BaselineEntry[]> = { ...(committed?.hooks ?? {}) };
+  const nextHooks: Record<string, BaselineEntry[]> = { ...(committed?.pinned ?? {}) };
   for (const hook of hooks) {
     if (!project.fileNames.includes(hook)) {
       return { ok: false, added, removed, refusal: `${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — nothing to measure.` };
@@ -341,7 +342,7 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
       return { ok: false, added, removed, refusal: `${hook}: contains a type-suppression (${suppressions.join(", ")}); remove it before re-pinning — a baseline generated around a hidden diagnostic launders it.` };
     }
     const current = entriesFromDiagnostics(project.diagnosticsByFile.get(hook) ?? []);
-    const pinnedCounts = new Map((committed?.hooks[hook] ?? []).map((e) => [identityKey(e.code, e.excerpt), e.count]));
+    const pinnedCounts = new Map((committed?.pinned[hook] ?? []).map((e) => [identityKey(e.code, e.excerpt), e.count]));
     const currentCounts = new Map(current.map((e) => [identityKey(e.code, e.excerpt), e.count]));
     for (const [key, count] of currentCounts) {
       const allowed = pinnedCounts.get(key) ?? 0;
@@ -366,7 +367,7 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
   const sortedHooks: Record<string, BaselineEntry[]> = {};
   for (const hook of Object.keys(nextHooks).sort()) sortedHooks[hook] = nextHooks[hook] ?? [];
   if (options.write !== false) {
-    const snapshot: BaselineSnapshot = { version: 1, hooks: sortedHooks };
+    const snapshot: BaselineSnapshot = { version: 1, pinned: sortedHooks };
     writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   }
   return { ok: true, added, removed };

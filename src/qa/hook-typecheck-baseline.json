@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "hooks": {
+  "pinned": {
     "hooks/sessionstart-tool-enum.mjs": [
       {
         "code": 2322,
