@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 precondition instruments (test-only; no runtime change)
+
+STANDARD tier. Three instruments for the S7 activation preconditions; nothing is wired and no production file changed. Refs #308.
+
+- AC-3j (`src/policy/config/hook-import-pins.test.ts`): pins the namespace.member pairs the PreToolUse gate hook uses from its Promise.all imports (found by an AST scan at run time, deny by default), rejects bare, aliased, destructured, spread, computed and shadowed uses, and pins the environment reads in the relative-import graph rooted at those imports (human ruling Q2). The pinned reads are the `SystemRoot`/`windir` read in `resolveSystemRegExePath`, the `child_process` import beside it, and `projectDir`, which nothing in the graph references. Synthetic controls prove each pin can fail. Source scan, not a runtime proof.
+- AP-12 (`src/qa/arbitrary-exec-classification.test.ts`): asserts no arbitrary-execution tool is classifiable read-only over the real inventory and classification catalog; seeded mutants must be flagged. The vendored inventory does not yet contain the five named tools (AP-2 re-vendor pending), so a re-vendored name without a classification is pinned to throw.
+- R1-6c (`src/qa/catalog-single-source.test.ts`): enumerates the definition, call and writer sites of the gate's catalog port and asserts the hook's `loadCatalog` is exactly the `assembleCatalog(...).merged` funnel. Coverage versus the #355 shapes 3 and 4 (assembled-name reads) is NOT provided, by design; that exposure stays measured by the R1-6b real-tree scan.
+- Plan addendum: `docs/plans/s308-precondition-instruments-phase1-2026-09-30.md`.
+
 ### Fixed - Issues #338 and #340 (an allow rule that can match a shell redirect record is now a load error)
 
 CRITICAL tier (sensitive area: policy delivery / config surface; an allow-widening control). Human ruling 2026-09-30 (`docs/decisions.md`): reject at load, fail closed. Refs #338 #340.
