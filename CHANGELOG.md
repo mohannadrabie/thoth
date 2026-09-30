@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issues #338 and #340 (an allow rule that can match a shell redirect record is now a load error)
+
+CRITICAL tier (sensitive area: policy delivery / config surface; an allow-widening control). Human ruling 2026-09-30 (`docs/decisions.md`): reject at load, fail closed. Refs #338 #340.
+
+- New check V4 (allow-redirect-reachable) in `src/policy/config/rule-reachability.ts`: an ALLOW rule with a target starting `mcp/` (the bare prefix included) is a `schema-invalid` load failure when its verbs are absent, empty, or include a catalog verb. The shell normalizer emits a redirect target verbatim with verb `write`, so such an allow matched a redirect into a directory of that name and widened allow. Applies on central, shipped-defaults and project; the message carries the layer-aware `Unlock:`.
+- Still loads: an allow with class-marker verbs only (or a marker plus a stray verb) on a presentable target, an allow on a filesystem path or with no targets (decisions row 83(a)), and every deny rule.
+- Migration for central rule authors (the central source is out of repo, so its exposure is not measurable here): an allow on an MCP target must carry a class marker verb and no catalog verb, or point at a filesystem path. A newly rejected central rule fails the whole load. The committed shipped-defaults and project layers hold 0 rules (R2-10).
+- `tool-class-format.ts` rule-author facts 3 and 4 and both file headers now state the rejection; they no longer call these shapes residual or benign. `schema.ts` is untouched.
+- Tests, failing-first: R2-22 to R2-25. R2-24 enumerates candidate allow rules against real shell redirect records and the real kernel, and its comparator is proven able to fail with mutant predicates. R2-12 cells, R2-17 part 3 and the R2-6 whole-record allow loop are REPLACED with explicit headers (SE ADR-0005).
+
 ### Fixed - Issue #320 (the systemroot probe row no longer depends on the Node version)
 
 STANDARD tier (evidence surface: the SUR-10 fail-open probe record). On Windows the `systemroot-nonexistent` fault gives a different result by Node version: Node 22.18 starts and the hook denies (BLOCKS), Node 24.15 aborts at start-up (exit 134, PROCEEDS). The G9 probe test assumed PROCEEDS only and failed on 22.18.
