@@ -338,11 +338,12 @@ test("AC-7b regression: an env-gated object-literal port keyed \"sanitizeForTerm
   );
 });
 
-// Round-1 M9 non-regression: a benign local-`const` alias hoist of the REAL sanitizeForTerminal
-// property access (`const sanitizePort = sanitizeMod.sanitizeForTerminal;`) must still resolve —
-// the AC-7b object-resolution fix above must not reintroduce round-1's own false positive (a guard
-// that blocks a benign refactor trains the next author to loosen the guard, not fix the code).
-test("AC-7b non-regression: a benign local-const alias of the real sanitizeForTerminal property access still resolves (round-1 M9 — must not regress)", () => {
+// Round-1 M9 alias hoist (`const sanitizePort = sanitizeMod.sanitizeForTerminal;`). FLIPPED to
+// "rejected" (post-merge round, app-security round-2 finding 2, Manager ruling 2026-09-29): the
+// second argument must be literally `sanitizeMod.sanitizeForTerminal`, no alias. This STRENGTHENS the
+// guard, so it is not a weakening under SE ADR-0010; the round-1 false-positive worry is superseded
+// by the deny-by-default shape rule.
+test("AC-7b flipped: a local-const alias of the real sanitizeForTerminal property access is now REJECTED (the second argument must be literally sanitizeMod.sanitizeForTerminal, no alias)", () => {
   const source = [
     'const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([',
     "  readStdin(),",
@@ -361,7 +362,7 @@ test("AC-7b non-regression: a benign local-const alias of the real sanitizeForTe
   assert.equal(calls.length, 1);
   const call = calls[0];
   assert.ok(call, "expected exactly one renderHookOutput(...) call site");
-  assert.equal(resolvesToSanitizeForTerminal(call.arguments[1]), true, "a benign local-const alias hoist of the real property access must still resolve");
+  assert.equal(resolvesToSanitizeForTerminal(call.arguments[1]), false, "an alias of the real property access must NOT resolve — the argument must be literally sanitizeMod.sanitizeForTerminal");
 });
 
 // Issue #360 fix-now round 2 (red-team round 2 finding R3, drill N5, regression pin): a decoy
@@ -468,4 +469,80 @@ test("R3 non-regression: a same-scope (non-shadowed) binding still resolves corr
     true,
     "resolving sanitizeMod from a NESTED block, with no shadow, must still find the outer real import binding",
   );
+});
+
+// Post-merge fix-now (2026-09-29): Issue #360, app-security round-2 finding 2 + red-team round-4 N1.
+// Third consecutive round on the same root-cause class (a hand-rolled resolver that fails OPEN on any
+// shape it does not model), so the fix is architectural: deny by default on SHAPE, backed by the
+// compiler's own symbol table, not one more shape patched into a resolver. Every table entry below
+// is one demonstrated bypass; each runs the SAME whole-source entry point as the real-hook test.
+const IMPORTS_BEFORE_SANITIZE = [
+  "  readStdin(),",
+  '  import("../src/policy/gate/decide-tool-call.ts"),',
+  '  import("../src/policy/gate/render-hook-output.ts"),',
+  '  import("../src/policy/config/loader.ts"),',
+  '  import("../src/policy/config/central-source.ts"),',
+  '  import("../src/policy/tools/classification-catalog.ts"),',
+];
+const SANITIZE_IMPORT = '  import("../src/policy/config/sanitize.ts"),';
+const REAL_DESTRUCTURE = ["const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([", ...IMPORTS_BEFORE_SANITIZE, SANITIZE_IMPORT, "]);"];
+const REAL_CALL = "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);";
+const IDENTITY_PORT = "{ sanitizeForTerminal: (s) => s }";
+
+/** The whole-source entry point every case below runs: does the guard ACCEPT this source? */
+function guardAccepts(source: string): boolean {
+  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = findAllRenderHookOutputCalls(sourceFile);
+  if (calls.length !== 1) return false;
+  const call = calls[0];
+  return call !== undefined && resolvesToSanitizeForTerminal(call.arguments[1]);
+}
+
+const join = (lines: string[]): string => lines.join("\n");
+
+const BYPASS_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["let-reassign: a local let alias reassigned under an env gate", join([...REAL_DESTRUCTURE, "let san = sanitizeMod.sanitizeForTerminal;", "if (process.env.THOTH_X) san = (s) => s;", "const output = render.renderHookOutput(gate.decideToolCall(input, ports), san);"])],
+  ["let-declared sanitizeMod itself reassigned", join(["let [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([", ...IMPORTS_BEFORE_SANITIZE, SANITIZE_IMPORT, "]);", `if (process.env.THOTH_X) sanitizeMod = ${IDENTITY_PORT};`, REAL_CALL])],
+  ["function-parameter shadow", join([...REAL_DESTRUCTURE, "function emit(sanitizeMod) {", "  return render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}", `const output = emit(process.env.THOTH_X ? ${IDENTITY_PORT} : sanitizeMod);`])],
+  ["arrow-parameter shadow", join([...REAL_DESTRUCTURE, "const emit = (sanitizeMod) => render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", `const output = emit(process.env.THOTH_X ? ${IDENTITY_PORT} : sanitizeMod);`])],
+  ["object-binding-pattern shadow in a nested block", join([...REAL_DESTRUCTURE, "let output;", "{", `  const { sanitizeMod } = { sanitizeMod: process.env.THOTH_X ? ${IDENTITY_PORT} : sanitizeMod };`, "  output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}"])],
+  ["catch-clause shadow", join([...REAL_DESTRUCTURE, "let output;", "try {", "  throw process.env.THOTH_X ? { sanitizeForTerminal: (s) => s } : sanitizeMod;", "} catch (sanitizeMod) {", "  output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}"])],
+  ["for-of shadow", join([...REAL_DESTRUCTURE, "let output;", `for (const sanitizeMod of [process.env.THOTH_X ? ${IDENTITY_PORT} : {}]) {`, "  output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}"])],
+  ["var hoisted out of a block inside a function", join([...REAL_DESTRUCTURE, "function emit() {", `  if (process.env.THOTH_X) { var sanitizeMod = ${IDENTITY_PORT}; }`, "  return render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}", "const output = emit();"])],
+  [
+    "Promise.all spread shifts the runtime index against the AST index",
+    join([
+      "const [raw, gate, render, loader, sanitizeMod] = await Promise.all([",
+      "  readStdin(),",
+      '  import("../src/policy/gate/decide-tool-call.ts"),',
+      '  import("../src/policy/gate/render-hook-output.ts"),',
+      '  import("../src/policy/config/loader.ts"),',
+      '  ...[import("../src/policy/tools/classification-catalog.ts"), import("../../attacker-controlled/sanitize.ts")],',
+      SANITIZE_IMPORT,
+      "]);",
+      REAL_CALL,
+    ]),
+  ],
+  ["module-object assignment under an env gate", join([...REAL_DESTRUCTURE, "if (process.env.THOTH_X) sanitizeMod.sanitizeForTerminal = (s) => s;", REAL_CALL])],
+  ["local Promise shadow feeds the destructure", join(["const Promise = { all: async () => [1, 2, 3, 4, 5, 6, { sanitizeForTerminal: (s) => s }] };", ...REAL_DESTRUCTURE, REAL_CALL])],
+  ["decoy property-access call kept, real call via bracket access", join([...REAL_DESTRUCTURE, "if (process.env.THOTH_NEVER) render.renderHookOutput(null, sanitizeMod.sanitizeForTerminal);", 'const output = render["renderHookOutput"](gate.decideToolCall(input, ports), (s) => s);'])],
+  ["decoy property-access call kept, real call via computed-key bracket access", join([...REAL_DESTRUCTURE, "if (process.env.THOTH_NEVER) render.renderHookOutput(null, sanitizeMod.sanitizeForTerminal);", 'const output = render["render" + "HookOutput"](gate.decideToolCall(input, ports), (s) => s);'])],
+  ["decoy property-access call kept, real call via a destructured alias", join([...REAL_DESTRUCTURE, "if (process.env.THOTH_NEVER) render.renderHookOutput(null, sanitizeMod.sanitizeForTerminal);", "const { renderHookOutput: r } = render;", "const output = r(gate.decideToolCall(input, ports), (s) => s);"])],
+];
+
+for (const [name, source] of BYPASS_SHAPES) {
+  test(`AC-7d: the sanitize-wiring guard REJECTS this bypass shape — ${name}`, () => {
+    assert.equal(guardAccepts(source), false, `the guard must reject: ${name}`);
+  });
+}
+
+test("AC-7d positive control: the real hook's own shape (const array-destructure of Promise.all imports, one direct sanitizeMod.sanitizeForTerminal argument) is still ACCEPTED, so the table above rejects for the shape, not for a broken fixture", () => {
+  assert.equal(guardAccepts(join([...REAL_DESTRUCTURE, REAL_CALL])), true);
+});
+
+test("AC-7e: a function-parameter and an object-binding-pattern shadow of sanitizeMod are both rejected — the resolver enumerates every binding form in the reference's scope chain, not only Block/SourceFile variable statements with an Identifier or array-pattern name", () => {
+  const paramShadow = join([...REAL_DESTRUCTURE, "function emit(sanitizeMod) {", "  return render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}", `const output = emit(process.env.THOTH_X ? ${IDENTITY_PORT} : sanitizeMod);`]);
+  const patternShadow = join([...REAL_DESTRUCTURE, "let output;", "{", `  const { sanitizeMod } = { sanitizeMod: process.env.THOTH_X ? ${IDENTITY_PORT} : sanitizeMod };`, "  output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);", "}"]);
+  assert.equal(guardAccepts(paramShadow), false, "function-parameter shadow");
+  assert.equal(guardAccepts(patternShadow), false, "object-binding-pattern shadow");
 });
