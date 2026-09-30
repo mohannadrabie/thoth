@@ -215,11 +215,28 @@ function parseWithChecker(fileName: string, text: string): ts.SourceFile {
 /** True when `expr` is EXACTLY `import("../src/policy/config/sanitize.ts")` — the one real
  * relative specifier `hooks/pretooluse-kernel-gate.mjs` must use, not merely a path ending in the
  * same suffix (Issue #366). */
-function isSanitizeModuleImportCall(expr: ts.Expression | undefined): boolean {
+function isImportCallOf(expr: ts.Expression | undefined, specifier: string): boolean {
   if (expr === undefined || !ts.isCallExpression(expr) || expr.expression.kind !== ts.SyntaxKind.ImportKeyword || expr.arguments.length !== 1) return false;
   const arg0 = expr.arguments[0];
-  return arg0 !== undefined && ts.isStringLiteralLike(arg0) && arg0.text === SANITIZE_MODULE_SPECIFIER;
+  return arg0 !== undefined && ts.isStringLiteralLike(arg0) && arg0.text === specifier;
 }
+
+/** True when `expr` is exactly `<name>()` — a plain call of a bare identifier, no arguments. */
+function isPlainCallOf(expr: ts.Expression | undefined, name: string): boolean {
+  return expr !== undefined && ts.isCallExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === name && expr.arguments.length === 0;
+}
+
+/** The exact destructuring pattern and `Promise.all` array the hook must have, index by index
+ * (Issue #369). `specifier: undefined` marks the stdin read. */
+const PROMISE_ALL_SHAPE: ReadonlyArray<{ name: string; specifier: string | undefined }> = [
+  { name: "raw", specifier: undefined },
+  { name: "gate", specifier: "../src/policy/gate/decide-tool-call.ts" },
+  { name: "render", specifier: "../src/policy/gate/render-hook-output.ts" },
+  { name: "loader", specifier: "../src/policy/config/loader.ts" },
+  { name: "central", specifier: "../src/policy/config/central-source.ts" },
+  { name: "catalog", specifier: "../src/policy/tools/classification-catalog.ts" },
+  { name: "sanitizeMod", specifier: SANITIZE_MODULE_SPECIFIER },
+];
 
 function countNodes(root: ts.Node, predicate: (node: ts.Node) => boolean): number {
   let n = 0;
@@ -296,9 +313,22 @@ function diagnoseSanitizeWiring(secondArg: ts.Expression | undefined): string | 
   if (list === undefined || !ts.isArrayLiteralExpression(list) || list.elements.some((e) => ts.isSpreadElement(e) || ts.isOmittedExpression(e))) {
     return "the `Promise.all` argument must be a plain array literal (no spread, no holes): a spread shifts the runtime index against the source index";
   }
-  const index = pattern.elements.indexOf(decl);
-  if (!isSanitizeModuleImportCall(list.elements[index])) {
-    return `the array element for \`sanitizeMod\` (index ${index}) must be exactly import(${JSON.stringify(SANITIZE_MODULE_SPECIFIER)}) — no path-suffix lookalike, no other module`;
+  // Issue #369: EVERY element is pinned, index by index — a retargeted `render` (or gate, loader,
+  // central, catalog) import is as dangerous as a retargeted sanitizer, since the module can ignore
+  // the sanitize port. The pattern's names are pinned too, so a name cannot be moved to another index.
+  if (pattern.elements.length !== PROMISE_ALL_SHAPE.length || list.elements.length !== PROMISE_ALL_SHAPE.length) {
+    return `the destructuring pattern and the Promise.all array must each have exactly ${PROMISE_ALL_SHAPE.length} elements (found ${pattern.elements.length} and ${list.elements.length})`;
+  }
+  for (const [i, expected] of PROMISE_ALL_SHAPE.entries()) {
+    const element = pattern.elements[i];
+    if (element === undefined || !ts.isBindingElement(element) || !ts.isIdentifier(element.name) || element.name.text !== expected.name) {
+      return `destructured binding at index ${i} must be \`${expected.name}\``;
+    }
+    const value = list.elements[i];
+    const ok = expected.specifier === undefined ? isPlainCallOf(value, "readStdin") : isImportCallOf(value, expected.specifier);
+    if (!ok) {
+      return `the Promise.all element for \`${expected.name}\` (index ${i}) must be exactly ${expected.specifier === undefined ? "readStdin()" : `import(${JSON.stringify(expected.specifier)})`} — no lookalike path, no other module`;
+    }
   }
   return undefined;
 }
@@ -349,7 +379,9 @@ test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHo
 // list of names: every `process` reference is one of the four stream/exit members the hook uses, and
 // there is no route to the environment through globalThis, require or a process module import.
 const ALLOWED_PROCESS_MEMBERS = new Set(["stdin", "stdout", "stderr", "exit"]);
-const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "createRequire"]);
+// Issue #370 adds `Function`, `eval` and `constructor`: each reaches `process` (and so the
+// environment) without naming it, defeating any list of process members or import specifiers.
+const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "createRequire", "Function", "eval"]);
 const FORBIDDEN_SPECIFIERS = new Set(["process", "node:process", "module", "node:module"]);
 
 /** Every way this source could reach the environment, one line each; empty when it cannot. */
@@ -365,6 +397,18 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
         if (member === undefined || !ALLOWED_PROCESS_MEMBERS.has(member)) found.push(`${where(node)}: \`process\` used other than as process.stdin/stdout/stderr/exit (${member === undefined ? "bare reference, bracket access or alias" : `process.${member}`})`);
       }
       if (!isPropertyName && FORBIDDEN_IDENTIFIERS.has(node.text)) found.push(`${where(node)}: forbidden identifier \`${node.text}\``);
+      // `constructor` in ANY position: a property access (`x.constructor`), a destructured key, a name.
+      if (node.text === "constructor") found.push(`${where(node)}: \`constructor\` reference (reaches Function without naming it)`);
+    }
+    // Any element access other than a plain numeric literal index: `x["constructor"]` and
+    // `x["con" + "structor"]` both spell a property name the identifier scan cannot see.
+    if (ts.isElementAccessExpression(node) && !ts.isNumericLiteral(node.argumentExpression)) {
+      found.push(`${where(node)}: element access with a non-numeric key (can spell "constructor" or "env")`);
+    }
+    // A dynamic import() must name its module with a plain string literal, never a computed value.
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const specifier = node.arguments[0];
+      if (specifier === undefined || !ts.isStringLiteralLike(specifier)) found.push(`${where(node)}: import() specifier is not a plain string literal`);
     }
     if (ts.isStringLiteralLike(node) && FORBIDDEN_SPECIFIERS.has(node.text) && (ts.isImportDeclaration(node.parent) || (ts.isCallExpression(node.parent) && node.parent.expression.kind === ts.SyntaxKind.ImportKeyword))) {
       found.push(`${where(node)}: import of "${node.text}"`);
