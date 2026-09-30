@@ -22,7 +22,8 @@
   // hooks/userpromptsubmit-halt-relay.mjs, were annotated with JSDoc only -- no runtime change,
   // no @ts-ignore/@ts-expect-error/@ts-nocheck -- and now typecheck clean under strict + checkJs,
   // so a dropped required argument or a type mismatch in any of them fails `npm run build` /
-  // `npm run typecheck`).
+  // `npm run typecheck` -- except where a value is annotated `any`, which the compiler cannot see through;
+  // QA-18 bans `any`/`Object`/`*` in JSDoc except for a small pinned, reviewed allow-list of JSON-input sites).
   //
   // `tsconfig.hooks-coverage.json` + `src/qa/hook-typecheck-coverage-check.ts` (CI step "QA-18")
   // stay as a COMPLEMENTARY guard, not a duplicate: QA-18 additionally scans for suppressions no
