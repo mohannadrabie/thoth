@@ -41,6 +41,15 @@ The `test-first` stage is **conditional**, seated by `test-writer` — it runs o
 
 Individual commands: `/maat:plan`, `/maat:review`, `/maat:debug`, `/maat:verify`, `/maat:resolve`, `/maat:red-team`, `/maat:audit`, `/maat:adr-amend`, `/maat:help`, `/maat:init`.
 
+## Branch discipline
+
+**One feature branch, one PR, per session (or per story, if a session spans several) — never one per fix-now round.** This project's append-only docs files (`CHANGELOG.md`, `docs/STATE.md`, `docs/decisions.md`, `docs/run-log.jsonl`, `docs/REVIEW_LOG.md`) are the near-guaranteed collision point when two branches touch them in parallel; branch sprawl is what turns that into a recurring conflict instead of a one-time cost.
+
+- **Cut once, iterate in place.** When Stage 3 review returns REWORK, route the fix back to the SAME branch/PR as a new commit — never a new branch, never a second PR for the same story. A story's branch lives from Phase 2 build through merge; every fix-now round is a commit on it.
+- **Re-sync with `origin/master` proactively, not just at cut time.** Before Stage 2 build starts, and again the moment any OTHER PR merges into `master` while this session's PR is still open (a docs-only session-handoff PR is the most common trigger), merge `origin/master` into the working branch immediately — don't wait for GitHub to report `CONFLICTING` or for the human to flag it. Resolve any conflict in the append-only files above by keeping BOTH sides' content in chronological order (newest entry on top, older entries demoted to "Prior entry," nothing dropped), then verify with QA-15 before pushing.
+- **One shared working directory, one checked-out branch, at a time.** A subagent building or reviewing a story runs in the SAME working directory the Manager is using by default — so a mid-session branch switch by one agent (the Manager or a subagent) can silently interleave with another agent's edits (a state-file edit landing on the wrong branch, a check running against the wrong tree). If a task genuinely needs a second concurrent checkout — a reviewer reading the pre-fix tree while a build subagent is still on the post-fix tree — use an explicit `git worktree` for it, and remove the worktree (deleting its branch too, once merged) the moment that task ends. Don't leave a worktree or its branch dangling for a future session to trip over.
+- **Delete a branch the moment its content lands elsewhere.** A review-only worktree branch (a self-persisted report, cherry-picked into the real story branch) has no reason to survive past that cherry-pick. A superseded draft (an old session-handoff branch replaced by a newer one) gets its stale PR closed with a comment explaining why, not left open. Prefer `git branch -d` (not `-D`) for routine cleanup — it refuses to delete anything not actually merged, which is the safety property that matters here.
+
 ## Human-only actions
 
 These stay with the human, always. No agent runs them, and no review report changes that:
@@ -51,11 +60,11 @@ These stay with the human, always. No agent runs them, and no review report chan
 ## Sensitive areas
 
 These areas always draw a named reviewer before a change to them is shippable — the tier picks who:
-- **Policy enforcement / session gates** — anything that halts or gates an in-session action: `hooks/report-subject-gate.mjs` and any other `hooks/*` enforcement point wired to `PreToolUse` / `UserPromptSubmit`.
+- **Policy enforcement / session gates** — anything that halts or gates an in-session action: `hooks/pretooluse-kernel-gate.mjs` and any other `hooks/*` enforcement point wired to `PreToolUse` / `UserPromptSubmit`.
 - **Guard / policy engine** — `scripts/guard/*`, `src/policy/guard/*`: the mechanism that decides what a session may do.
-- **Evidence / audit trail** — `hooks/audit-log.mjs` and any component that records or verifies the incapability/assurance evidence (Plane A/C verification per `docs/REQUIREMENTS.md` §0.3).
+- **Evidence / audit trail** — any component that records or verifies the incapability/assurance evidence (Plane A/C verification per `REQUIREMENTS.md` §0.3).
 - **Secret scanning / CI gates** — `.github/workflows/ci.yml`, `.gitleaks.toml`, `.gitleaksignore`, `scripts/secret-scan/*`.
-- **Policy delivery / config surface** — anything that changes how policy is authored or delivered to the enforcement point (`docs/REQUIREMENTS.md` §"Policy is centralized"). Exception (THOTH-ADR-0001, human ruling 2026-09-19): adding or removing an entry in docs/qa/s5-central-classification.json is not, by itself, a change needing a fresh dated review report -- the merged PR diff is the approval; changes to the loader or hooks that read it still are.
+- **Policy delivery / config surface** — anything that changes how policy is authored or delivered to the enforcement point (`REQUIREMENTS.md` §"Policy is centralized"). Exception (THOTH-ADR-0001, human ruling 2026-09-19): adding or removing an entry in docs/qa/s5-central-classification.json is not, by itself, a change needing a fresh dated review report -- the merged PR diff is the approval; changes to the loader or hooks that read it still are.
 - **Halt-state directory** — `.thoth/halt-state/` (S5, Milestone #23): session-readable, and partly derived from secrets-adjacent config (the MCP-declaration input files `hooks/sessionstart-tool-enum.mjs` reads via `src/policy/tools/mcp-enumeration.ts`) — a future edit to its contents or the code that reads/writes it draws the same named-reviewer ceremony as this project's other named sensitive surfaces above.
 
 ## Architecture Decisions
