@@ -68,7 +68,10 @@ import { extractConnectorIdentities, extractMcpServerNames } from "../src/policy
 // hooks/pretooluse-kernel-gate.mjs). The location is still resolved by main() BEFORE stdin is read, so the catch path below can record it.
 import { assembleCatalog, resolveFixtureLocation } from "../src/policy/tools/classification-catalog.ts";
 
-/** @typedef {{ fixtureSource: string, fixturePath: string | null }} HaltFixtureLocation */
+/** The fixture location a halt-state write may disclose: a resolved `FixtureLocation`, or main()'s
+ * degraded fallback when `resolveFixtureLocation` itself threw (Issue #374: a discriminated union on
+ * `fixtureSource`, so the degraded arm cannot be passed where a resolved location is required).
+ * @typedef {import("../src/policy/tools/classification-catalog.ts").FixtureLocation | { fixtureSource: "unknown", fixturePath: null }} HaltFixtureLocation */
 
 const UNCLASSIFIED_REASON_KEY = "SUR-03-unclassified-tool";
 // Connector-identity schema decision (see src/policy/tools/mcp-enumeration.ts's own header comment
@@ -133,7 +136,8 @@ const UNKNOWN_SESSION_ID = "unknown-session";
  * session id, and previously bypassed the anti-collision guard the same way an env-resolved id
  * could; it is now rejected here, on both hook files, by the same one check. A real Claude Code
  * session id (an RFC-4122 UUID) is comfortably inside this pattern — this never narrows the happy
- * path. *
+ * path.
+ *
  * @param {unknown} id
  * @returns {id is string}
  */
@@ -237,7 +241,8 @@ function haltStatePath(sessionId) {
  *
  * One edge case remains a deliberately left-unhandled, disclosed residual per this pass's own
  * ratified scope (Manager-approved 2026-09-17): hooks/userpromptsubmit-halt-relay.mjs's own
- * sanitizeDetail may still truncate this string mid-quote on a long multi-name list. *
+ * sanitizeDetail may still truncate this string mid-quote on a long multi-name list.
+ *
  * @param {string[]} names
  */
 function quoteNames(names) {
@@ -247,7 +252,8 @@ function quoteNames(names) {
 /** Best-effort read of an already-existing halt-state file for merge purposes. A malformed
  * existing file is NOT this script's fail-closed concern (that property belongs to
  * hooks/userpromptsubmit-halt-relay.mjs, tested there) — treated as "nothing to merge with" so this
- * writer can still make forward progress recording its own reason. *
+ * writer can still make forward progress recording its own reason.
+ *
  * @param {string} sessionId
  */
 function readExistingHaltState(sessionId) {
@@ -277,7 +283,8 @@ function readExistingHaltState(sessionId) {
  * call site that fires only to record the fixture location, so a vanilla, fully-classified session
  * that never calls this function still leaves NO file at all (criterion 4 / AC-4, unmodified). This
  * is an additive top-level field -- `hooks/userpromptsubmit-halt-relay.mjs`'s `inspectHaltState`
- * only ever reads `.reasons`, confirmed by direct trace, so an unknown top-level key is inert to it. *
+ * only ever reads `.reasons`, confirmed by direct trace, so an unknown top-level key is inert to it.
+ *
  * @param {string} sessionId
  * @param {string} reasonKey
  * @param {boolean} set
@@ -306,7 +313,8 @@ function writeHaltReason(sessionId, reasonKey, set, detail, fixtureLocation) {
 /** True iff `reasonKey` was already `set:true` in `initialHaltState` (a snapshot read ONCE at the
  * start of this run, before any of this run's own writes) — used by `reconcileReason` below to
  * decide whether a currently-inactive reason needs an explicit set:false write, or whether it was
- * never active in the first place and the file should simply stay untouched for that key. *
+ * never active in the first place and the file should simply stay untouched for that key.
+ *
  * @param {any} initialHaltState
  * @param {string} reasonKey
  */
@@ -345,7 +353,8 @@ function wasReasonActive(initialHaltState, reasonKey) {
  * (or whose stdin parsed cleanly this time, WITH a valid session_id) is unblocked automatically on
  * the next SessionStart, not left bricked forever — without ever creating a spurious file/key for a
  * condition that was never active to begin with, and without ever clearing a reason this invocation
- * cannot prove is its own. *
+ * cannot prove is its own.
+ *
  * @param {any} initialHaltState
  * @param {string} sessionId
  * @param {string} reasonKey
@@ -443,8 +452,9 @@ function isProjectMcpServerEnabled(serverName, projectSettings) {
  *
  * `fixtureLocation` (from `resolveFixtureLocation`, resolved once by main() before this is called)
  * names exactly which fixture file to load -- this function no longer re-derives that decision
- * itself, so there is exactly one place in this file that decides project-relative vs. fallback. *
- * @param {any} fixtureLocation Really a `FixtureLocation` (from `resolveFixtureLocation`); left `any` because main()'s degraded fallback value is the wider `HaltFixtureLocation` shape.
+ * itself, so there is exactly one place in this file that decides project-relative vs. fallback.
+ *
+ * @param {HaltFixtureLocation} fixtureLocation
  */
 function computeSessionTools(fixtureLocation) {
   const projectSettingsPath = join(projectDir(), ".claude", "settings.json");
@@ -503,6 +513,12 @@ function computeSessionTools(fixtureLocation) {
   // in so this function and the halt-state writer agree on the exact same decision (S5 fix-now
   // condition: "record the resolved fixture path in halt-state, so a non-default load is never
   // silent" — see `resolveFixtureLocation`'s own header comment for the full citation).
+  // Issue #374: main()'s degraded fallback (`fixtureSource: "unknown"`, no path) reaches here when
+  // `resolveFixtureLocation` itself threw. Before, `readFileSync(null)` threw inside assembleCatalog;
+  // now the same throw is explicit and typed. Same catch in main(), same fail-closed halt.
+  if (fixtureLocation.fixtureSource === "unknown") {
+    throw new Error("the classification fixture location could not be resolved");
+  }
   const { builtinLayer, fixture, merged } = assembleCatalog(fixtureLocation);
   // Both exemptions apply exactly as the JSON lists them — no date logic, no pin (GitHub Issue #217).
   const knownConnectors = new Set(fixture.knownConnectors);

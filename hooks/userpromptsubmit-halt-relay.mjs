@@ -197,7 +197,8 @@ const DIAGNOSTIC_BANNER =
  * `diagnosticSanitize`d) lines, inserting `DIAGNOSTIC_BANNER` between them. Every join point below
  * is a REAL `\n` this function itself inserts -- never derived from, or influenced by, any
  * argument's own content. See the round-4 structural-fix comment above for why that is what makes
- * the separation forgery-proof. *
+ * the separation forgery-proof.
+ *
  * @param {string} trustedLine
  * @param {string[]} diagnosticLines
  */
@@ -247,7 +248,8 @@ const FRIENDLY_LABELS = Object.freeze({
  * key -- `Reason ${index}` -- rather than the raw key text (round 3's `sanitizeDetail(reasonKey)`).
  * The raw key is still disclosed (on a diagnostic line, see `composeDiagnosticLines`), but the
  * TRUSTED first line never again interpolates a value this file did not itself choose -- closing
- * the same class of gap `neutralizeUnlockToken`'s removal closes for `detail`. *
+ * the same class of gap `neutralizeUnlockToken`'s removal closes for `detail`.
+ *
  * @param {string} reasonKey
  * @param {number} index
  */
@@ -265,7 +267,8 @@ function trustedReasonLabel(reasonKey, index) {
  * fallback below points the reader at the DIAGNOSTIC line carrying that same key instead
  * (`DETAILS[${index}]`, see `composeDiagnosticLines`) -- fully generic, code-only text, with `index`
  * the only interpolated value, and `index` is always this file's own loop counter, never
- * third-party-influenced. *
+ * third-party-influenced.
+ *
  * @param {string} reasonKey
  * @param {number} index
  */
@@ -328,8 +331,10 @@ const UNKNOWN_SESSION_ID = "unknown-session";
  * comment for the full reasoning (GitHub Issue #276 / red-team F5, defense-in-depth; also closes
  * red-team F2's own noted "same-shape sibling" of a stdin `session_id: ""`). Gates BOTH the
  * stdin-derived id below and `resolveFallbackSessionId()`'s env-derived id before either reaches
- * `haltStatePath`'s own `join()` call. *
+ * `haltStatePath`'s own `join()` call.
+ *
  * @param {unknown} id
+ * @returns {id is string}
  */
 function isValidSessionId(id) {
   return typeof id === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(id);
@@ -360,7 +365,8 @@ function haltStatePath(sessionId) {
  * specifies, so "wrong-shaped fails closed" is true for the whole shape, not an accident of which
  * JS builtin (`Object.values`, `===`) happened to be forgiving. Returns the list of ACTIVE
  * (`set === true`) `[key, entry]` pairs only when the whole shape is valid — an invalid shape never
- * exposes any reasons to the caller, since none of them can be trusted. *
+ * exposes any reasons to the caller, since none of them can be trusted.
+ *
  * @param {any} haltState
  */
 function inspectHaltState(haltState) {
@@ -404,7 +410,8 @@ function inspectHaltState(haltState) {
  * against this exact file). Message delivery is best-effort -- the block itself (exit code 2) is
  * the actual security property and must never degrade to exit 1 or an uncaught crash because a
  * write failed. Each write is therefore its own try/catch that swallows any error; `process.exit(2)`
- * below is unconditional regardless of whether either write succeeded. *
+ * below is unconditional regardless of whether either write succeeded.
+ *
  * @param {string} sessionId
  * @param {string} trustedSummary
  * @param {string[]} [diagnosticLines]
@@ -442,7 +449,8 @@ function blockWithMessage(sessionId, trustedSummary, diagnosticLines = []) {
  * reason, joined by "; ". Every character in the returned string traces back to `FRIENDLY_LABELS`,
  * `UNLOCK_HINTS`, or this function's own literal text -- `index` is the only per-reason value
  * interpolated, and it is always this file's own loop position, never third-party-influenced (round
- * 4 structural fix, see this file's own header comment). *
+ * 4 structural fix, see this file's own header comment).
+ *
  * @param {Array<[string, any]>} activeReasons
  */
 function composeTrustedSummary(activeReasons) {
@@ -455,7 +463,8 @@ function composeTrustedSummary(activeReasons) {
  * above these lines, never treated as, or able to forge, an instruction (round 4 structural fix).
  * Indexed the same way `composeTrustedSummary` indexes its own hints, so an unmapped reason key's
  * generic trusted hint ("resolve the condition described in DETAILS[N] below") points at the
- * correct line. *
+ * correct line.
+ *
  * @param {Array<[string, any]>} activeReasons
  */
 function composeDiagnosticLines(activeReasons) {
