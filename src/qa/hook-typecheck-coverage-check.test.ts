@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES } from "./hook-typecheck-coverage-check.ts";
+import { checkHookTypecheckCoverage, JSDOC_ANY_ALLOWLIST, listProductionHooks, PINNED_BASELINES } from "./hook-typecheck-coverage-check.ts";
 
 const repoRoot = process.cwd();
 
@@ -46,12 +46,12 @@ test("checkHookTypecheckCoverage: all 3 real hooks resolve inside tsconfig.hooks
   assert.match(details, /hooks\/userpromptsubmit-halt-relay\.mjs: 0 diagnostic\(s\), fully covered/);
 });
 
-test("checkHookTypecheckCoverage: a hook missing from the exception list must be fully clean (0 diagnostics) — pretooluse-kernel-gate.mjs, the one hook the real build gate already covers", () => {
+test("checkHookTypecheckCoverage: a hook with no pinned baseline must be fully clean (0 diagnostics) — pretooluse-kernel-gate.mjs, the one hook the real build gate already covers", () => {
   const result = checkHookTypecheckCoverage(repoRoot, ["hooks/pretooluse-kernel-gate.mjs"]);
   assert.equal(result.ok, true, result.details.join("\n"));
 });
 
-test("checkHookTypecheckCoverage: a hook not on the exception list and NOT fully clean fails, naming the diagnostic count", () => {
+test("checkHookTypecheckCoverage: a hook with no pinned baseline and NOT fully clean fails, naming the diagnostic count", () => {
   // The real hooks are all clean now (Issue #361), so a self-contained fixture with one implicit-any
   // diagnostic proves the "must be fully clean" branch is live, not dead code.
   const tmpDir = join(repoRoot, `.qa-tmp-notclean-${process.pid}-${Date.now()}`);
@@ -86,7 +86,7 @@ test("checkHookTypecheckCoverage: a hook absent from the tsconfig project's file
 // the REAL file's CURRENT content (never a hand-copied snapshot), so this pin cannot silently go
 // stale if the real file's surrounding code changes; a precondition assertion fails loudly first if
 // the exact call-site text this drill targets ever stops existing.
-test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionstart-tool-enum.mjs is caught by the new instrument, exceeding its pinned Issue #361 baseline, and (since Issue #361) tsconfig.hooks.json, the real build gate, covers this file too", () => {
+test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionstart-tool-enum.mjs is caught by the new instrument, a NEW diagnostic against its (empty) pinned baseline; tsconfig.hooks.json, the real build gate, also covers this file", () => {
   const real = readFileSync(join(repoRoot, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
   const target = "evaluateToolInventory(merged, sessionTools)";
   assert.ok(real.includes(target), `precondition: the exact call-site text "${target}" must exist in the real file for this drill to be meaningful`);
@@ -121,9 +121,9 @@ test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionst
 
     const realBaseline = PINNED_BASELINES["hooks/sessionstart-tool-enum.mjs"];
     assert.ok(realBaseline !== undefined, "precondition: the real hook must have a pinned baseline to compare against");
-    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath);
-    assert.equal(after.ok, false, "the mutated file must exceed the pinned baseline (a NEW TS2554 arity diagnostic), even though it is a currently-excepted hook");
-    assert.match(after.details.join("\n"), /exceed the pinned Issue #361 baseline/);
+    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath, JSDOC_ANY_ALLOWLIST.map((e) => (e.hook === "hooks/sessionstart-tool-enum.mjs" ? { ...e, hook: tmpRel } : e)));
+    assert.equal(after.ok, false, "the mutated file must exceed the pinned baseline (a NEW TS2554 arity diagnostic), as it does for any hook");
+    assert.match(after.details.join("\n"), /exceed the pinned baseline/);
     assert.match(after.details.join("\n"), /2554:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named, not just a count delta");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });

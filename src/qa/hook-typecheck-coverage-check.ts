@@ -120,8 +120,7 @@ function expandSnapshot(snapshot: BaselineSnapshot): Record<string, readonly str
   return out;
 }
 
-/** Dated, named exception list (Issue #361): hooks held to a pinned MULTISET of diagnostic
- * identities instead of zero, loaded from the committed, generated snapshot
+/** Hooks held to a pinned MULTISET of diagnostic identities instead of zero (empty since Issue #361 closed), loaded from the committed, generated snapshot
  * (src/qa/hook-typecheck-baseline.json). Any hook NOT listed must have zero diagnostics. Each
  * identity appears once per occurrence (duplicates are intentional: see the header). */
 export const PINNED_BASELINES: Readonly<Record<string, readonly string[]>> = existsSync(BASELINE_SNAPSHOT_PATH)
@@ -141,21 +140,87 @@ export function listProductionHooks(repoRoot: string): string[] {
     .sort();
 }
 
-/** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29).
- * A suppression removes a real diagnostic from `ts.getPreEmitDiagnostics`' output entirely, so no
- * baseline, count or identity scheme can see it: it has to be refused at the source. The class, not
- * a list of spellings: every `@ts-*` pragma, any `eslint-disable` directive (it can switch the lint
- * ban off), and a JSDoc `@type {any}` / `@type {*}` cast (kills the diagnostic with no pragma at all).
- * A plain text scan on purpose: deny-by-default. It also flags the same text inside a string literal,
- * and that false positive is the accepted price of not having to parse comments; the unlock is to
- * reword. Returns one finding per distinct class hit, empty when the source is clean. */
-export function scanHookSuppressions(source: string): string[] {
+/** One reviewed exception to the JSDoc `any`/`Object`/`*` ban (Issue #374): a hook annotation that
+ * stays `any` because it types an untrusted JSON-input shape whose narrowing would need a runtime
+ * code-token change in a hook whose inline sanitize copy must stay token-identical (Issue #361
+ * AC-7: JSDoc-only). `annotation` is the whitespace-normalised tag text, `@tag {type} name`. Each
+ * entry is pinned at an exact occurrence `count`; anything not listed here (or beyond its count)
+ * fails the scan. Extending this list is a visible edit, mirrored by the exact-contents pin in
+ * hook-typecheck-coverage-check.fixnow.test.ts. */
+export interface JsdocAnyAllowance {
+  hook: string;
+  annotation: string;
+  count: number;
+  reason: string;
+}
+export const JSDOC_ANY_ALLOWLIST: readonly JsdocAnyAllowance[] = [
+  { hook: "hooks/pretooluse-kernel-gate.mjs", annotation: "@param {any} err", count: 1, reason: "a thrown value can be any shape; the handler deliberately probes it defensively" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", annotation: "@param {any} initialHaltState", count: 2, reason: "untrusted halt-state JSON read from disk; every property access is guarded at runtime" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", annotation: "@param {any} projectSettings", count: 1, reason: "untrusted .claude/settings.json content; shape-checked at runtime" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@param {any} haltState", count: 1, reason: "untrusted halt-state JSON; inspectHaltState is the runtime shape validator, and narrowing needs a code-token change in the relay" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@type {Array<[string, any]>}", count: 1, reason: "activeReasons entries are validated JSON entries, produced by inspectHaltState" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", annotation: "@param {Array<[string, any]>} activeReasons", count: 2, reason: "same validated entries, passed on to the two renderers" },
+];
+
+/** `any`, `Object` or a bare `*` (whole-word) anywhere in a JSDoc type expression. */
+const ANY_LIKE_TYPE = /\bany\b|\bObject\b|(?<![\w.$*/])\*(?![\w.$*/])/;
+
+/** Every `@tag {type} [name]` in the source, brace-balanced (types nest braces: `{{ a: any }}`),
+ * returned as a whitespace-normalised annotation string plus its type text. Scans the whole source,
+ * not just doc-comment blocks: deny-by-default, so a line-comment `@param {any}` counts too. */
+function collectJsdocTypeAnnotations(source: string): Array<{ annotation: string; type: string }> {
+  const out: Array<{ annotation: string; type: string }> = [];
+  const tag = /@([A-Za-z]+)[ \t]*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(source)) !== null) {
+    let depth = 1;
+    let i = tag.lastIndex;
+    while (i < source.length && depth > 0) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    if (depth !== 0) continue;
+    const type = source.slice(tag.lastIndex, i - 1);
+    const name = /^\s+(\[?[A-Za-z_$][\w$.]*)/.exec(source.slice(i, i + 200))?.[1] ?? "";
+    const annotation = `@${m[1]} {${type}}${name ? ` ${name}` : ""}`.replace(/\s+/g, " ");
+    out.push({ annotation, type });
+    tag.lastIndex = i;
+  }
+  return out;
+}
+
+/** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29;
+ * widened by Issue #374, 2026-09-30). A suppression removes a real diagnostic from
+ * `ts.getPreEmitDiagnostics`' output entirely, so no baseline, count or identity scheme can see it:
+ * it has to be refused at the source. The class, not a list of spellings: every `@ts-*` pragma, any
+ * `eslint-disable` directive (it can switch the lint ban off), and an explicit `any`, `Object` or
+ * `*` in ANY JSDoc type (`@param`, `@returns`, `@type`, `@typedef` properties, generic arguments):
+ * `@param {any} fixtureLocation` hid a live TS2345 with no pragma at all. Occurrences pinned in
+ * JSDOC_ANY_ALLOWLIST for the named `hook` (repo-relative) are excused up to their pinned count;
+ * with no `hook`, nothing is excused. A plain text scan on purpose: deny-by-default. It also flags
+ * the same text inside a string literal, and that false positive is the accepted price of not having
+ * to parse comments; the unlock is to reword. Returns one finding per distinct class hit, empty when
+ * the source is clean. */
+export function scanHookSuppressions(source: string, hook?: string, allowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST): string[] {
   const findings: string[] = [];
   const pragma = /@ts-(?:ignore|expect-error|nocheck|check)\b/.exec(source);
   if (pragma) findings.push(pragma[0]);
   if (/eslint-disable/.test(source)) findings.push("eslint-disable");
-  const cast = /@type\s*\{\s*(?:any|\*)\s*\}/.exec(source);
-  if (cast) findings.push(cast[0]);
+
+  const allowed = new Map<string, number>();
+  for (const a of allowlist) if (a.hook === hook) allowed.set(a.annotation, (allowed.get(a.annotation) ?? 0) + a.count);
+  const seen = new Map<string, number>();
+  const reported = new Set<string>();
+  for (const { annotation, type } of collectJsdocTypeAnnotations(source)) {
+    if (!ANY_LIKE_TYPE.test(type)) continue;
+    const n = (seen.get(annotation) ?? 0) + 1;
+    seen.set(annotation, n);
+    if (n <= (allowed.get(annotation) ?? 0) || reported.has(annotation)) continue;
+    reported.add(annotation);
+    findings.push(annotation);
+  }
   return findings;
 }
 
@@ -201,7 +266,8 @@ function resolveProjectAndDiagnostics(
 }
 
 /**
- * `configPathOverride` lets tests point this at a fixture project instead of the real
+ * `jsdocAnyAllowlist` (tests only) re-keys the reviewed allow-list for a mutated COPY of a real
+ * hook living at a temporary path. `configPathOverride` lets tests point this at a fixture project instead of the real
  * `tsconfig.hooks-coverage.json` — same testability pattern `checkKernelPurity`'s `kernelRoot`
  * parameter and `checkNormalizerRegistryPurity`'s `registryRepoRelPath` parameter already use.
  */
@@ -210,6 +276,7 @@ export function checkHookTypecheckCoverage(
   hooks: string[] = listProductionHooks(repoRoot),
   pinnedBaselines: Readonly<Record<string, readonly string[]>> = PINNED_BASELINES,
   configPathOverride?: string,
+  jsdocAnyAllowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST,
 ): InstrumentResult {
   if (hooks.length === 0) {
     return { ok: true, vacuous: true, summary: "0 production hook(s) found under hooks/ — vacuous pass.", details: [] };
@@ -225,7 +292,7 @@ export function checkHookTypecheckCoverage(
       details.push(`${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — no tsconfig project covers it at all`);
       continue;
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(repoRoot, hook), "utf8"));
+    const suppressions = scanHookSuppressions(readFileSync(resolve(repoRoot, hook), "utf8"), hook, jsdocAnyAllowlist);
     if (suppressions.length > 0) {
       failures++;
       details.push(
@@ -238,7 +305,7 @@ export function checkHookTypecheckCoverage(
     if (pinned === undefined) {
       if (current.length !== 0) {
         failures++;
-        details.push(`${hook}: ${current.length} diagnostic(s) found, expected 0 (not on the Issue #361 exception list — must be fully clean)`);
+        details.push(`${hook}: ${current.length} diagnostic(s) found, expected 0 (no pinned baseline for this hook, so it must be fully clean)`);
       } else {
         details.push(`${hook}: 0 diagnostic(s), fully covered`);
       }
@@ -260,13 +327,13 @@ export function checkHookTypecheckCoverage(
     if (newOrExcess.length > 0) {
       failures++;
       details.push(
-        `${hook}: ${current.length} diagnostic(s) found, ${newOrExcess.length} identity(ies) exceed the pinned Issue #361 baseline — a NEW regression, not the known pre-existing debt: ${newOrExcess.join(", ")}`,
+        `${hook}: ${current.length} diagnostic(s) found, ${newOrExcess.length} identity(ies) exceed the pinned baseline — a NEW diagnostic, not one already accepted in src/qa/hook-typecheck-baseline.json: ${newOrExcess.join(", ")}`,
       );
     } else {
       details.push(
         pinned.length === 0
           ? `${hook}: 0 diagnostic(s), fully covered (empty pinned baseline)`
-          : `${hook}: ${current.length} diagnostic(s) (pinned Issue #361 baseline: ${pinned.length}, pre-existing debt, not yet fixed)`,
+          : `${hook}: ${current.length} diagnostic(s) (pinned baseline: ${pinned.length}, none new)`,
       );
     }
   }
@@ -340,7 +407,7 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
     if (!project.fileNames.includes(hook)) {
       return { ok: false, added, removed, refusal: `${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — nothing to measure.` };
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(options.repoRoot, hook), "utf8"));
+    const suppressions = scanHookSuppressions(readFileSync(resolve(options.repoRoot, hook), "utf8"), hook);
     if (suppressions.length > 0) {
       return { ok: false, added, removed, refusal: `${hook}: contains a type-suppression (${suppressions.join(", ")}); remove it before re-pinning — a baseline generated around a hidden diagnostic launders it.` };
     }
