@@ -13,14 +13,25 @@
 //      signature, or any string-literal/computed key spelling it. Pinned: the port declaration in
 //      src/policy/gate/decide-tool-call.ts and the one implementation in hooks/pretooluse-kernel-gate.mjs.
 //   2. CALL sites of `.loadCatalog(`. Pinned: the one in decide-tool-call.ts (the only route a catalog enters the gate).
-//   3. WRITERS of a `catalog` object-literal property (the field the normalizer reads). Pinned: decide-tool-call.ts
-//      (shorthand, the value of the call in 2) and tool-routing.ts (`catalog: ctx.catalog`).
+//   3. WRITERS of a `catalog` object-literal property (the field the normalizer reads), pinned by FILE and by VALUE
+//      EXPRESSION TEXT, one entry per occurrence (a second writer in a pinned file, or a pinned file's writer
+//      re-pointed at a literal, changes the list). Pinned: decide-tool-call.ts (shorthand `catalog`, the binding of
+//      the call in 2) and tool-routing.ts (`catalog: ctx.catalog`, exactly). The value text is a textual pin: it does
+//      not prove what `ctx.catalog` or the shorthand binding holds (the call in 2 and the implementation in 5 carry
+//      that).
 //   4. HOLDERS of the type name MergedToolClassificationSet. Pinned to the files listed below, so a new module that
 //      handles a catalog surfaces here for review.
 //   5. The implementation body: the hook's `loadCatalog` is exactly `return <catalogNs>.assembleCatalog(
 //      <catalogNs>.moduleRelativeFixtureLocation()).merged;`, where <catalogNs> is the Promise.all binding of
 //      "../src/policy/tools/classification-catalog.ts" (the namespace that AC-3j-2 shows is never aliased),
 //      and the object literal holding it has no spread and no computed key (nothing else can inject a port).
+//
+// SCOPE (what is and is not scanned, and why): every .ts/.mts/.cts/.mjs/.cjs/.js file under src/ and hooks/ except
+//   (a) `*.test.<ext>` files and (b) any file under a `test-support` directory. Those two are excluded because they
+//   are test doubles and fixtures that legitimately hand-build catalogs; the exclusion is safe only while no scanned
+//   production file imports one, so the same run derives, by AST, every import/export/dynamic-import specifier of the
+//   scanned files and fails on any naming a test-support path or a `.test.` file (or a non-literal dynamic import).
+//   Files outside src/ and hooks/ (scripts/, root config) are not scanned and are NOT covered.
 //
 // COVERAGE vs the #355 shapes (read this before citing the instrument):
 //   - #355 shapes 3 and 4 (a promise file-handle read; a synchronous read via an assembled file name): NOT covered
@@ -49,7 +60,8 @@ const ROUTING_REL = "src/policy/gate/tool-routing.ts";
 
 const PINNED_DEFINITIONS = [`${GATE_REL}`, HOOK_REL];
 const PINNED_CALL_SITES = [GATE_REL];
-const PINNED_CATALOG_WRITERS = [GATE_REL, ROUTING_REL];
+/** `file|value expression text`, one entry per occurrence (a pin by value, not just by file: Issue #376). */
+const PINNED_CATALOG_WRITERS = [`${GATE_REL}|catalog`, `${ROUTING_REL}|ctx.catalog`];
 const PINNED_TYPE_HOLDERS = [
   "src/policy/gate/decide-tool-call.ts",
   "src/policy/gate/tool-routing.ts",
@@ -70,7 +82,7 @@ function collect(dir: string, out: string[]): void {
     if (name === "node_modules" || name === ".git" || name === "test-support") continue;
     const full = path.join(dir, name);
     if (statSync(full).isDirectory()) collect(full, out);
-    else if (/\.(ts|mjs|js)$/.test(name) && !/\.test\.(ts|mjs|js)$/.test(name)) out.push(full);
+    else if (/\.(ts|mts|cts|mjs|cjs|js)$/.test(name) && !/\.test\.(ts|mts|cts|mjs|cjs|js)$/.test(name)) out.push(full);
   }
 }
 
@@ -81,7 +93,7 @@ function realSources(): Src[] {
   return files.map((f) => ({ rel: path.relative(REPO_ROOT, f).split(path.sep).join("/"), text: readFileSync(f, "utf8") }));
 }
 
-const parse = (rel: string, text: string): ts.SourceFile => ts.createSourceFile(rel, text, ts.ScriptTarget.ESNext, true, rel.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+const parse = (rel: string, text: string): ts.SourceFile => ts.createSourceFile(rel, text, ts.ScriptTarget.ESNext, true, /\.(ts|mts|cts)$/.test(rel) ? ts.ScriptKind.TS : ts.ScriptKind.JS);
 const lineOf = (sf: ts.SourceFile, n: ts.Node): string => `${sf.fileName}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
 
 const keyText = (name: ts.PropertyName | undefined): string | undefined => {
@@ -95,6 +107,7 @@ interface Enumeration {
   definitions: string[];
   callSites: string[];
   catalogWriters: string[];
+  importProblems: string[];
   typeHolders: string[];
   problems: string[];
 }
@@ -102,7 +115,8 @@ interface Enumeration {
 function enumerate(sources: readonly Src[]): Enumeration {
   const definitions = new Set<string>();
   const callSites = new Set<string>();
-  const writers = new Set<string>();
+  const writers: string[] = [];
+  const importProblems: string[] = [];
   const holders = new Set<string>();
   const problems: string[] = [];
   for (const { rel, text } of sources) {
@@ -111,9 +125,12 @@ function enumerate(sources: readonly Src[]): Enumeration {
       if ((ts.isMethodDeclaration(node) || ts.isMethodSignature(node) || ts.isPropertyAssignment(node) || ts.isPropertySignature(node) || ts.isPropertyDeclaration(node)) && keyText(node.name) === "loadCatalog") definitions.add(rel);
       if (ts.isShorthandPropertyAssignment(node)) {
         if (node.name.text === "loadCatalog") definitions.add(rel);
-        if (node.name.text === "catalog") writers.add(rel);
+        if (node.name.text === "catalog") writers.push(`${rel}|catalog`);
       }
-      if ((ts.isPropertyAssignment(node) || ts.isPropertySignature(node)) && keyText(node.name) === "catalog" && !ts.isPropertySignature(node)) writers.add(rel);
+      if ((ts.isPropertyAssignment(node) || ts.isPropertySignature(node)) && keyText(node.name) === "catalog" && !ts.isPropertySignature(node)) writers.push(`${rel}|${ts.isPropertyAssignment(node) ? node.initializer.getText(sf) : "(none)"}`);
+      const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0] : undefined;
+      if (specifier !== undefined && ts.isStringLiteralLike(specifier) && /test-support|\.test\./.test(specifier.text)) importProblems.push(`${lineOf(sf, node)}: production file imports ${specifier.text}`);
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && (node.arguments[0] === undefined || !ts.isStringLiteralLike(node.arguments[0]))) importProblems.push(`${lineOf(sf, node)}: dynamic import with a non-literal specifier (cannot be shown not to reach test-support)`);
       if (ts.isStringLiteralLike(node) && node.text === "loadCatalog" && !(ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent))) problems.push(`${lineOf(sf, node)}: the string "loadCatalog" outside a plain member definition`);
       if (ts.isElementAccessExpression(node) && !ts.isNumericLiteral(node.argumentExpression) && !ts.isStringLiteralLike(node.argumentExpression)) {
         /* computed access is not enumerable here; only flagged when it touches a ports-like object */
@@ -126,7 +143,7 @@ function enumerate(sources: readonly Src[]): Enumeration {
     };
     visit(sf);
   }
-  return { definitions: [...definitions].sort(), callSites: [...callSites].sort(), catalogWriters: [...writers].sort(), typeHolders: [...holders].sort(), problems };
+  return { definitions: [...definitions].sort(), callSites: [...callSites].sort(), catalogWriters: writers.sort(), importProblems, typeHolders: [...holders].sort(), problems };
 }
 
 /** Problems with the hook's loadCatalog implementation (empty when it is exactly the pinned funnel call). */
@@ -192,6 +209,7 @@ test("R1-6c: every catalog definition site, call site, `catalog` writer and type
   const e = enumerate(real);
   console.log(`R1-6c: ${String(real.length)} production files scanned; definitions ${JSON.stringify(e.definitions)}; call sites ${JSON.stringify(e.callSites)}; catalog writers ${JSON.stringify(e.catalogWriters)}; type holders ${String(e.typeHolders.length)}`);
   assert.deepEqual(e.problems, []);
+  assert.deepEqual(e.importProblems, []);
   assert.deepEqual(e.definitions, [...PINNED_DEFINITIONS].sort());
   assert.deepEqual(e.callSites, [...PINNED_CALL_SITES].sort());
   assert.deepEqual(e.catalogWriters, [...PINNED_CATALOG_WRITERS].sort());
@@ -258,8 +276,60 @@ test("R1-6c seeded mutant: a second production loadCatalog implementation, a sec
   assert.ok(extra("const { loadCatalog } = ports;").problems.length > 0, "destructuring the port out is a problem");
   assert.ok(extra("const o = { loadCatalog };").definitions.includes("src/policy/rogue.ts"));
   assert.ok(extra("const c = other.loadCatalog();").callSites.includes("src/policy/rogue.ts"));
-  assert.ok(extra("const r = { catalog: handBuilt };").catalogWriters.includes("src/policy/rogue.ts"));
-  assert.ok(extra("const r = { catalog };").catalogWriters.includes("src/policy/rogue.ts"));
+  assert.ok(extra("const r = { catalog: handBuilt };").catalogWriters.includes("src/policy/rogue.ts|handBuilt"));
+  assert.ok(extra("const r = { catalog };").catalogWriters.includes("src/policy/rogue.ts|catalog"));
   assert.ok(extra("let c: MergedToolClassificationSet;").typeHolders.includes("src/policy/rogue.ts"));
   assert.ok(extra('const k = "loadCatalog"; ports[k]();').problems.length > 0, "a string spelling of the port name outside a member definition is a problem");
+});
+
+// ---- Issue #376: the catalog writers are pinned by VALUE, not only by file ----
+
+const routingText = (): string => (real.find((s) => s.rel === ROUTING_REL) as Src).text;
+const writerValues = (rel: string, text: string): string[] => enumerate([{ rel, text }]).catalogWriters.map((w) => w.slice(rel.length + 1));
+
+test("R1-6c: the writer value in tool-routing.ts is exactly ctx.catalog", () => {
+  assert.deepEqual(writerValues(ROUTING_REL, routingText()), ["ctx.catalog"]);
+});
+
+test("R1-6c seeded mutant (#376): a `catalog:` writer in a pinned file re-pointed at a literal, a second writer in the same file, or a wrapped value each change the pinned value list", () => {
+  const real1 = routingText();
+  assert.ok(real1.includes("catalog: ctx.catalog"), "the mutants below are derived from this exact writer");
+  const mutants: ReadonlyArray<readonly [name: string, text: string]> = [
+    ["a hand-built literal", real1.replace("catalog: ctx.catalog", 'catalog: { version: "x", tools: [] }')],
+    ["a wrapped value", real1.replace("catalog: ctx.catalog", "catalog: withExtra(ctx.catalog)")],
+    ["a different context field", real1.replace("catalog: ctx.catalog", "catalog: ctx.other")],
+    ["a second writer with the same value", `${real1}\nconst again = { catalog: ctx.catalog };`],
+  ];
+  for (const [name, text] of mutants) assert.notDeepEqual(writerValues(ROUTING_REL, text), ["ctx.catalog"], `expected the value pin to fail for: ${name}`);
+  const gate = (rel: string, text: string): string[] => enumerate([{ rel, text }]).catalogWriters;
+  assert.deepEqual(gate(GATE_REL, "build({ catalog });"), [`${GATE_REL}|catalog`]);
+  assert.notDeepEqual(gate(GATE_REL, "build({ catalog: { version: 'x', tools: [] } });"), [`${GATE_REL}|catalog`]);
+});
+
+test("R1-6c seeded mutant (#376/scope): a production file importing test-support or a .test. file, or a non-literal dynamic import, is flagged; .mts/.cjs files are scanned", () => {
+  const withRogue = (text: string, rel = "src/policy/rogue.mts"): Enumeration => enumerate([{ rel, text }]);
+  assert.ok(withRogue('import { x } from "../../hooks/test-support/gate-sandbox.ts";').importProblems.length > 0);
+  assert.ok(withRogue('export * from "./thing.test.ts";').importProblems.length > 0);
+  assert.ok(withRogue('const m = await import("../hooks/test-support/fixture-tree.ts");').importProblems.length > 0);
+  assert.ok(withRogue("const m = await import(name);").importProblems.length > 0);
+  assert.deepEqual(withRogue('import { x } from "./ok.ts";').importProblems, []);
+  assert.ok(withRogue("const r = { catalog: handBuilt };", "src/policy/rogue.mts").catalogWriters.length === 1, ".mts source parses as TypeScript and its writers are counted");
+  assert.ok(withRogue("const r = { catalog: handBuilt };", "src/policy/rogue.cjs").catalogWriters.length === 1);
+});
+
+test("R1-6c scope: the real scan reads every .mts/.cts/.cjs file under src/ and hooks/ (derived by directory walk, not typed)", () => {
+  const all: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === ".git") continue;
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else all.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
+    }
+  };
+  walk(path.join(REPO_ROOT, "src"));
+  walk(path.join(REPO_ROOT, "hooks"));
+  const expected = all.filter((f) => /\.(ts|mts|cts|mjs|cjs|js)$/.test(f) && !/\.test\.(ts|mts|cts|mjs|cjs|js)$/.test(f) && !f.split("/").includes("test-support")).sort();
+  assert.deepEqual(real.map((s) => s.rel).sort(), expected);
+  assert.ok(expected.length > 0);
 });
