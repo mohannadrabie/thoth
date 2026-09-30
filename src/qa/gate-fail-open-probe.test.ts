@@ -180,3 +180,27 @@ test("A11 no-stale-not-fixed-claims: neither the hook header nor the probe heade
     assert.ok(!source.includes("belongs to that issue's own story"), `${file} still defers the input-size probe to another story`);
   }
 });
+
+test("A20 systemroot-row-accepts-either-launch-outcome: the win32 systemroot row keeps expect PROCEEDS (AP-13, probed) and also accepts BLOCKS, and its note says why (#320)", () => {
+  const r = row("systemroot-nonexistent");
+  assert.equal(r.expect, "PROCEEDS");
+  assert.deepEqual(r.alsoAccepts, ["BLOCKS"]);
+  assert.equal(r.probed, true, "no skip: the row is still probed");
+  assert.equal(r.ap, "AP-13");
+  assert.match(r.note, /BLOCKS/);
+  assert.match(r.note, /22\.18/);
+  assert.match(r.note, /residual/i);
+  assert.match(r.note, /launcher/i);
+  for (const other of RECORDED_DECISIONS) if (other.id !== "systemroot-nonexistent") assert.equal(other.alsoAccepts, undefined, `${other.id}: only the systemroot row is version-dependent`);
+});
+
+test("A21 outcome-accepted-predicate: accepts expect and alsoAccepts, and rejects anything else", () => {
+  const accepted = probeModule.outcomeAccepted as (r: { expect: "BLOCKS" | "PROCEEDS"; alsoAccepts?: readonly ("BLOCKS" | "PROCEEDS")[] }, o: "BLOCKS" | "PROCEEDS") => boolean;
+  const both = { expect: "PROCEEDS", alsoAccepts: ["BLOCKS"] } as const;
+  assert.equal(accepted(both, "PROCEEDS"), true);
+  assert.equal(accepted(both, "BLOCKS"), true);
+  assert.equal(accepted(both, "MAYBE" as "BLOCKS"), false, "a third outcome still fails");
+  assert.equal(accepted({ expect: "PROCEEDS" }, "PROCEEDS"), true);
+  assert.equal(accepted({ expect: "PROCEEDS" }, "BLOCKS"), false, "a row with no alsoAccepts stays exact-match");
+  assert.equal(accepted({ expect: "BLOCKS" }, "PROCEEDS"), false);
+});
