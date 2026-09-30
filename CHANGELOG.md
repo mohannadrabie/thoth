@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #326 (the POL-05 deny reason no longer reflects unbounded command text)
+
+CRITICAL tier (Manager-raised; sensitive area: guard / policy engine, defends a fail-open parse path). `pol05Rule` in `src/policy/kernel/kernel.ts` built its deny reason from the normalizer's `unresolved` entries, which carry untrusted command text verbatim, so hook stdout grew linearly with input: 14294 bytes out for a 15 KB span and 449654 for 487 KB (measured through the real hook before the fix).
+
+- Each reflected `unresolved` entry is now capped at 512 characters with a visible `[truncated, N characters in all]` marker carrying the true length. Display-only: the ActionRecord and audit trail keep the full text, deny stays deny, the reason is never blank, and an entry at or under the cap is byte-identical to before.
+- Measured after the fix through the real hook: 748 bytes for the 15 KB span, 749 for 487 KB, 703 for the 56 KB escape-heavy case, 1148 for a two-entry case. The tests pin a maximum of 4096 bytes and require the 524 KB case to be within 256 bytes of the 16 KB case.
+- `hooks/pretooluse-kernel-gate.mjs`, `render-hook-output.ts` and the normalizer are not edited; the #312 sanitize guards ran green unmodified, and a hostile control-byte span inside a capped entry is still sanitized on real stdout.
+- Written failing-first: `hooks/pretooluse-kernel-gate-reason-cap.test.ts` (real hook) plus three unit tests in `src/policy/kernel/kernel.test.ts`; 5 of the new tests were red before the fix. The runtime's own stdout limit remains unmeasured by design. Issue #326 stays open pending review; commits use `Refs #326`.
+
 ### Fixed - Issue #361 (the two remaining hooks join the real typecheck gate)
 
 CRITICAL tier (sensitive area: policy enforcement hooks). `hooks/sessionstart-tool-enum.mjs` (30 diagnostics) and `hooks/userpromptsubmit-halt-relay.mjs` (22) now typecheck clean under strict + checkJs, and `tsconfig.hooks.json` (the `npm run build` / `npm run typecheck` gate) now lists both hooks alongside pretooluse-kernel-gate. Hooks are unchanged at runtime and still unwired (Issue #308).
