@@ -382,7 +382,10 @@ const ALLOWED_PROCESS_MEMBERS = new Set(["stdin", "stdout", "stderr", "exit"]);
 // Issue #370 adds `Function`, `eval` and `constructor`: each reaches `process` (and so the
 // environment) without naming it, defeating any list of process members or import specifiers.
 const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "createRequire", "Function", "eval"]);
-const FORBIDDEN_SPECIFIERS = new Set(["process", "node:process", "module", "node:module"]);
+// Exact ALLOW-LIST of module specifiers (Issue #370 residual): the hook's own two node built-ins and
+// its 6 pinned Promise.all imports. Anything else (node:vm, node:child_process, node:worker_threads,
+// node:fs, a project module outside the six) is refused, whether static, re-exported or runtime.
+const ALLOWED_SPECIFIERS: ReadonlySet<string> = new Set(["node:path", "node:url", ...PROMISE_ALL_SHAPE.flatMap((e) => (e.specifier === undefined ? [] : [e.specifier]))]);
 
 /** Every way this source could reach the environment, one line each; empty when it cannot. */
 function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
@@ -409,9 +412,18 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const specifier = node.arguments[0];
       if (specifier === undefined || !ts.isStringLiteralLike(specifier)) found.push(`${where(node)}: import() specifier is not a plain string literal`);
+      else if (!ALLOWED_SPECIFIERS.has(specifier.text)) found.push(`${where(node)}: import("${specifier.text}") is not on the exact module allow-list`);
     }
-    if (ts.isStringLiteralLike(node) && FORBIDDEN_SPECIFIERS.has(node.text) && (ts.isImportDeclaration(node.parent) || (ts.isCallExpression(node.parent) && node.parent.expression.kind === ts.SyntaxKind.ImportKeyword))) {
-      found.push(`${where(node)}: import of "${node.text}"`);
+    // Static `import ... from`, `export ... from` and `import x = require(...)`. A JSDoc type-only
+    // `import("...")` lives in a comment (an ImportTypeNode), is not code, and is not visited here.
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifier = node.moduleSpecifier;
+      if (specifier !== undefined && (!ts.isStringLiteralLike(specifier) || !ALLOWED_SPECIFIERS.has(specifier.text))) {
+        found.push(`${where(node)}: module specifier ${ts.isStringLiteralLike(specifier) ? `"${specifier.text}"` : "(computed)"} is not on the exact module allow-list`);
+      }
+    }
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      found.push(`${where(node)}: import = require() is not on the exact module allow-list`);
     }
     ts.forEachChild(node, visit);
   };
