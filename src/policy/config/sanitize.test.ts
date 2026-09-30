@@ -384,11 +384,19 @@ test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHo
 //      Function, eval, globalThis, console and any other ambient name are therefore refused, however
 //      they are spelled or reached, because the check is on the resolved symbol, not on a spelling.
 //   2. `process` is used only as process.stdin / stdout / stderr / exit.
-//   3. No assignment (=, compound, ++/--, delete, destructuring or for-in/of target) whose target is a
-//      member chain rooted at a global, so no global prototype or stream can be patched.
-//   4. No string/template literal equal to "constructor", "prototype" or "__proto__", no computed
-//      property key that is not a plain string/numeric literal, no element access with a non-numeric key.
-//   5. Module specifiers (static import, export ... from, runtime import()) are an exact allow-list.
+//   3. Member writes are deny-by-default (#372): no assignment (=, compound, ++/--, delete,
+//      destructuring or for-in/of target) to ANY member expression (literal, local, global or call-result
+//      root) unless its text is on ALLOWED_MEMBER_WRITES, a set pinned by test to exactly the member
+//      writes the real hook contains (none). A write to a free global itself is refused too.
+//   4. The names `__proto__`, `prototype`, `constructor`, `__defineGetter__`, `__defineSetter__`,
+//      `__lookupGetter__`, `__lookupSetter__` appear nowhere in the hook: not as a property access, an
+//      object-literal or destructuring key, a shorthand, a method name, or a string/template literal (#372).
+//      No computed property key that is not a plain string/numeric literal; no element access with a
+//      non-numeric key.
+//   5. An allowed global (Error, JSON, Promise) appears only as the object of a member access or the
+//      callee of a call/new, never as a bare value, so it cannot be aliased, passed, returned,
+//      destructured from, spread or extended (#372). `undefined` is exempt: it is an immutable constant.
+//   6. Module specifiers (static import, export ... from, runtime import()) are an exact allow-list.
 // First layer, kept from #370: the named checks below (Function/eval/constructor/require...).
 // NOT proven: runtime behaviour, anything outside this one file (the imported modules are pinned by
 // specifier only), and a global that the hook reaches only through an imported module's exports.
@@ -399,7 +407,13 @@ const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "creat
 /** The free (undeclared, ambient) globals the real hook references, derived by a script over the real
  * hook and pinned here; a test proves the set is exactly what the hook uses, so it cannot silently grow. */
 const ALLOWED_FREE_GLOBALS: ReadonlySet<string> = new Set(["Error", "JSON", "Promise", "process", "undefined"]);
-const FORBIDDEN_KEY_STRINGS = new Set(["constructor", "prototype", "__proto__"]);
+/** Property NAMES banned in every position (#372): the vehicles for reaching Function or patching a
+ * built-in prototype. Banning the names, not chasing each write root, is what stops `"".__proto__.x = ...`. */
+const BANNED_NAMES: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"]);
+/** The member writes (`obj.key = ...`, `obj.n++`, `delete obj.k`, ...) the real hook contains, by
+ * normalised source text, derived by script and pinned by test (AC-3h pin). The real hook has none,
+ * so any member write fails; adding one is a reviewed change to this set, never inherited. */
+const ALLOWED_MEMBER_WRITES: ReadonlySet<string> = new Set<string>();
 // Exact ALLOW-LIST of module specifiers (Issue #370 residual): the hook's own two node built-ins and
 // its 6 pinned Promise.all imports. Anything else (node:vm, node:child_process, node:worker_threads,
 // node:fs, a project module outside the six) is refused, whether static, re-exported or runtime.
@@ -493,6 +507,22 @@ function memberChainRoot(expr: ts.Expression): ts.Identifier | undefined {
   return ts.isIdentifier(e) ? e : undefined;
 }
 
+const normaliseText = (node: ts.Node, sourceFile: ts.SourceFile): string => node.getText(sourceFile).replace(/\s+/g, "");
+
+/** Normalised text of every member-expression write target in `sourceFile` (any root), in source order. */
+function memberWriteTargets(sourceFile: ts.SourceFile): string[] {
+  const out: string[] = [];
+  const visit = (node: ts.Node): void => {
+    for (const target of assignmentTargets(node)) {
+      const t = unparen(target);
+      if (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) out.push(normaliseText(t, sourceFile));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return out;
+}
+
 /** Every way this source could reach the environment, or patch a global, one line each; empty when it cannot. */
 function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
   const found: string[] = [];
@@ -508,16 +538,25 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
         if (member === undefined || !ALLOWED_PROCESS_MEMBERS.has(member)) found.push(`${where(node)}: \`process\` used other than as process.stdin/stdout/stderr/exit (${member === undefined ? "bare reference, bracket access or alias" : `process.${member}`})`);
       }
       if (!isPropertyName && FORBIDDEN_IDENTIFIERS.has(node.text)) found.push(`${where(node)}: forbidden identifier \`${node.text}\``);
-      // `constructor` in ANY position: a property access (`x.constructor`), a destructured key, a name.
-      if (node.text === "constructor") found.push(`${where(node)}: \`constructor\` reference (reaches Function without naming it)`);
+      // #372 AC-3g: the dangerous NAMES in ANY position (property access, object-literal or destructuring
+      // key, shorthand, method name, plain identifier), not only as string literals.
+      if (BANNED_NAMES.has(node.text)) found.push(`${where(node)}: banned name \`${node.text}\` (reaches Function or patches a built-in prototype)`);
       // #371 layer 1: deny by default on free globals, by resolved symbol rather than by spelling.
       if (isValueReference(node) && isFreeGlobal(node, checker, sourceFile) && !ALLOWED_FREE_GLOBALS.has(node.text)) {
         found.push(`${where(node)}: free global \`${node.text}\` is not on the allow-set of globals the hook uses (${[...ALLOWED_FREE_GLOBALS].join(", ")})`);
       }
+      // #372 AC-3i: an allowed global is only ever the object of a member access or the callee of a
+      // call/new, never a bare value (which could be aliased, passed, returned, destructured or spread).
+      if (isValueReference(node) && isFreeGlobal(node, checker, sourceFile) && ALLOWED_FREE_GLOBALS.has(node.text) && node.text !== "undefined" && node.text !== "process") {
+        const p = node.parent;
+        const asMemberObject = ts.isPropertyAccessExpression(p) && p.expression === node;
+        const asCallee = (ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === node;
+        if (!asMemberObject && !asCallee) found.push(`${where(node)}: allowed global \`${node.text}\` used as a bare value (aliasing); only \`${node.text}.x\` or \`${node.text}(...)\`/\`new ${node.text}(...)\` is allowed`);
+      }
     }
     // #371: a string or template literal that IS a dangerous key name, wherever it appears (a call
     // argument, a quoted destructuring key, a template key).
-    if (ts.isStringLiteralLike(node) && FORBIDDEN_KEY_STRINGS.has(node.text)) {
+    if (ts.isStringLiteralLike(node) && BANNED_NAMES.has(node.text)) {
       found.push(`${where(node)}: string "${node.text}" (a key that reaches Function or the prototype chain)`);
     }
     // #371: a computed property key must be a plain string or numeric literal; anything else cannot be
@@ -530,6 +569,11 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
     for (const target of assignmentTargets(node)) {
       const root = memberChainRoot(target);
       if (root !== undefined && isFreeGlobal(root, checker, sourceFile)) found.push(`${where(node)}: write to \`${root.text}\` or a member of it (a global cannot be patched)`);
+      // #372 AC-3h: ANY member write (any root) must be on the pinned allow-list.
+      const t = unparen(target);
+      if ((ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) && !ALLOWED_MEMBER_WRITES.has(normaliseText(t, sourceFile))) {
+        found.push(`${where(node)}: member write \`${normaliseText(t, sourceFile)}\` is not on the pinned allow-list (the real hook has none)`);
+      }
     }
     // Any element access other than a plain numeric literal index: `x["constructor"]` and
     // `x["con" + "structor"]` both spell a property name the identifier scan cannot see.
@@ -558,6 +602,11 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
   visit(sourceFile);
   return found;
 }
+
+test("AC-3h pin (#372): the allow-list of member writes is EXACTLY the member writes the real hook contains — it cannot silently grow", () => {
+  const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
+  assert.deepEqual([...new Set(memberWriteTargets(parseWithChecker("pretooluse-kernel-gate.mjs", hook)))].sort(), [...ALLOWED_MEMBER_WRITES].sort());
+});
 
 test("AC-3f (#371): the allow-set of free globals is EXACTLY the set of free globals the real hook uses — it cannot silently grow (a new global is added here in a reviewed change, never inherited)", () => {
   const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
