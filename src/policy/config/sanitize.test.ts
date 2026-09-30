@@ -110,7 +110,8 @@ test("sanitize class literal matches userpromptsubmit-halt-relay.mjs", () => {
 // is now an AST check (the TypeScript parser can parse plain ESM `.mjs`, per kernel-purity-check.ts's
 // own precedent): it finds the real `renderHookOutput(...)` call and requires its second argument to
 // UNCONDITIONALLY resolve to `*.sanitizeForTerminal` — either directly, or via exactly one local
-// `const` alias assignment (a benign hoist, red-team's own drill M9, is accepted) — with no
+// `const` alias assignment (a benign hoist, red-team's own drill M9, was accepted then; REVERSED
+// 2026-09-29, see the round-5 block below and the AC-7b flipped test) — with no
 // ternary/conditional/function-wrapper in between. This is still a cheap SOURCE-TEXT smoke check,
 // not the load-bearing guard: AC-9 below (a real, spawned-hook behavioral test with env vars set and
 // unset) is what actually proves the sanitizer fires unconditionally at runtime.
@@ -148,128 +149,163 @@ test("sanitize class literal matches userpromptsubmit-halt-relay.mjs", () => {
 //     same-named declaration, with no notion of lexical scope — an inner-scope shadow of
 //     `sanitizeMod` resolved to the OUTER (real) binding here while the real spawned hook's runtime
 //     correctly used the INNER (shadow) one. Fixed with real (though intentionally narrower-than-
-//     full-ECMAScript) lexical scope resolution: starting from the reference's own position, walk
+//     full-ECMAScript) lexical scope resolution — SUPERSEDED in full by the compiler-symbol-backed,
+//     deny-by-default shape guard below (post-merge round, 2026-09-29); kept for history: starting from the reference's own position, walk
 //     outward through enclosing `Block`/`SourceFile` scopes (nearest first), searching each scope's
 //     OWN direct statements before moving to its parent scope — the same order a real inner-scope
 //     shadow would actually resolve at runtime. Disclosed narrower-than-full-JS-scoping residual:
 //     no hoisting, no `var`, no function-parameter binding, no TDZ — sufficient for this guard's own
 //     `const`/`let` idiom (the only shape the real hook and every constructed drill use).
+// Issue #360, post-merge fix-now round (2026-09-29; app-security round-2 finding 2, red-team round-4
+// N1) — the third consecutive round on this guard's root-cause class: a hand-rolled resolver written
+// inside a test fails OPEN on every binding form it does not model (function parameter, object
+// binding pattern, catch/for-of/var shadow, let reassignment, Promise.all spread, module-object
+// assignment, bracket/destructured call). Fixed at the root, not by teaching the resolver one more
+// shape: the guard now DENIES BY DEFAULT on SHAPE, and the one question that needs real scoping
+// ("which declaration does this identifier resolve to?") is answered by the compiler's own symbol
+// table (`ts.Program` + `checker.getSymbolAtLocation`), not by a scope walk written here. The shape
+// the real hook must have, and nothing else is accepted:
+//   - exactly one `renderHookOutput` name anywhere in the file (identifier or string literal), and it
+//     is the property name of the one `render.renderHookOutput(...)` call — so no decoy, bracket,
+//     computed-key or destructured call can coexist with (or replace) the real one;
+//   - that call's second argument is literally `sanitizeMod.sanitizeForTerminal` — no alias, no
+//     ternary, no wrapper, no other object (the round-1 "alias hoist is fine" ruling is reversed:
+//     app-security round-2 finding 2, Manager ruling 2026-09-29);
+//   - `sanitizeMod` and `render` each appear exactly twice in the file (the one declaration, the one
+//     use), so no shadow, reassignment, alias, spread or module-object assignment can exist;
+//   - `sanitizeMod` resolves, by the type checker, to a single `const` array-destructuring element
+//     of `await Promise.all([...])` (no default, no rest), whose array literal has no spread or hole,
+//     and whose element at the same index is exactly `import("../src/policy/config/sanitize.ts")`;
+//   - `Promise` in that expression is the unresolved global, not a local shadow.
+// Still a source-text smoke check, not the load-bearing guard: AC-9 (the real spawned hook, a finite
+// env matrix) proves the sanitizer at runtime, and the no-`process.env` assertion below closes the
+// open set that finite matrix cannot.
 const SANITIZE_MODULE_SPECIFIER = "../src/policy/config/sanitize.ts";
+
+const CHECKERS = new WeakMap<ts.SourceFile, ts.TypeChecker>();
+
+/** Parses `text` as a one-file `ts.Program` (in-memory host, no lib, no module resolution — symbol
+ * binding needs none of them) and registers its type checker for `diagnoseSanitizeWiring`. The
+ * returned SourceFile is the program's own, so `checker.getSymbolAtLocation` works on its nodes. */
+function parseWithChecker(fileName: string, text: string): ts.SourceFile {
+  const virtualName = `/${fileName}`;
+  const host: ts.CompilerHost = {
+    getSourceFile: (name, languageVersion) => (name === virtualName ? ts.createSourceFile(name, text, languageVersion, true, ts.ScriptKind.JS) : undefined),
+    getDefaultLibFileName: () => "/lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => "/",
+    getDirectories: () => [],
+    fileExists: (name) => name === virtualName,
+    readFile: (name) => (name === virtualName ? text : undefined),
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  };
+  const program = ts.createProgram({
+    rootNames: [virtualName],
+    options: { allowJs: true, noLib: true, noResolve: true, types: [], target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
+    host,
+  });
+  const sourceFile = program.getSourceFile(virtualName);
+  assert.ok(sourceFile, `ts.Program produced no source file for ${fileName}`);
+  CHECKERS.set(sourceFile, program.getTypeChecker());
+  return sourceFile;
+}
 
 /** True when `expr` is EXACTLY `import("../src/policy/config/sanitize.ts")` — the one real
  * relative specifier `hooks/pretooluse-kernel-gate.mjs` must use, not merely a path ending in the
  * same suffix (Issue #366). */
-function isSanitizeModuleImportCall(expr: ts.Expression): boolean {
-  if (!ts.isCallExpression(expr) || expr.expression.kind !== ts.SyntaxKind.ImportKeyword || expr.arguments.length !== 1) return false;
+function isSanitizeModuleImportCall(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined || !ts.isCallExpression(expr) || expr.expression.kind !== ts.SyntaxKind.ImportKeyword || expr.arguments.length !== 1) return false;
   const arg0 = expr.arguments[0];
   return arg0 !== undefined && ts.isStringLiteralLike(arg0) && arg0.text === SANITIZE_MODULE_SPECIFIER;
 }
 
-interface ResolvedBinding {
-  initializer: ts.Expression;
-  arrayIndex: number | undefined;
-}
-
-function isLexicalScopeNode(node: ts.Node): node is ts.SourceFile | ts.Block {
-  return ts.isSourceFile(node) || ts.isBlock(node);
-}
-
-/** The nearest `Block`/`SourceFile` STRICTLY ENCLOSING `node` (never `node` itself). */
-function findEnclosingScope(node: ts.Node): ts.SourceFile | ts.Block | undefined {
-  let n: ts.Node | undefined = node.parent;
-  while (n && !isLexicalScopeNode(n)) n = n.parent;
+function countNodes(root: ts.Node, predicate: (node: ts.Node) => boolean): number {
+  let n = 0;
+  const visit = (node: ts.Node): void => {
+    if (predicate(node)) n++;
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
   return n;
 }
 
-/** Searches ONE scope's own direct statements (never descending into a nested block) for a
- * `const`/`let` binding of `name`, either a plain identifier or an element of an array-binding
- * pattern (`const [a, b] = ...`). */
-function findBindingInScope(scope: ts.SourceFile | ts.Block, name: string): ResolvedBinding | undefined {
-  let found: ResolvedBinding | undefined;
-  for (const stmt of scope.statements) {
-    if (!ts.isVariableStatement(stmt)) continue;
-    for (const decl of stmt.declarationList.declarations) {
-      if (!decl.initializer) continue;
-      if (ts.isIdentifier(decl.name) && decl.name.text === name) {
-        found = { initializer: decl.initializer, arrayIndex: undefined };
-      } else if (ts.isArrayBindingPattern(decl.name)) {
-        const index = decl.name.elements.findIndex((el) => ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name);
-        if (index !== -1) found = { initializer: decl.initializer, arrayIndex: index };
-      }
-    }
-  }
-  return found;
-}
+const isNamed =
+  (name: string) =>
+  (node: ts.Node): boolean =>
+    ts.isIdentifier(node) && node.text === name;
+const isNamedOrStringNamed =
+  (name: string) =>
+  (node: ts.Node): boolean =>
+    (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === name;
 
-/** Resolves `name` starting from `referenceNode`'s OWN lexical position, walking outward through
- * enclosing scopes (nearest first) and returning the FIRST match — real scope resolution, replacing
- * a flat whole-file, tree-order search that could resolve to the wrong (outer) declaration when an
- * inner scope shadows the same name (Issue #360 finding R3). */
-function findBindingDeclaration(name: string, referenceNode: ts.Node): ResolvedBinding | undefined {
-  let scope = findEnclosingScope(referenceNode);
-  while (scope) {
-    const found = findBindingInScope(scope, name);
-    if (found) return found;
-    scope = findEnclosingScope(scope);
+/** Why the sanitize wiring is NOT the one accepted shape, or `undefined` when it is. `secondArg` is
+ * the second argument of the ONE `renderHookOutput(...)` call. Deny by default: see the comment
+ * block above for the whole accepted shape. */
+function diagnoseSanitizeWiring(secondArg: ts.Expression | undefined): string | undefined {
+  if (secondArg === undefined) return "the renderHookOutput call has no second argument";
+  const sourceFile = secondArg.getSourceFile();
+  const checker = CHECKERS.get(sourceFile);
+  if (!checker) return "internal: the source file was not parsed through parseWithChecker";
+
+  if (!ts.isPropertyAccessExpression(secondArg) || secondArg.name.text !== "sanitizeForTerminal" || !ts.isIdentifier(secondArg.expression) || secondArg.expression.text !== "sanitizeMod") {
+    return "the second argument must be literally `sanitizeMod.sanitizeForTerminal` (no alias, ternary, wrapper, other object or port literal)";
+  }
+  const call = secondArg.parent;
+  if (!ts.isCallExpression(call) || call.arguments[1] !== secondArg || call.arguments.some((a) => ts.isSpreadElement(a))) {
+    return "the sanitizer must be the plain second argument of the call (no spread arguments)";
+  }
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "renderHookOutput" || !ts.isIdentifier(call.expression.expression) || call.expression.expression.text !== "render") {
+    return "the call must be literally `render.renderHookOutput(...)`";
+  }
+  const renderHookOutputNames = countNodes(sourceFile, isNamedOrStringNamed("renderHookOutput"));
+  if (renderHookOutputNames !== 1) {
+    return `exactly one \`renderHookOutput\` name may exist in the file (found ${renderHookOutputNames}): a decoy call, bracket access, or destructured alias defeats the one-call-site check`;
+  }
+  const renderUses = countNodes(sourceFile, isNamed("render"));
+  if (renderUses !== 2) return `\`render\` must appear exactly twice (its one declaration and the one call), found ${renderUses}: an alias, shadow or computed-key access is possible`;
+  const sanitizeModUses = countNodes(sourceFile, isNamed("sanitizeMod"));
+  if (sanitizeModUses !== 2) {
+    return `\`sanitizeMod\` must appear exactly twice (its one declaration and the one use), found ${sanitizeModUses}: a shadow (parameter, pattern, catch, for-of, var), a reassignment, an alias or a module-object assignment is possible`;
+  }
+
+  // The one question that needs real scoping goes to the compiler's symbol table.
+  const symbol = checker.getSymbolAtLocation(secondArg.expression);
+  const declarations = symbol?.declarations ?? [];
+  const decl = declarations[0];
+  if (declarations.length !== 1 || decl === undefined || !ts.isBindingElement(decl) || !ts.isArrayBindingPattern(decl.parent)) {
+    return "`sanitizeMod` must resolve to exactly one array-destructuring element";
+  }
+  if (decl.initializer !== undefined || decl.dotDotDotToken !== undefined || !ts.isIdentifier(decl.name) || decl.name.text !== "sanitizeMod") {
+    return "`sanitizeMod` must be a plain array-destructuring element (no default value, no rest)";
+  }
+  const pattern = decl.parent;
+  const variable = pattern.parent;
+  if (!ts.isVariableDeclaration(variable) || !ts.isVariableDeclarationList(variable.parent) || (variable.parent.flags & ts.NodeFlags.Const) === 0) {
+    return "`sanitizeMod` must be declared by a `const` destructuring (a let/var binding can be reassigned)";
+  }
+  const init = variable.initializer;
+  if (init === undefined || !ts.isAwaitExpression(init) || !ts.isCallExpression(init.expression)) return "`sanitizeMod` must come from `await Promise.all([...])`";
+  const promiseAll = init.expression;
+  if (!ts.isPropertyAccessExpression(promiseAll.expression) || !ts.isIdentifier(promiseAll.expression.expression) || promiseAll.expression.expression.text !== "Promise" || promiseAll.expression.name.text !== "all" || promiseAll.arguments.length !== 1) {
+    return "`sanitizeMod` must come from `await Promise.all([...])` with exactly one argument";
+  }
+  if (checker.getSymbolAtLocation(promiseAll.expression.expression) !== undefined) return "`Promise` must be the unresolved global, not a local declaration";
+  const list = promiseAll.arguments[0];
+  if (list === undefined || !ts.isArrayLiteralExpression(list) || list.elements.some((e) => ts.isSpreadElement(e) || ts.isOmittedExpression(e))) {
+    return "the `Promise.all` argument must be a plain array literal (no spread, no holes): a spread shifts the runtime index against the source index";
+  }
+  const index = pattern.elements.indexOf(decl);
+  if (!isSanitizeModuleImportCall(list.elements[index])) {
+    return `the array element for \`sanitizeMod\` (index ${index}) must be exactly import(${JSON.stringify(SANITIZE_MODULE_SPECIFIER)}) — no path-suffix lookalike, no other module`;
   }
   return undefined;
 }
 
-function unwrapAwait(expr: ts.Expression): ts.Expression {
-  return ts.isAwaitExpression(expr) ? expr.expression : expr;
-}
-
-/** Resolves identifier `name`, referenced at `referenceNode`'s own lexical position, back to the
- * module-load expression it's bound to: directly (`const sanitizeMod = await import(...)`), or as
- * the Nth element of the `await Promise.all([...imports])` array this hook's own destructuring
- * idiom uses. Anything else (bound to an object literal, a function call result, an unresolvable
- * pattern) yields `undefined`. */
-function resolveModuleBinding(name: string, referenceNode: ts.Node): ts.Expression | undefined {
-  const binding = findBindingDeclaration(name, referenceNode);
-  if (!binding) return undefined;
-  const init = unwrapAwait(binding.initializer);
-  if (binding.arrayIndex === undefined) return init;
-  if (
-    !ts.isCallExpression(init) ||
-    !ts.isPropertyAccessExpression(init.expression) ||
-    !ts.isIdentifier(init.expression.expression) ||
-    init.expression.expression.text !== "Promise" ||
-    init.expression.name.text !== "all" ||
-    init.arguments.length !== 1
-  ) {
-    return undefined;
-  }
-  const arrayArg = init.arguments[0];
-  if (!arrayArg || !ts.isArrayLiteralExpression(arrayArg)) return undefined;
-  return arrayArg.elements[binding.arrayIndex];
-}
-
-/** True when `objExpr` (the object side of a `<obj>.sanitizeForTerminal` access) resolves — from
- * `objExpr`'s OWN scope, not a flat whole-file search — all the way back to the one real
- * `import("../src/policy/config/sanitize.ts")` call. Never merely because a property happens to be
- * named "sanitizeForTerminal" on some other value (Issue #360 finding R2/AC-7b), and never merely
- * because SOME same-named declaration exists somewhere else in the file (Issue #360 finding R3). */
-function resolvesToSanitizeModuleImport(objExpr: ts.Expression): boolean {
-  if (!ts.isIdentifier(objExpr)) return false;
-  const resolved = resolveModuleBinding(objExpr.text, objExpr);
-  return resolved !== undefined && isSanitizeModuleImportCall(resolved);
-}
-
-function isSanitizeForTerminalAccess(expr: ts.Expression): boolean {
-  return ts.isPropertyAccessExpression(expr) && expr.name.text === "sanitizeForTerminal" && resolvesToSanitizeModuleImport(expr.expression);
-}
-
-/** Resolves `expr` to `*.sanitizeForTerminal` sourced from the real sanitize module import,
- * directly or via exactly one local `const` alias assignment resolved from `expr`'s OWN scope —
- * never through a ternary, call, other operator, an object literal masquerading under the same
- * property name, or a same-named declaration in the WRONG scope (Issue #360 findings R2/R3). */
-function resolvesToSanitizeForTerminal(expr: ts.Expression | undefined, seen = new Set<string>()): boolean {
-  if (expr === undefined) return false;
-  if (isSanitizeForTerminalAccess(expr)) return true;
-  if (!ts.isIdentifier(expr) || seen.has(expr.text)) return false;
-  seen.add(expr.text);
-  const binding = findBindingDeclaration(expr.text, expr);
-  return binding !== undefined && binding.arrayIndex === undefined && resolvesToSanitizeForTerminal(binding.initializer, seen);
+/** True when the wiring is the accepted shape. `expr` is the second argument of the one call. */
+function resolvesToSanitizeForTerminal(expr: ts.Expression | undefined): boolean {
+  return diagnoseSanitizeWiring(expr) === undefined;
 }
 
 /** ALL `renderHookOutput(...)` call sites found anywhere in `sourceFile`, in source order — never
@@ -287,7 +323,7 @@ function findAllRenderHookOutputCalls(sourceFile: ts.SourceFile): ts.CallExpress
   return calls;
 }
 
-test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHookOutput call site, and its second argument unconditionally resolves to the real sanitizeForTerminal import (no conditional/ternary bypass, no port-object masquerade, no decoy call, no path-suffix lookalike; a local-alias hoist is accepted)", () => {
+test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHookOutput call site, and its second argument unconditionally resolves to the real sanitizeForTerminal import (no conditional/ternary bypass, no port-object masquerade, no decoy call, no path-suffix lookalike, no alias, no shadow — the second argument is literally sanitizeMod.sanitizeForTerminal)", () => {
   const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
   // Issue #366 (app-security HIGH): the standalone raw-text regex that used to run here (checking
   // only that the literal specifier string appeared SOMEWHERE in the file) is REMOVED — it was
@@ -295,7 +331,7 @@ test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHo
   // dead-code decoy import satisfying it, combined with the real call site wired to an
   // attacker-controlled module, passed both checks. The AST resolution below, requiring the EXACT
   // specifier on the import that is ACTUALLY USED, is now the only check, and is strictly stronger.
-  const sourceFile = ts.createSourceFile("pretooluse-kernel-gate.mjs", hook, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("pretooluse-kernel-gate.mjs", hook);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1, `expected exactly one renderHookOutput(...) call site, found ${calls.length}`);
   const call = calls[0];
@@ -304,9 +340,66 @@ test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHo
   assert.ok(secondArg, "the one renderHookOutput(...) call has no second argument");
   assert.ok(
     resolvesToSanitizeForTerminal(secondArg),
-    "hooks/pretooluse-kernel-gate.mjs must pass an UNCONDITIONAL reference to the real sanitizeForTerminal import (directly, or via one " +
-      `local alias assignment) as renderHookOutput's second argument — no ternary/conditional, no port-object masquerade, no path-suffix lookalike. Got: ${hook.slice(secondArg.getStart(sourceFile), secondArg.getEnd())}`,
+    `hooks/pretooluse-kernel-gate.mjs must pass literally sanitizeMod.sanitizeForTerminal, the real import, as renderHookOutput's second argument. Rejected because: ${diagnoseSanitizeWiring(secondArg)}. Got: ${hook.slice(secondArg.getStart(sourceFile), secondArg.getEnd())}`,
   );
+});
+
+// Issue #360 / red-team round-3 R3 + round-4 N1, the half AC-9's finite env matrix cannot cover: the
+// hook must not read the environment AT ALL. A structural assertion over an open set, not a finite
+// list of names: every `process` reference is one of the four stream/exit members the hook uses, and
+// there is no route to the environment through globalThis, require or a process module import.
+const ALLOWED_PROCESS_MEMBERS = new Set(["stdin", "stdout", "stderr", "exit"]);
+const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "createRequire"]);
+const FORBIDDEN_SPECIFIERS = new Set(["process", "node:process", "module", "node:module"]);
+
+/** Every way this source could reach the environment, one line each; empty when it cannot. */
+function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
+  const found: string[] = [];
+  const where = (node: ts.Node): string => `line ${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}`;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent;
+      const isPropertyName = ts.isPropertyAccessExpression(parent) && parent.name === node;
+      if (!isPropertyName && node.text === "process") {
+        const member = ts.isPropertyAccessExpression(parent) && parent.expression === node ? parent.name.text : undefined;
+        if (member === undefined || !ALLOWED_PROCESS_MEMBERS.has(member)) found.push(`${where(node)}: \`process\` used other than as process.stdin/stdout/stderr/exit (${member === undefined ? "bare reference, bracket access or alias" : `process.${member}`})`);
+      }
+      if (!isPropertyName && FORBIDDEN_IDENTIFIERS.has(node.text)) found.push(`${where(node)}: forbidden identifier \`${node.text}\``);
+    }
+    if (ts.isStringLiteralLike(node) && FORBIDDEN_SPECIFIERS.has(node.text) && (ts.isImportDeclaration(node.parent) || (ts.isCallExpression(node.parent) && node.parent.expression.kind === ts.SyntaxKind.ImportKeyword))) {
+      found.push(`${where(node)}: import of "${node.text}"`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+test("AC-3: hooks/pretooluse-kernel-gate.mjs contains no process.env access and no route to the environment — the open set AC-9's finite env matrix cannot cover", () => {
+  const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("pretooluse-kernel-gate.mjs", hook)), []);
+});
+
+const ENV_ACCESS_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["process.env member read", "const x = process.env.THOTH_X;"],
+  ["process bracket access", 'const x = process["env"].THOTH_X;'],
+  ["process aliased to a local", "const p = process;\nconst x = p.env.THOTH_X;"],
+  ["env destructured from process", "const { env } = process;"],
+  ["globalThis route", "const x = globalThis.process.env.THOTH_X;"],
+  ["dynamic import of node:process", 'const p = await import("node:process");'],
+  ["static import of node:process", 'import p from "node:process";'],
+  ["createRequire route", 'import { createRequire } from "node:module";\nconst r = createRequire(import.meta.url);'],
+];
+
+for (const [name, source] of ENV_ACCESS_SHAPES) {
+  test(`AC-3: the environment-access scan flags this shape — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+test("AC-3 positive control: the stream/exit members the hook really uses are not flagged", () => {
+  const source = 'process.stdin.setEncoding("utf8");\nprocess.stdout.on("error", () => {});\nprocess.stderr.write("x");\nprocess.exit(2);';
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
 });
 
 // Issue #360 fix-now round 2 (red-team round 2 finding R2, drill N4, regression pin): an env-gated
@@ -326,7 +419,7 @@ test("AC-7b regression: an env-gated object-literal port keyed \"sanitizeForTerm
     "const sanitizePort = { sanitizeForTerminal: process.env.THOTH_PLAIN_REASON ? ((s) => s) : sanitizeMod.sanitizeForTerminal };",
     "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizePort.sanitizeForTerminal);",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -357,7 +450,7 @@ test("AC-7b flipped: a local-const alias of the real sanitizeForTerminal propert
     "const sanitizePort = sanitizeMod.sanitizeForTerminal;",
     "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizePort);",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -374,7 +467,7 @@ test("AC-7c regression: findAllRenderHookOutputCalls finds every renderHookOutpu
     "if (process.env.THOTH_NEVER_SET) render.renderHookOutput(null, sanitizeMod.sanitizeForTerminal);",
     "const output = render.renderHookOutput(gate.decideToolCall(input, ports), (s) => s);",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 2, "both the decoy and the real call site must be found — the original bug stopped at the first match");
 });
@@ -395,7 +488,7 @@ test("Issue #366 regression: an attacker-controlled module whose path merely END
     "]);",
     "const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -429,7 +522,7 @@ test("R3 regression (drill N9): an inner-scope shadow of sanitizeMod is rejected
     "  output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);",
     "}",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -459,7 +552,7 @@ test("R3 non-regression: a same-scope (non-shadowed) binding still resolves corr
     "  const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);",
     "}",
   ].join("\n");
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -491,7 +584,7 @@ const IDENTITY_PORT = "{ sanitizeForTerminal: (s) => s }";
 
 /** The whole-source entry point every case below runs: does the guard ACCEPT this source? */
 function guardAccepts(source: string): boolean {
-  const sourceFile = ts.createSourceFile("synthetic.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const sourceFile = parseWithChecker("synthetic.mjs", source);
   const calls = findAllRenderHookOutputCalls(sourceFile);
   if (calls.length !== 1) return false;
   const call = calls[0];
