@@ -797,3 +797,57 @@ test("AC-3c positive control: the allow-listed specifiers (node:path, node:url, 
   ].join("\n");
   assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
 });
+
+// Issue #371 (app-security round 4, MED + LOW, demonstrated): the AC-3 scan still found `Function` by
+// SPELLING. A property name held in a quoted key, computed key, template, call argument or
+// `String.fromCharCode` was never inspected, so six routes reached Function (and so process.env)
+// with AC-3 green. The root fix stops the spelling chase: every free (undeclared, ambient) global
+// the hook references must be on a short allow-set pinned to what the real hook uses.
+const REFLECTIVE_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["Reflect.get on the prototype with a string key", 'const env = Reflect.get(Object.getPrototypeOf(process.exit), "constructor")("return process")().env;'],
+  ["quoted key destructure", 'const { "constructor": F } = process.exit;\nconst env = F("return process")().env;'],
+  ["computed key destructure", 'const { ["con" + "structor"]: F } = process.exit;\nconst env = F("return process")().env;'],
+  ["getOwnPropertyDescriptor with a string key", 'const F = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(process.exit), "constructor").value;'],
+  ["template-literal key", "const F = Reflect.get(process.exit, `constructor`);"],
+  ["String.fromCharCode key", "const F = Reflect.get(process.exit, String.fromCharCode(99, 111, 110, 115, 116, 114, 117, 99, 116, 111, 114));"],
+  ["prototype string key", 'const p = { "prototype": 1 };'],
+  ["__proto__ computed key", 'const k = "__pro" + "to__";\nconst o = { [k]: 1 };'],
+];
+
+for (const [name, source] of REFLECTIVE_SHAPES) {
+  test(`AC-3d (#371): the environment-access scan flags a reflective, quoted, computed or template route — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+const GLOBAL_MUTATION_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["String.prototype.replace assignment", "String.prototype.replace = function () { return String(this); };"],
+  ["Reflect.set on RegExp.prototype with Symbol.replace", "Reflect.set(RegExp.prototype, Symbol.replace, () => \"\");"],
+  ["assignment to a member of an allowed global (process.stdout.write)", "process.stdout.write = () => true;"],
+  ["compound assignment rooted at a global", "process.stdout.count += 1;"],
+  ["increment rooted at a global", "process.stdout.count++;"],
+  ["delete rooted at a global", "delete process.exit;"],
+  ["destructuring assignment target rooted at a global", "[process.exit] = [() => 0];"],
+  ["an unlisted free global (console)", 'console.log("x");'],
+  ["an unlisted free global (Object)", "const k = Object.keys({});"],
+];
+
+for (const [name, source] of GLOBAL_MUTATION_SHAPES) {
+  test(`AC-3e (#371): an assignment rooted at a global, or an unlisted free global, is flagged — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+test("AC-3d/3e positive control: a benign refactor (a local const helper, a local object mutated, JSON, Error, Promise, undefined) is not flagged", () => {
+  const source = [
+    "const helper = (s) => s.trim();",
+    'const label = helper("x");',
+    "const local = {};",
+    "local.value = 1;",
+    "local.count += 1;",
+    'const parsed = JSON.parse("{}");',
+    "const p = new Promise((resolve) => resolve(undefined));",
+    'const e = new Error("x");',
+  ].join("\n");
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
+});
