@@ -3,7 +3,19 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 **Last updated:** 2026-09-29 (PR #365 MERGED by human decision, ahead of the round-2 re-confirm this file had called for — Issues #362/#363 closed correctly, #360/#361/#366/#367 still OPEN and still need independent re-verification post-merge; repo-wide branch cleanup done, ~90 stale branches removed; CLAUDE.md gained a "Branch discipline" section). Entries below this one are superseded but kept for continuity.
 
-## Resume point — 2026-09-29 (newest, later): PR #365 post-merge re-review done; #366 closed; #360/#367 need a fix-now; S7 #300/#301/#302/#307 closed
+## Resume point — 2026-09-29 (newest, latest): branch `review/365-post-merge-reconfirm` SHIPPABLE, not pushed; PR open and merge are human-only
+
+- **Branch contents (not pushed, no upstream):** fix-now for #360, #367, #368, #369, #370 (commits `463ad9a`..`a1f3d27`) and #325 meter proof-test (`457d62c`, `9f993c9`, `bc457a5`), plus review records. `hooks/*.mjs` and `ci.yml` have zero diff.
+- **Verify (Manager, quiet tree):** build rc=0, lint rc=0, every `qa:*` gate instrument PASS, full `node --test` green with no failures and no skips. Under concurrent load: gate-latency, scaling-sweep and pre-commit-scan R4 `EBUSY` flake; each passes alone.
+- **Reviews:** s312 fix-now: red-team round 5 `go`, app-security round 3 `APPROVE-WITH-CONDITIONS` (conditions #369/#370 fixed), app-security round-4 re-confirm `APPROVE-WITH-CONDITIONS`, cross-domain round 3 `APPROVE`. s325 (STANDARD): code-reviewer `SHIP`, cross-domain `APPROVE`. `reviewRoundsSinceClean=0`, total 2; council not fired.
+- **Closes on merge:** #360, #367, #368, #369, #370. #325 stays open unless the human drops or splits its optional sweep early-exit.
+- **Open decision for the human:** #371 (MED, AC-3 still matches names by spelling; reflective `"constructor"` lookups reach `process.env`). Manager recommends defer: make it a precondition of #308 (hook activation) and fix with a checker-backed deny-by-default scan of unresolved globals. Live exposure 0% while the hook is unwired.
+- **Recorded residuals (decisions.md 2026-09-29):** JSDoc type-erasure spellings incl. `@param {any}`; `.cjs`/`.mts`/`.ts` and nested hook enumeration; snapshot delete-and-bootstrap; lint hint text; `String.prototype` patching (LOW, same fix as #371).
+- **Still human-only / held:** push `master` (`d2cfaad`, `dfc574b`); #308, #338, #340; `rmdir C:\playground\thoth-as4` (empty dir a reviewer's worktree left behind).
+
+**Single next action:** push the branch and open its PR (`Closes #360 #367 #368 #369 #370`), merge after CI is green; decide #371 defer vs fix-now before merging.
+
+## Prior entry (superseded above): PR #365 post-merge re-review done; #366 closed; #360/#367 need a fix-now; S7 #300/#301/#302/#307 closed
 
 - **Post-merge re-review of PR #365 (`949b108`) complete, on branch `review/365-post-merge-reconfirm`:** red-team `go`, cross-domain `APPROVE`, app-security `REWORK` (for #367 only). Reports in `docs/reviews/s312-fixnow-360-363-{red-team-round4,app-security-round2,cross-domain-round2}-postmerge-2026-09-29.md`. Code is on master and unwired (#308), so live exposure is 0%; the CI guards are live.
 - **Issue rulings (Manager):** #366 closed (three reviewers demonstrated the fix). #362/#363 stay closed: the auto-close came before the round-4 residuals were re-verified (the earlier resume-point wording "closing was already earned" was inaccurate on that point), but red-team round 4 has now verified them. #360, #361, #367 stay open. #368 filed by red-team (line-anchored identity pin). #360 and #367 are the same root-cause class for the third and second consecutive round, so the fix is architectural: a `ts.Program` symbol lookup for the sanitize binding, and a suppression-class scan plus explicit `ban-ts-comment` options plus `noInlineConfig` for hooks.
