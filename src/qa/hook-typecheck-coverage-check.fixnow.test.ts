@@ -8,8 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ESLint } from "eslint";
-import * as coverage from "./hook-typecheck-coverage-check.ts";
-import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES } from "./hook-typecheck-coverage-check.ts";
+import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES, regenerateBaseline } from "./hook-typecheck-coverage-check.ts";
 
 const repoRoot = process.cwd();
 let tmpCounter = 0;
@@ -142,19 +141,6 @@ test("N3: the pinned baseline is a committed, generated JSON snapshot whose per-
 
 // --- red-team N3 (#368): the regenerate flag ratchets DOWN only ---------------------------------
 
-interface RegenResult {
-  ok: boolean;
-  added: string[];
-  removed: string[];
-  refusal?: string;
-}
-type RegenFn = (o: { repoRoot: string; snapshotPath: string; configPathOverride?: string; hooks?: string[]; write?: boolean }) => RegenResult;
-function regen(): RegenFn {
-  const fn = (coverage as unknown as Record<string, unknown>)["regenerateBaseline"];
-  assert.equal(typeof fn, "function", "regenerateBaseline is not exported from hook-typecheck-coverage-check.ts yet (feature absent)");
-  return fn as RegenFn;
-}
-
 const REGEN_HEAD = ["/** @param {number} n */", "function ok(n) { return n; }", ""].join("\n");
 const F_LINE = "function f(a) { return a; }";
 const G_LINE = "function g(b) { return b; }";
@@ -174,7 +160,7 @@ function regenScenario(label: string, hookSource: string, run: (ctx: { hookRel: 
 test("N3 regenerate: an unchanged hook regenerates cleanly with nothing added or removed", () => {
   regenScenario("regen-same", REGEN_TWO, ({ hookRel, snapshotPath, configPath }) => {
     writeFileSync(snapshotPath, snapshotFor(hookRel, [[F_LINE, 1], [G_LINE, 1]]), "utf8");
-    const r = regen()({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
+    const r = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
     assert.equal(r.ok, true, r.refusal);
     assert.deepEqual([r.added, r.removed], [[], []]);
   });
@@ -183,7 +169,7 @@ test("N3 regenerate: an unchanged hook regenerates cleanly with nothing added or
 test("N3 regenerate: paying down debt (an identity disappears) is ALLOWED, the removal is printed, and the snapshot shrinks", () => {
   regenScenario("regen-down", `${REGEN_HEAD}${F_LINE}\n/** @param {number} b */\n${G_LINE}\n`, ({ hookRel, snapshotPath, configPath, readSnapshot }) => {
     writeFileSync(snapshotPath, snapshotFor(hookRel, [[F_LINE, 1], [G_LINE, 1]]), "utf8");
-    const r = regen()({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
+    const r = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
     assert.equal(r.ok, true, r.refusal);
     assert.equal(r.added.length, 0);
     assert.equal(r.removed.length, 1);
@@ -200,7 +186,7 @@ test("N3 regenerate: ANY new identity is REFUSED (even when the total does not r
   regenScenario("regen-new", `${REGEN_HEAD}${F_LINE}\n/** @param {number} b */\n${G_LINE}\nfunction h(c) { return c; }\n`, ({ hookRel, snapshotPath, configPath, readSnapshot }) => {
     const before = snapshotFor(hookRel, [[F_LINE, 1], [G_LINE, 1]]);
     writeFileSync(snapshotPath, before, "utf8");
-    const r = regen()({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
+    const r = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
     assert.equal(r.ok, false);
     assert.match(r.added.join("\n"), /function h\(c\)/);
     assert.match(r.refusal ?? "", /hand|edit|review/i, "the refusal must name its unlock (a visible, reviewed hand edit of the snapshot)");
@@ -211,7 +197,7 @@ test("N3 regenerate: ANY new identity is REFUSED (even when the total does not r
 test("N3 regenerate: a second occurrence of an ALREADY-pinned identity (a copy-pasted diagnostic line) is REFUSED", () => {
   regenScenario("regen-dup", `${REGEN_TWO}${F_LINE}\n`, ({ hookRel, snapshotPath, configPath }) => {
     writeFileSync(snapshotPath, snapshotFor(hookRel, [[F_LINE, 1], [G_LINE, 1]]), "utf8");
-    const r = regen()({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
+    const r = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
     assert.equal(r.ok, false);
     assert.match(r.added.join("\n"), /function f\(a\)/);
   });
@@ -219,10 +205,10 @@ test("N3 regenerate: a second occurrence of an ALREADY-pinned identity (a copy-p
 
 test("N3 regenerate: with NO committed snapshot at all, an explicit hook list bootstraps one from the measured diagnostics; without a hook list it refuses", () => {
   regenScenario("regen-boot", REGEN_TWO, ({ hookRel, snapshotPath, configPath, readSnapshot }) => {
-    const refused = regen()({ repoRoot, snapshotPath, configPathOverride: configPath });
+    const refused = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath });
     assert.equal(refused.ok, false);
     assert.equal(existsSync(snapshotPath), false);
-    const r = regen()({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
+    const r = regenerateBaseline({ repoRoot, snapshotPath, configPathOverride: configPath, hooks: [hookRel] });
     assert.equal(r.ok, true, r.refusal);
     const written = JSON.parse(readSnapshot()) as { hooks: Record<string, Array<{ code: number; excerpt: string; count: number }>> };
     assert.deepEqual(written.hooks[hookRel]?.map((e) => [e.code, e.excerpt, e.count]), [[7006, F_LINE, 1], [7006, G_LINE, 1]]);
