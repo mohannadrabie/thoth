@@ -18,7 +18,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Correction to the entry above:** #362/#363 were closed by the PR #365 merge before their round-4 residuals were re-verified; red-team round 4 has since verified them, so they stay closed.
 - **Next:** route this delta to `red-team` + `app-security-reviewer` + `cross-domain-reviewer`; the next REWORK on this target reaches rule-16(c)'s third strike and goes to `/maat:council`.
 
-**Addendum (2026-09-29, Issue #325 built, not pushed):** test-only. New test `separator-scan-meter-counts-the-inner-whitespace-walk` and mutant `separator-scan-inner-whitespace-walk-uncounted` (60 of 60 mutants killed); no production file changed. Commit `457d62c`. #325 stays OPEN until reviewed (`Refs`, not `Closes`); the Issue's optional sweep early-exit is not done.
+**Addendum (2026-09-29, Issue #325 built, not pushed):** test-only. New test `separator-scan-meter-counts-the-inner-whitespace-walk` and mutant `separator-scan-inner-whitespace-walk-uncounted` (every mutant killed, run by `npm run qa:mutation-shell`); no production file changed. Commit `457d62c`. #325 stays OPEN until reviewed (`Refs`, not `Closes`); the Issue's optional sweep early-exit is not done.
 
 ## Prior entry (superseded above): PR #365 merged; post-merge re-review still owed; branch cleanup done; S7 backlog next
 
