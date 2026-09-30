@@ -639,3 +639,73 @@ test("AC-7e: a function-parameter and an object-binding-pattern shadow of saniti
   assert.equal(guardAccepts(paramShadow), false, "function-parameter shadow");
   assert.equal(guardAccepts(patternShadow), false, "object-binding-pattern shadow");
 });
+
+// Issue #369 (app-security round 3, MED, demonstrated): only the `sanitizeMod` element of the
+// `Promise.all` array was pinned to its exact specifier, so retargeting the `render` import to a
+// module that swaps in an identity sanitizer under an env gate kept every guard green. EVERY element
+// is now pinned, index by index, to its exact expected specifier (and the pattern to its exact names).
+const EXPECTED_SPECIFIERS = [
+  "../src/policy/gate/decide-tool-call.ts",
+  "../src/policy/gate/render-hook-output.ts",
+  "../src/policy/config/loader.ts",
+  "../src/policy/config/central-source.ts",
+  "../src/policy/tools/classification-catalog.ts",
+  "../src/policy/config/sanitize.ts",
+];
+
+function destructureWithElements(elements: string[]): string {
+  return join(["const [raw, gate, render, loader, central, catalog, sanitizeMod] = await Promise.all([", ...elements.map((e) => `  ${e},`), "]);", REAL_CALL]);
+}
+const REAL_ELEMENTS = ["readStdin()", ...EXPECTED_SPECIFIERS.map((s) => `import("${s}")`)];
+
+test("#369 control: the exact expected Promise.all element list is ACCEPTED (so the retargets below fail for the specifier, not the fixture)", () => {
+  assert.equal(guardAccepts(destructureWithElements(REAL_ELEMENTS)), true);
+});
+
+for (let i = 1; i < REAL_ELEMENTS.length - 1; i++) {
+  test(`#369: retargeting the Promise.all import at index ${i} (${EXPECTED_SPECIFIERS[i - 1]}) to an attacker module is REJECTED`, () => {
+    const elements = [...REAL_ELEMENTS];
+    elements[i] = 'import("../src/policy/gate/evil-render.ts")';
+    assert.equal(guardAccepts(destructureWithElements(elements)), false);
+  });
+}
+
+test("#369: replacing the readStdin() element, or appending an extra Promise.all element, is REJECTED", () => {
+  assert.equal(guardAccepts(destructureWithElements(["attackerStdin()", ...REAL_ELEMENTS.slice(1)])), false, "index 0 must be readStdin()");
+  assert.equal(guardAccepts(destructureWithElements([...REAL_ELEMENTS, 'import("../src/policy/gate/evil-extra.ts")'])), false, "an extra element beyond the 7 expected");
+});
+
+test("#369: renaming a destructured binding (render bound at the wrong index) is REJECTED", () => {
+  const swapped = join(["const [raw, gate, loader, render, central, catalog, sanitizeMod] = await Promise.all([", ...REAL_ELEMENTS.map((e) => `  ${e},`), "]);", REAL_CALL]);
+  assert.equal(guardAccepts(swapped), false);
+});
+
+// Issue #370 (app-security round 3, MED, demonstrated): AC-3 was a NAME deny-list. Each of the four
+// shapes below reaches `process.env` while every name check stays green. Now also forbidden anywhere
+// in the hook: a `Function` or `eval` reference (direct or indirect), any `constructor` access (dot,
+// bracket or destructured), any computed element access, and a dynamic import() whose specifier is
+// not a plain string literal. The real hook needs none of these (asserted by the real-hook test above).
+const ENV_ROUTE_SHAPES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["Function constructor call", 'const env = Function("return process")().env;'],
+  ["new Function", 'const env = new Function("return process")().env;'],
+  ["constructor reached through an allowed member (dot)", 'const env = process.exit.constructor("return process")().env;'],
+  ["constructor reached through an allowed member (bracket)", 'const env = process.exit["constructor"]("return process")().env;'],
+  ["constructor spelled by concatenation (computed element access)", 'const env = process.exit["con" + "structor"]("return process")().env;'],
+  ["constructor destructured", 'const { constructor: F } = process.exit;\nconst env = F("return process")().env;'],
+  ["computed import specifier (concatenation)", 'const env = (await import("node:" + "process")).env;'],
+  ["computed import specifier (variable)", 'const spec = "node:process";\nconst env = (await import(spec)).env;'],
+  ["template import specifier with a substitution", "const n = \"process\";\nconst env = (await import(`node:${n}`)).env;"],
+  ["indirect eval", 'const env = (0, eval)("process.env");'],
+  ["direct eval", 'const env = eval("process.env");'],
+];
+
+for (const [name, source] of ENV_ROUTE_SHAPES) {
+  test(`AC-3b (#370): the environment-access scan flags this route — ${name}`, () => {
+    assert.ok(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)).length > 0, `expected the scan to flag: ${name}`);
+  });
+}
+
+test("AC-3b positive control: a plain string-literal dynamic import() and ordinary member access are not flagged", () => {
+  const source = 'const m = await import("../src/policy/config/sanitize.ts");\nconst f = m.sanitizeForTerminal;\nprocess.exit(2);';
+  assert.deepEqual(findEnvironmentAccess(parseWithChecker("synthetic.mjs", source)), []);
+});
