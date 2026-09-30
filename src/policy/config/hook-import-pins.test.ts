@@ -10,8 +10,18 @@
 //   AC-3j-3  every pinned pair names a real export of the module it points at, and no pair names a function
 //            that reads the environment (the env-reader names are DERIVED from the AC-3j-4 scan, not typed).
 //   AC-3j-4  the environment reads (process.env / cwd / argv / any process member but `platform`, the
-//            env-relevant node built-ins, computed import()) found in the relative-import graph rooted at the
-//            hook's imports are EXACTLY the pinned allow-set. Each pinned entry is disclosed with a rationale.
+//            env-relevant node built-ins, computed import(), ambient code-eval routes) found in the relative-import
+//            graph rooted at the hook's imports are EXACTLY the pinned allow-set. Sites are keyed by scope, by
+//            property text (`process.env.X`, `env.X`) AND by occurrence count (`|xN`), so a second read of a
+//            pinned thing in a pinned scope fails (Issue #377). Each pinned entry is disclosed with a rationale.
+//            Ambient code-eval routes flagged: `eval`, the `Function` constructor (call or new), and any
+//            `.constructor(` / `["constructor"](` call chain. NOT flagged: other string-to-code routes
+//            (setTimeout with a string, import of a data: URL built at run time -- the latter is caught as a
+//            computed import()), and a `Function` reached only through an assembled name.
+//            Node built-in decision: fs, fs/promises, net, http, https, http2, dns, dns/promises, dgram, tls
+//            are scanned too. The graph legitimately uses node:fs today (four modules), pinned as an allow-set
+//            below; no network built-in is imported, so any new importer of one is deny-by-default. node:path
+//            and node:url are inert string helpers and stay unscanned.
 //   AC-3j-5  synthetic controls: every scan flags each seeded violation; the real inputs are not flagged.
 // NOT proven: runtime behaviour; a read through an assembled name, a `require`d or dynamically computed
 // module, or an `env` object handed across a call boundary (the same disclosed-not-chased class as #355
@@ -57,22 +67,35 @@ const PINNED_PAIRS: ReadonlySet<string> = new Set([
  *    see #320 (SYSTEMROOT nonexistent still fails open on Node 24) and #308 precondition X-8. Reachable from
  *    `central.defaultCentralPolicySource` on win32. Accepted, disclosed.
  *  - central-source.ts imports node:child_process to run reg.exe (same rationale).
+ *  - loader.ts, builtin-tool-inventory.ts, central-classification.ts and classification-catalog.ts import node:fs
+ *    to read the local policy / fixture / inventory files they are named for (pinned so a NEW fs importer in the
+ *    graph is a reviewed change). The `|xN` suffix is the occurrence count of that site in that scope.
  *  - classification-catalog.ts projectDir reads CLAUDE_PROJECT_DIR / cwd. It is exported but the hook uses
  *    none of the pinned pairs that reach it; a separate test proves nothing in the graph references it. */
 const PINNED_ENV_SITES: ReadonlySet<string> = new Set([
-  "src/policy/config/central-source.ts|<module>|import node:child_process",
-  "src/policy/config/central-source.ts|resolveSystemRegExePath|process.env",
-  "src/policy/config/central-source.ts|resolveSystemRegExePath|env.SystemRoot",
-  "src/policy/config/central-source.ts|resolveSystemRegExePath|env.windir",
-  "src/policy/tools/classification-catalog.ts|projectDir|process.cwd",
-  "src/policy/tools/classification-catalog.ts|projectDir|process.env",
-  "src/policy/tools/classification-catalog.ts|projectDir|env.CLAUDE_PROJECT_DIR",
+  "src/policy/config/central-source.ts|<module>|import node:child_process|x1",
+  "src/policy/config/central-source.ts|resolveSystemRegExePath|process.env|x1",
+  "src/policy/config/central-source.ts|resolveSystemRegExePath|env.SystemRoot|x1",
+  "src/policy/config/central-source.ts|resolveSystemRegExePath|env.windir|x1",
+  "src/policy/tools/classification-catalog.ts|projectDir|process.cwd|x1",
+  "src/policy/tools/classification-catalog.ts|projectDir|process.env|x1",
+  "src/policy/tools/classification-catalog.ts|projectDir|env.CLAUDE_PROJECT_DIR|x1",
+  // node:fs importers (allow-set, deny-by-default for any new one): each reads a pinned local file/dir; no network built-in is imported.
+  "src/policy/config/loader.ts|<module>|import node:fs|x1",
+  "src/policy/tools/builtin-tool-inventory.ts|<module>|import node:fs|x1",
+  "src/policy/tools/central-classification.ts|<module>|import node:fs|x1",
+  "src/policy/tools/classification-catalog.ts|<module>|import node:fs|x1",
 ]);
 
 /** `process` members that are not an environment/working-directory/argument read. */
 const ALLOWED_PROCESS_MEMBERS: ReadonlySet<string> = new Set(["platform"]);
 /** Node built-ins whose import is an environment or execution route (a site, pinned above when real). */
-const ENV_BUILTINS: ReadonlySet<string> = new Set(["process", "child_process", "os", "module", "worker_threads", "vm", "cluster"]);
+const ENV_BUILTINS: ReadonlySet<string> = new Set([
+  "process", "child_process", "os", "module", "worker_threads", "vm", "cluster",
+  // file-system and network built-ins: the graph legitimately imports node:fs today (pinned below, one entry per
+  // importing scope); every other one, and every NEW importer of node:fs, is deny-by-default.
+  "fs", "fs/promises", "net", "http", "https", "http2", "dns", "dns/promises", "dgram", "tls",
+]);
 const AMBIENT_ROUTES: ReadonlySet<string> = new Set(["globalThis", "global", "require", "createRequire"]);
 
 // ---- AC-3j-1/2: namespace pair scan ----
@@ -180,8 +203,12 @@ function importSpecifierText(node: ts.Node): string | undefined {
 /** Environment/execution sites in one module: sorted unique `file|scope|what`. */
 function scanEnvSites(file: string, text: string): string[] {
   const sf = parse(file, text);
-  const out = new Set<string>();
-  const add = (node: ts.Node, what: string): void => void out.add(`${file}|${scopeName(node)}|${what}`);
+  // one entry per (scope, what) with its OCCURRENCE COUNT: a second read of the same thing in a pinned scope changes the count.
+  const counts = new Map<string, number>();
+  const add = (node: ts.Node, what: string): void => {
+    const key = `${file}|${scopeName(node)}|${what}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  };
   const envParams: Array<{ fn: ts.FunctionLikeDeclaration; name: string }> = [];
   const visit = (node: ts.Node): void => {
     const spec = importSpecifierText(node);
@@ -197,6 +224,7 @@ function scanEnvSites(file: string, text: string): string[] {
         if (member === undefined) add(node, "process (bare or computed)");
         else if (!ALLOWED_PROCESS_MEMBERS.has(member)) {
           add(node, `process.${member}`);
+          if (member === "env" && ts.isPropertyAccessExpression(p.parent) && p.parent.expression === p) add(node, `process.env.${p.parent.name.text}`);
           if (member === "env") {
             for (let a: ts.Node | undefined = node; a !== undefined; a = a.parent) {
               if (ts.isParameter(a) && a.initializer !== undefined && ts.isIdentifier(a.name) && isFunctionLike(a.parent)) envParams.push({ fn: a.parent, name: a.name.text });
@@ -205,6 +233,12 @@ function scanEnvSites(file: string, text: string): string[] {
           }
         }
       } else if (AMBIENT_ROUTES.has(node.text)) add(node, `ambient route ${node.text}`);
+      else if (node.text === "eval") add(node, "code-eval eval");
+      else if (node.text === "Function" && !ts.isTypeReferenceNode(node.parent) && !ts.isExpressionWithTypeArguments(node.parent)) add(node, "code-eval Function constructor");
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if ((ts.isPropertyAccessExpression(callee) && callee.name.text === "constructor") || (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) && callee.argumentExpression.text === "constructor")) add(node, "code-eval .constructor( call");
     }
     ts.forEachChild(node, visit);
   };
@@ -220,7 +254,7 @@ function scanEnvSites(file: string, text: string): string[] {
     };
     if (fn.body !== undefined) walk(fn.body);
   }
-  return [...out].sort();
+  return [...counts].map(([k, n]) => `${k}|x${String(n)}`).sort();
 }
 
 interface Graph {
@@ -413,7 +447,7 @@ test("AC-3j-5: a module added to the graph that reads process.env is flagged (gr
   assert.deepEqual(graph.violations, []);
   assert.ok(graph.modules.size === 2);
   const sites = [...graph.modules].flatMap(([file, text]) => scanEnvSites(file, text));
-  assert.ok(sites.some((s) => s.endsWith("|process.env")), "the added module's env read must be found");
+  assert.ok(sites.some((s) => s.includes("|process.env|")), "the added module's env read must be found");
   const broken = collectGraph("/g", ["./a.ts"], (abs) => (abs.replace(/\\/g, "/").endsWith("/a.ts") ? files.get("/g/a.ts") : undefined));
   assert.ok(broken.violations.length > 0, "an unresolvable import must be a violation");
 });
@@ -421,4 +455,83 @@ test("AC-3j-5: a module added to the graph that reads process.env is flagged (gr
 test("AC-3j-5: a bare-package import in the graph is a violation", () => {
   const g = collectGraph("/g", ["./a.ts"], () => 'import x from "left-pad";');
   assert.ok(g.violations.some((v) => v.includes("left-pad")));
+});
+
+// ---- Issues #377 and hardening: occurrence counts, property text, ambient code-eval routes ----
+
+const realSource = (rel: string): string => {
+  const text = realGraph.modules.get(rel);
+  assert.ok(text !== undefined, `${rel} is in the graph`);
+  return text;
+};
+
+test("AC-3j-4: a second process.env read in resolveSystemRegExePath changes the site set", () => {
+  const rel = "src/policy/config/central-source.ts";
+  const text = realSource(rel);
+  const before = scanEnvSites(rel, text);
+  const anchor = "const systemRoot = env.SystemRoot || env.windir ||";
+  assert.ok(text.includes(anchor), "anchor line present");
+  const mutants: ReadonlyArray<readonly [name: string, line: string]> = [
+    ["a second process.env.PATH read", `const p = process.env.PATH;\n  ${anchor}`],
+    ["a second process.env.SystemRoot read (same property text, one more occurrence)", `const p = process.env.SystemRoot;\n  ${anchor}`],
+    ["a second use of the env parameter's SystemRoot", `const q = env.SystemRoot;\n  ${anchor}`],
+  ];
+  for (const [name, line] of mutants) {
+    const after = scanEnvSites(rel, text.replace(anchor, line));
+    assert.notDeepEqual(after, before, `the site set must change for: ${name}`);
+    assert.notDeepEqual(after, [...PINNED_ENV_SITES].sort(), `the pin must fail for: ${name}`);
+  }
+});
+
+test("AC-3j-4: a second process.env read in projectDir changes the site set", () => {
+  const rel = "src/policy/tools/classification-catalog.ts";
+  const text = realSource(rel);
+  const anchor = "return env.CLAUDE_PROJECT_DIR ?? cwd();";
+  assert.ok(text.includes(anchor), "anchor line present");
+  const after = scanEnvSites(rel, text.replace(anchor, `void process.env.HOME;\n  ${anchor}`));
+  assert.notDeepEqual(after, scanEnvSites(rel, text));
+});
+
+test("AC-3j-4: process.env.<property> reads are recorded by property text", () => {
+  assert.ok(scanEnvSites("src/policy/x.ts", "export const a = () => process.env.SECRET;").some((s) => s.includes("|process.env.SECRET|")));
+  assert.notDeepEqual(scanEnvSites("src/policy/x.ts", "export const a = () => process.env.A;"), scanEnvSites("src/policy/x.ts", "export const a = () => process.env.B;"));
+});
+
+const EVAL_ROUTES: ReadonlyArray<readonly [name: string, source: string]> = [
+  ["eval call", "export const e = (s) => eval(s);"],
+  ["indirect eval", "export const e = (s) => (0, eval)(s);"],
+  ["Function constructor with new", 'export const f = () => new Function("return process")();'],
+  ["Function constructor without new", 'export const f = () => Function("return process")();'],
+  [".constructor( call chain", 'export const f = () => (() => 1).constructor("return process")();'],
+  ["constructor.constructor chain", 'export const f = (x) => x.constructor.constructor("return process")();'],
+  ["computed constructor call", 'export const f = (x) => x["constructor"]("return process")();'],
+];
+
+for (const [name, source] of EVAL_ROUTES) {
+  test(`AC-3j-4: the env-read scan flags this ambient code-eval route: ${name}`, () => {
+    const sites = scanEnvSites("src/policy/x.ts", source);
+    assert.ok(sites.some((s) => s.includes("|code-eval ")), `expected a code-eval site for: ${name}; got ${JSON.stringify(sites)}`);
+    assert.ok(sites.every((s) => !PINNED_ENV_SITES.has(s)));
+  });
+}
+
+test("AC-3j-4: pure code that merely names a `constructor` member or a `Function` type is not a code-eval site", () => {
+  assert.deepEqual(scanEnvSites("src/policy/x.ts", "export class A { constructor(public n: number) {} }\nexport const t = (f: Function) => f.name;"), []);
+});
+
+const FS_NET_MODULES = ["fs", "fs/promises", "net", "http", "https", "dns", "dns/promises", "dgram", "tls", "http2"];
+for (const m of FS_NET_MODULES) {
+  test(`AC-3j-4: an import of node:${m} in the graph is a site (deny-by-default outside the pinned allow-set): ${m}`, () => {
+    const sites = scanEnvSites("src/policy/x.ts", `import * as m from "node:${m}";\nexport const v = m;`);
+    assert.ok(sites.some((s) => s.includes(`|import node:${m}|`)), JSON.stringify(sites));
+    assert.ok(sites.every((s) => !PINNED_ENV_SITES.has(s)));
+  });
+}
+
+test("AC-3j-4: the fs/net built-in sites pinned today are derived from the real graph and the pinned set contains exactly those", () => {
+  const found = graphEnvSites(realGraph).filter((s) => /\|import node:(fs|net|http|https|dns|dgram|tls|http2)(\/promises)?\|/.test(s));
+  const pinned = [...PINNED_ENV_SITES].filter((s) => /\|import node:(fs|net|http|https|dns|dgram|tls|http2)(\/promises)?\|/.test(s)).sort();
+  assert.deepEqual(found, pinned);
+  assert.ok(found.length > 0, "the graph legitimately imports node:fs today (loader, classification-catalog)");
+  assert.ok(!found.some((s) => /node:(net|http|https|dns|dgram|tls|http2)/.test(s)), "no network module is imported by the graph today");
 });
