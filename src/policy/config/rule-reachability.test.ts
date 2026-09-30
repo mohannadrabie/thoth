@@ -899,7 +899,7 @@ test("R2-24 allow-redirect-soundness-against-the-real-kernel (Issues #338, #340,
     if (errors.length > 0) rejected += 1;
     else loaded += 1;
     if ((errors.length > 0) !== (v4 || v23)) problems.push(`verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)}: check ${errors.length > 0 ? "rejects" : "loads"}, expected ${v4 || v23 ? "a rejection" : "a load"}`);
-    if (errors.length > 1) problems.push(`verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)}: ${String(errors.length)} errors for one target element`);
+    if (errors.length > 1 && !targets.some(failsV2OrV3)) problems.push(`verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)}: ${String(errors.length)} errors for one target element (only V2 and V3 together may speak twice)`);
     if (errors.length > 0 && records.some((r) => decide({ rules: ruleSet(rule), defaultOutcome: "deny" }, r).outcome === "allow")) kernelAllowedAndRejected += 1;
     if (errors.length === 0 && verbs.length > 0 && verbs.every((v) => MARKERS.includes(v)) && targets.some((t) => t.startsWith(MCP_TARGET_PREFIX))) markerOnlyLoaded += 1;
   }

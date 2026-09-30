@@ -28,9 +28,15 @@
 //   3. The shell normalizer's redirect targets share the "mcp/" namespace: it emits a redirect target
 //      verbatim, so a redirect into a directory named "mcp" (any relative path under it, including a dot
 //      or underscore in the second segment, no slash, a trailing slash, deeper nesting) is a REAL emitted
-//      record with a target that looks like an identity target. So an ALLOW rule keyed on identity MUST
-//      also carry the marker verb (only a class record carries one). A deny rule may be target-only: a
-//      match on such a shell record only denies.
+//      record with a target that looks like an identity target and a verb (write). So an ALLOW rule keyed
+//      on an MCP target MUST carry a class marker verb and NO catalog verb (only a class record carries a
+//      marker). Since Issues #338 and #340 the loader ENFORCES this (check V4, allow-redirect, in
+//      src/policy/config/rule-reachability.ts): an allow rule with any target starting with "mcp/" (the
+//      bare prefix included) whose verbs are absent, empty or include a catalog verb is a `schema-invalid`
+//      load error on every layer. A deny rule may be target-only or carry a legacy verb: a match on such a
+//      shell record only denies. MIGRATION for central rule authors: an allow on an MCP target that has
+//      no verbs, or a catalog verb (write and the others), must be rewritten to a marker-only allow (or
+//      point at a filesystem path); the central layer fails the whole load until it is corrected.
 //   4. The rule schema accepts any string, so it cannot see the four natural inert deny shapes: a
 //      misspelled marker; a server target without the trailing slash (the kernel matches a target
 //      exactly unless the pattern ends in "/"); the legacy mutating verbs plus the mcp target prefix;
@@ -41,15 +47,12 @@
 //      holds a class marker and no verb a normalizer emits: markers only (Issue #328, because of fact 3) or
 //      a marker plus a stray verb (S7-C, Issue #334); the kernel needs a shared verb, so only a class record
 //      can match, and none carries such a target. Scope two is an ALLOW rule with no verbs, absent or empty
-//      (S7-C, Issue #335): on such a target it would load and silently widen allow, because the kernel
-//      returns allow for a real shell-emitted redirect record under that path. A target-only or legacy-verb
-//      DENY rule on those targets loads, because it can match a shell-emitted record and only denies more.
-//      Fact 3 still applies to an allow rule keyed on a presentable server target: it must carry the marker
-//      verb (an allow without one is not rejected there, Issue #338). The legacy mutating verbs plus an
-//      MCP target still load and never match a class record (they match only shell-emitted records); PT-12
-//      is satisfied for the marker-
-//      verb shapes only, and this shape is a disclosed residual routed to the activation story
-//      (Issue #329).
+//      (S7-C, Issue #335): it is also rejected by V4 (fact 3). A target-only or legacy-verb DENY rule on
+//      those targets loads, because it can match a shell-emitted record and only denies more. The legacy
+//      mutating verbs plus an MCP target as a DENY still load and never match a class record (they match
+//      only shell-emitted records); PT-12 is satisfied for the marker-verb shapes only, and that deny shape
+//      is a disclosed residual routed to the activation story (Issue #329). The same verbs plus an MCP
+//      target as an ALLOW are rejected by V4.
 //   5. GRAMMAR_VERSION is invisible to out-of-repo (central) rule authors and a rule carries no
 //      version. A bump needs a decisions row and a central-rule migration note.
 //
