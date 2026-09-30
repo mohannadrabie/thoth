@@ -374,22 +374,130 @@ test("AC-7/AC-7c: hooks/pretooluse-kernel-gate.mjs contains exactly ONE renderHo
   );
 });
 
-// Issue #360 / red-team round-3 R3 + round-4 N1, the half AC-9's finite env matrix cannot cover: the
-// hook must not read the environment AT ALL. A structural assertion over an open set, not a finite
-// list of names: every `process` reference is one of the four stream/exit members the hook uses, and
-// there is no route to the environment through globalThis, require or a process module import.
+// Issue #360 / red-team round-3 R3 + round-4 N1, the half AC-9's finite env matrix cannot cover, and
+// Issue #371 (app-security round 4): the hook must not reach the environment, the terminal streams or
+// the sanitizer's own machinery through anything but what it actually uses. WHAT THIS PROVES, exactly,
+// about hooks/pretooluse-kernel-gate.mjs (a source-text check, never a runtime one):
+//   1. Free globals, deny by default (checker-backed, #371): every identifier reference that resolves to
+//      NO declaration in the hook (an ambient/lib global) is in ALLOWED_FREE_GLOBALS, a set pinned by
+//      test to exactly the free globals the real hook uses. Reflect, Object, String, Symbol, RegExp,
+//      Function, eval, globalThis, console and any other ambient name are therefore refused, however
+//      they are spelled or reached, because the check is on the resolved symbol, not on a spelling.
+//   2. `process` is used only as process.stdin / stdout / stderr / exit.
+//   3. No assignment (=, compound, ++/--, delete, destructuring or for-in/of target) whose target is a
+//      member chain rooted at a global, so no global prototype or stream can be patched.
+//   4. No string/template literal equal to "constructor", "prototype" or "__proto__", no computed
+//      property key that is not a plain string/numeric literal, no element access with a non-numeric key.
+//   5. Module specifiers (static import, export ... from, runtime import()) are an exact allow-list.
+// First layer, kept from #370: the named checks below (Function/eval/constructor/require...).
+// NOT proven: runtime behaviour, anything outside this one file (the imported modules are pinned by
+// specifier only), and a global that the hook reaches only through an imported module's exports.
 const ALLOWED_PROCESS_MEMBERS = new Set(["stdin", "stdout", "stderr", "exit"]);
 // Issue #370 adds `Function`, `eval` and `constructor`: each reaches `process` (and so the
 // environment) without naming it, defeating any list of process members or import specifiers.
 const FORBIDDEN_IDENTIFIERS = new Set(["globalThis", "global", "require", "createRequire", "Function", "eval"]);
+/** The free (undeclared, ambient) globals the real hook references, derived by a script over the real
+ * hook and pinned here; a test proves the set is exactly what the hook uses, so it cannot silently grow. */
+const ALLOWED_FREE_GLOBALS: ReadonlySet<string> = new Set(["Error", "JSON", "Promise", "process", "undefined"]);
+const FORBIDDEN_KEY_STRINGS = new Set(["constructor", "prototype", "__proto__"]);
 // Exact ALLOW-LIST of module specifiers (Issue #370 residual): the hook's own two node built-ins and
 // its 6 pinned Promise.all imports. Anything else (node:vm, node:child_process, node:worker_threads,
 // node:fs, a project module outside the six) is refused, whether static, re-exported or runtime.
 const ALLOWED_SPECIFIERS: ReadonlySet<string> = new Set(["node:path", "node:url", ...PROMISE_ALL_SHAPE.flatMap((e) => (e.specifier === undefined ? [] : [e.specifier]))]);
 
-/** Every way this source could reach the environment, one line each; empty when it cannot. */
+/** True when `id` is in a position that REFERENCES a value binding (as opposed to naming a property,
+ * a key, a label or a meta-property, which never resolve through scope). */
+function isValueReference(id: ts.Identifier): boolean {
+  const p = id.parent;
+  if (ts.isPropertyAccessExpression(p) && p.name === id) return false;
+  if (ts.isQualifiedName(p) && p.right === id) return false;
+  if (ts.isPropertyAssignment(p) && p.name === id) return false;
+  if (ts.isBindingElement(p) && p.propertyName === id) return false;
+  if (ts.isMetaProperty(p)) return false;
+  if ((ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p) || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) && p.name === id) return false;
+  if ((ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) && p.label === id) return false;
+  return true;
+}
+
+/** True when the value `id` references has NO declaration in this file (an ambient/lib global,
+ * including `undefined`, whose checker symbol carries no declarations). */
+function isFreeGlobal(id: ts.Identifier, checker: ts.TypeChecker, sourceFile: ts.SourceFile): boolean {
+  const symbol = ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id ? checker.getShorthandAssignmentValueSymbol(id.parent) : checker.getSymbolAtLocation(id);
+  // In a JS file the binder turns `process.x = 1` or `Obj.a.b = 1` into an "expando" declaration whose
+  // node is the root Identifier itself, which would make the ambient global look declared in-file. Only
+  // a real binding form counts as a declaration (a whitelist, so an unrecognised kind is not trusted).
+  const isBindingDeclaration = (d: ts.Declaration): boolean =>
+    ts.isVariableDeclaration(d) ||
+    ts.isParameter(d) ||
+    ts.isBindingElement(d) ||
+    ts.isFunctionDeclaration(d) ||
+    ts.isFunctionExpression(d) ||
+    ts.isClassDeclaration(d) ||
+    ts.isClassExpression(d) ||
+    ts.isImportClause(d) ||
+    ts.isImportSpecifier(d) ||
+    ts.isNamespaceImport(d);
+  return symbol === undefined || !(symbol.declarations ?? []).some((d) => d.getSourceFile() === sourceFile && isBindingDeclaration(d));
+}
+
+/** Every value reference in `sourceFile` that resolves to a free global, in source order. */
+function freeGlobalReferences(sourceFile: ts.SourceFile): ts.Identifier[] {
+  const checker = CHECKERS.get(sourceFile);
+  assert.ok(checker, "source file was not parsed through parseWithChecker");
+  const out: ts.Identifier[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && isValueReference(node) && isFreeGlobal(node, checker, sourceFile)) out.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return out;
+}
+
+/** `expr` with any wrapping parentheses removed. */
+function unparen(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+}
+
+/** The expressions an assignment-like node writes to (destructuring patterns flattened). */
+function assignmentTargets(node: ts.Node): ts.Expression[] {
+  const out: ts.Expression[] = [];
+  const collect = (expr: ts.Expression): void => {
+    const e = unparen(expr);
+    if (ts.isArrayLiteralExpression(e)) {
+      for (const el of e.elements) collect(ts.isSpreadElement(el) ? el.expression : el);
+    } else if (ts.isObjectLiteralExpression(e)) {
+      for (const prop of e.properties) {
+        if (ts.isPropertyAssignment(prop)) collect(prop.initializer);
+        else if (ts.isShorthandPropertyAssignment(prop)) out.push(prop.name);
+        else if (ts.isSpreadAssignment(prop)) collect(prop.expression);
+      }
+    } else if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      collect(e.left);
+    } else {
+      out.push(e);
+    }
+  };
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) collect(node.left);
+  else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) collect(node.operand);
+  else if (ts.isDeleteExpression(node)) collect(node.expression);
+  else if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) collect(node.initializer);
+  return out;
+}
+
+/** The identifier at the root of a member chain (`a.b[c].d` -> `a`), or undefined when the root is not an identifier. */
+function memberChainRoot(expr: ts.Expression): ts.Identifier | undefined {
+  let e: ts.Expression = unparen(expr);
+  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isNonNullExpression(e)) e = unparen(e.expression);
+  return ts.isIdentifier(e) ? e : undefined;
+}
+
+/** Every way this source could reach the environment, or patch a global, one line each; empty when it cannot. */
 function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
   const found: string[] = [];
+  const checker = CHECKERS.get(sourceFile);
+  if (!checker) return ["internal: the source file was not parsed through parseWithChecker"];
   const where = (node: ts.Node): string => `line ${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}`;
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -402,6 +510,26 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
       if (!isPropertyName && FORBIDDEN_IDENTIFIERS.has(node.text)) found.push(`${where(node)}: forbidden identifier \`${node.text}\``);
       // `constructor` in ANY position: a property access (`x.constructor`), a destructured key, a name.
       if (node.text === "constructor") found.push(`${where(node)}: \`constructor\` reference (reaches Function without naming it)`);
+      // #371 layer 1: deny by default on free globals, by resolved symbol rather than by spelling.
+      if (isValueReference(node) && isFreeGlobal(node, checker, sourceFile) && !ALLOWED_FREE_GLOBALS.has(node.text)) {
+        found.push(`${where(node)}: free global \`${node.text}\` is not on the allow-set of globals the hook uses (${[...ALLOWED_FREE_GLOBALS].join(", ")})`);
+      }
+    }
+    // #371: a string or template literal that IS a dangerous key name, wherever it appears (a call
+    // argument, a quoted destructuring key, a template key).
+    if (ts.isStringLiteralLike(node) && FORBIDDEN_KEY_STRINGS.has(node.text)) {
+      found.push(`${where(node)}: string "${node.text}" (a key that reaches Function or the prototype chain)`);
+    }
+    // #371: a computed property key must be a plain string or numeric literal; anything else cannot be
+    // proven not to spell "constructor".
+    if (ts.isComputedPropertyName(node) && !ts.isStringLiteralLike(node.expression) && !ts.isNumericLiteral(node.expression)) {
+      found.push(`${where(node)}: computed property key that is not a plain literal (cannot be proven not to spell "constructor")`);
+    }
+    // #371: no write (=, compound, ++/--, delete, destructuring, for-in/of target) to a member chain
+    // rooted at a global, and no write to a global itself.
+    for (const target of assignmentTargets(node)) {
+      const root = memberChainRoot(target);
+      if (root !== undefined && isFreeGlobal(root, checker, sourceFile)) found.push(`${where(node)}: write to \`${root.text}\` or a member of it (a global cannot be patched)`);
     }
     // Any element access other than a plain numeric literal index: `x["constructor"]` and
     // `x["con" + "structor"]` both spell a property name the identifier scan cannot see.
@@ -430,6 +558,12 @@ function findEnvironmentAccess(sourceFile: ts.SourceFile): string[] {
   visit(sourceFile);
   return found;
 }
+
+test("AC-3f (#371): the allow-set of free globals is EXACTLY the set of free globals the real hook uses — it cannot silently grow (a new global is added here in a reviewed change, never inherited)", () => {
+  const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
+  const used = [...new Set(freeGlobalReferences(parseWithChecker("pretooluse-kernel-gate.mjs", hook)).map((id) => id.text))].sort();
+  assert.deepEqual(used, [...ALLOWED_FREE_GLOBALS].sort());
+});
 
 test("AC-3: hooks/pretooluse-kernel-gate.mjs contains no process.env access and no route to the environment — the open set AC-9's finite env matrix cannot cover", () => {
   const hook = readFileSync(path.join(REPO_ROOT, "hooks", "pretooluse-kernel-gate.mjs"), "utf8");
