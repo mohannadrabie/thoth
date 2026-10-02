@@ -1,7 +1,7 @@
 // Story H (#308 X-11, PRINCIPLES rule 2: a block names its unlock): the CLOSED table that maps a gate failure
 // to the fixed text naming its real unlock. Pure: no imports, no node:*, nothing from config/ (G15). Both
-// consumers (decide-tool-call.ts for a policy-load refusal, the hook through render-hook-output.ts for a
-// catalog failure) read this one module, so there is exactly one table.
+// consumers (decide-tool-call.ts for a policy-load refusal, the hook through decide-tool-call.ts's re-export of
+// hookFailureUnlock, i.e. the `gate` namespace, for a catalog failure) read this one module, so there is exactly one table.
 //
 // CLOSED: a key outside the table (a layer, a kind or an error name this module does not list) never selects
 // text and is never reflected; it maps to GENERIC_UNLOCK (and prints as `unknown` where a name is shown).
@@ -12,8 +12,9 @@
  * `UNLOCK` literal (the hook must print it with no module loaded); a test asserts the two are equal. */
 export const GENERIC_UNLOCK = "Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout).";
 
-/** The error name the hook's `loadCatalog` port throws for ANY catalog or fixture failure (letters only, at
- * most 40, so the hook's stderr name filter accepts it). The original message and cause are dropped. */
+/** The error name classification-catalog.ts throws for ANY catalog, fixture or built-in layer failure (letters
+ * only, at most 40, so the hook's stderr name filter accepts it). The original message and cause are KEPT on the
+ * error (print-cli and sessionstart print them); only the hook's stderr is filtered to this name. */
 export const CATALOG_FAILURE_ERROR_NAME = "ClassificationCatalogError";
 
 const CATALOG_UNLOCK = "Unlock: a human must fix the tool classification file through a reviewed pull request; retrying will not help.";

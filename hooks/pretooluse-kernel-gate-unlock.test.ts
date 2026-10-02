@@ -8,6 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { loadBuiltinToolClassificationLayer } from "../src/policy/tools/builtin-tool-inventory.ts";
 import { createGateSandbox, denyReason, describeRun, firstCommittedEntryName, readCommittedFixture, type GateRun, type GateSandbox } from "./test-support/gate-sandbox.ts";
 
@@ -95,4 +96,13 @@ test("H4b-unknown-error-name-falls-back-to-generic (hook level): an unparseable 
   assert.equal(run.stdout, "");
   assert.match(run.stderr, /Unlock: retry the call; if it fails again a human must repair the gate hook/);
   assert.doesNotMatch(run.stderr, /classification file/);
+});
+
+test("H1e-builtin-inventory-failure-prints-classification-file-unlock: a corrupt and a missing built-in inventory (temp copy) print the catalog unlock, exit 2, stdout empty", () => {
+  const corrupt = createGateSandbox();
+  fs.writeFileSync(path.join(corrupt.root, "docs", "qa", "tool-inventory.json"), "{ not json", "utf8");
+  assertCatalogUnlock(corrupt.mcp(firstCommittedEntryName(), "x"), "corrupt built-in inventory");
+  const missing = createGateSandbox();
+  fs.rmSync(path.join(missing.root, "docs", "qa", "tool-inventory.json"));
+  assertCatalogUnlock(missing.mcp(firstCommittedEntryName(), "x"), "missing built-in inventory");
 });
