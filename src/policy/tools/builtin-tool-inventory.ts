@@ -92,7 +92,36 @@ const CLASSIFICATION: Readonly<Record<string, ToolClass>> = Object.freeze({
   MultiEdit: "workspace-mutating",
   NotebookEdit: "workspace-mutating",
   Task: "workspace-mutating", // delegates to a subagent; conservative (SUR-14 governs its own grant)
+  // Added by #308 story C (2026-10-02) for the names the live init event lists that were not vendored. Judgment calls, same
+  // disclosure as above; where ambiguous the higher bucket is chosen. Evidence for rows marked "init event" is the name only.
+  ToolSearch: "read-only", // returns schemas of deferred tools; no side effect itself (the gate, not this class, bounds the tools it exposes)
+  ListAgents: "read-only", // lists agents
+  CronList: "read-only", // lists scheduled jobs
+  TaskOutput: "read-only", // successor of BashOutput: reads a background task's output
+  ListMcpResourcesTool: "read-only", // runtime spelling of ListMcpResources
+  ReadMcpResourceTool: "read-only", // runtime spelling of ReadMcpResource
+  ReadMcpResourceDirTool: "read-only", // directory form of the same read
+  PowerShell: "workspace-mutating", // same as Bash; AP-12 named, never read-only
+  Skill: "workspace-mutating", // same as SlashCommand; AP-12 named
+  Workflow: "workspace-mutating", // runs multi-step agent work; AP-12 named
+  CronCreate: "workspace-mutating", // schedules future prompt execution; AP-12 named
+  CronDelete: "workspace-mutating", // removes a schedule
+  ScheduleWakeup: "workspace-mutating", // schedules a session wake-up
+  Monitor: "workspace-mutating", // streams a background command's output, so it runs a command
+  TaskStop: "workspace-mutating", // successor of KillShell: terminates a task
+  EnterWorktree: "workspace-mutating", // creates and switches a git worktree
+  ExitWorktree: "workspace-mutating", // leaves, may remove, a worktree
+  RemoteTrigger: "remote-mutating", // triggers a remote agent run; AP-12 named
+  PushNotification: "remote-mutating", // sends a notification off the machine
+  SendMessage: "remote-mutating", // ambiguous recipient (agent or external), so the higher bucket
+  Artifact: "remote-mutating", // creates or edits a hosted artifact
+  DesignSync: "remote-mutating", // syncs designs to a remote service; semantics not verified (init event is the only evidence)
+  ReportFindings: "remote-mutating", // ambiguous destination, so the higher bucket (init event is the only evidence)
 });
+
+/** The set of names this file classifies, read-only, so a test can check it against the vendored inventory in both
+ * directions (a dead entry is as much a drift signal as a missing one). */
+export const CLASSIFICATION_NAMES: ReadonlySet<string> = new Set(Object.keys(CLASSIFICATION));
 
 /**
  * Builds the real "shipped defaults" ToolClassificationSet from the vendored inventory, applying
