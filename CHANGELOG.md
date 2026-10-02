@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story A (AP-7: THOTH-ADR-0003, proposed)
+
+CRITICAL tier (policy delivery). Docs only; no code or test changed. Refs #308.
+
+- `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md` (new, status `proposed`, awaiting the human's acceptance): amends THOTH-ADR-0001 in part. The classification fixture is a PreToolUse gate input; rule 5 (halt-state path) binds SessionStart only; tests derive entry names at run time; the no-hardcode rule is narrowed, not dropped; `knownConnectors` stays SessionStart-only until #381.
+- Manager recommendation, pending the human's confirmation: an entry or label that places a tool in a gate-allowed class (or otherwise lowers an outcome) needs a fresh dated review report.
+- `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md`: one sentence appended to the Status bullet pointing at THOTH-ADR-0003. No rule changed.
+- Not a submodule change: ADR-0001 is project tier.
+
 ### Changed - Issue #308 story H (X-11: gate failures name their real unlock)
 
 CRITICAL tier (session gate, `hooks/pretooluse-kernel-gate.mjs` and `src/policy/gate/*`). Wording only; nothing is wired, exit codes and stdout polarity are unchanged. Refs #308.
