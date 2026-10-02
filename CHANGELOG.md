@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story G (policy-load recovery runbook, AP-6 row, read-only pre-flight; docs only)
+
+STANDARD tier. No code, hook or settings change. Refs #308.
+
+- `docs/runbooks/policy-load-recovery.md`: out-of-session recovery for a policy that fails to load or loads wrong. Failure table per `reasonKind` x `failedLayer` (row labels diffed against the unions in `loader.ts` by a script), central repair, the schema-valid central typo blast radius (X-12), and the half-provisioned key on a non-English host (X-1, #309). Registry write commands appear only as fenced examples labelled human-only, elevated, out of session.
+- `docs/decisions.md`: AP-6 row for S5 criterion 12 (partly superseded by S7; built-ins stay refused).
+- `docs/reviews/s308-G-preflight-evidence-2026-10-02.md`: raw `npm run policy:print` output against the live source (central `absent`, 0 rules, rc=0) with before/after `git status` and `reg query` proofs; baseline for the rerun owed after stories E and F.
+
 ### Fixed - #338/#340 R2-24 non-canonical-prefix candidates (test-only)
 
 - `src/policy/config/rule-reachability.test.ts`: R2-24 now enumerates non-canonical targets (`MCP/`, `Mcp/standin-x/`, `./mcp/`, `/mcp/`, ` mcp/`) and proves, with an injected case-insensitive kernel matcher, that it fails if the kernel matcher stops being case-sensitive (red-team finding 1, M10); header comments corrected. Refs #338 #340.
