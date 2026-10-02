@@ -62,21 +62,27 @@ PowerShell form (preferred: no cmd escaping, JSON read from a file):
 
 ```powershell
 # human, elevated, out of session
-$json = (Get-Content -Raw -Path .central-policy.min.json).Trim()
-if (-not (Test-Path 'HKLM:SOFTWAREPoliciesThoth')) { New-Item -Path 'HKLM:SOFTWAREPoliciesThoth' -Force | Out-Null }
-Set-ItemProperty -Path 'HKLM:SOFTWAREPoliciesThoth' -Name CentralPolicyJson -Type String -Value $json
+# <OWNER_CONTROLLED_DIR> = an absolute path only the owner can write, outside the repo and outside any user-writable temp folder
+$policyFile = '<OWNER_CONTROLLED_DIR>\central-policy.min.json'
+$json = (Get-Content -Raw -Path $policyFile).Trim()
+if (-not (Test-Path 'HKLM:\SOFTWARE\Policies\Thoth')) { New-Item -Path 'HKLM:\SOFTWARE\Policies\Thoth' -Force | Out-Null }
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Thoth' -Name CentralPolicyJson -Type String -Value $json
 # read back and compare byte for byte against the intended JSON
-$stored = (Get-ItemProperty -Path 'HKLM:SOFTWAREPoliciesThoth').CentralPolicyJson
+$stored = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Thoth').CentralPolicyJson
 if ($stored -ceq $json) { 'MATCH' } else { 'MISMATCH: do not leave this value in place'; Compare-Object $json $stored }
+# only after MATCH: delete the policy file so no stale copy stays on disk
+# Remove-Item -LiteralPath $policyFile
 ```
+
+- Delete `$policyFile` after the read-back prints `MATCH`. Keep it if the output is `MISMATCH`.
 
 `reg add` form (fragile; use only if PowerShell is unavailable). Escape each `"` in the JSON as `\"`. In a `.bat` file double each `%` (`%%`). Interactive `cmd` leaves an undefined `%NAME%` alone, but a `&`, `|`, `<` or `>` after an escaped quote can be read by `cmd` as an operator. Example for `{"version":1,"rules":[]}`:
 
 ```bat
 :: human, elevated, out of session
-reg add "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson /t REG_SZ /d "{\"version\":1,\"rules\":[]}" /f
+reg add "HKLM\SOFTWARE\Policies\Thoth" /v CentralPolicyJson /t REG_SZ /d "{\"version\":1,\"rules\":[]}" /f
 :: read back, then compare the output by eye or with a diff tool against the intended JSON
-reg query "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson
+reg query "HKLM\SOFTWARE\Policies\Thoth" /v CentralPolicyJson
 ```
 
 - A mismatch after either form is a failed repair. Rewrite before leaving the machine.
@@ -88,7 +94,7 @@ Remove the value only with a recorded owner decision:
 
 ```bat
 :: human, elevated, out of session, recorded owner decision required
-reg delete "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson /f
+reg delete "HKLM\SOFTWARE\Policies\Thoth" /v CentralPolicyJson /f
 ```
 
 Remove the whole key (also clears a half-provisioned key). Same consequence and same recorded-decision requirement as removing the value:
