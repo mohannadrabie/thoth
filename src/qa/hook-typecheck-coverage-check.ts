@@ -207,12 +207,16 @@ function tagTarget(tag: ts.JSDocTag, owner: ts.Node, sf: ts.SourceFile): string 
   return "";
 }
 
-/** Every JSDoc type node (any tag, any position, either `@param` order, nested in generics, unions,
- * `@typedef` properties and `@callback` signatures) whose type the CHECKER resolves to `any`, plus any
- * explicit `Object` reference. Spelling-independent by construction: `{?}`, `{*}`, `{any}`, `{"}" | any}`,
- * a type on the next line, an alias, `ReturnType<typeof JSON.parse>` are all just types that resolve to
- * `any`. A flagged `any` node is not descended into, so `{"}" | any}` (a union that absorbs to `any`)
- * is one hit. */
+/** Checks each JSDoc tag's `typeExpression` (any tag carrying one, either `@param` order, including types
+ * nested in generics, unions, `@typedef` properties and `@callback` signatures) and flags every node whose
+ * type the CHECKER resolves to `any` AT THAT NODE, plus any explicit `Object` reference. Because the test is
+ * the resolved type of the node, differing spellings of `any` are caught: `{?}`, `{*}`, `{any}`,
+ * `{"}" | any}`, a type on the next line, an alias that is itself `any`, `ReturnType<typeof JSON.parse>`.
+ * A flagged `any` node is not descended into, so `{"}" | any}` (a union that absorbs to `any`) is one hit.
+ * NOT covered (Backlog chore #378): it does not walk `@template` defaults/constraints or `@extends` /
+ * `@implements` class expressions; it does not see an `any` nested INSIDE a lib or imported alias (for
+ * example `ReturnType<typeof Object.values>`, whose node type is not itself `any`); and it does not flag
+ * `{Function}`. */
 function collectJsdocAnySites(program: ts.Program, sf: ts.SourceFile): JsdocAnyHit[] {
   const checker = program.getTypeChecker();
   const hits: JsdocAnyHit[] = [];
@@ -289,7 +293,12 @@ function scanContextForSource(source: string): ScanContext {
  * named `hook`; (3) an explicit `Object` reference in a JSDoc type: not `any` under strict, so the
  * checker does not subsume it, and it stays a separate type-node-level ban that is never allow-listed.
  *
- * WHAT IT DOES NOT CATCH (recorded residuals): a double cast through `unknown` in runtime-visible code,
+ * WHAT IT DOES NOT CATCH (recorded residuals; the JSDoc-type gaps are tracked in Backlog chore #378):
+ * a `@template` default or constraint and an `@extends` / `@implements` class expression (those type
+ * positions are not walked); an `any` nested inside a lib or imported alias (e.g.
+ * `ReturnType<typeof Object.values>`) since only the node's own resolved type is tested; `{Function}`;
+ * helper modules outside `hooks/*.mjs` (the hook listing is non-recursive); a double cast through
+ * `unknown` in runtime-visible code,
  * for example `/** @type {Foo} *\/ (/** @type {unknown} *\/ (x))`, is a legitimate `unknown` plus a
  * legitimate narrowing and sits outside the JSDoc-`any` class; and a JSDoc block the TypeScript parser
  * does not attach to any node is not compiled either, so it is not seen. Returns one finding per
