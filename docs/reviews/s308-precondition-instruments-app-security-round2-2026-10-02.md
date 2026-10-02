@@ -14,7 +14,7 @@
   - #377b: `void process.env.HOME` inside projectDir: 1 failed. RED.
   - LOW 3: `eval("1")`, `(()=>{}).constructor("return process")()`, `new Function("return process")()` in the graph: each 1 failed. RED.
   - LOW 5: `import "node:net"` / `"node:fs"` added to central-source.ts: each 2 failed (exact-set + fs/net derived pin). RED. Decision sound: fs scanned and its 4 existing importers pinned as allow-set; network built-ins deny-by-default; none imported today; path/url left unscanned (inert) — disclosed.
-  - LOW 4: rogue `src/policy/x/rogue.mts` and `.cjs` carrying a catalog writer: 1 failed (now scanned). A production file importing a file under `test-support/`: 1 failed (import check). RED.
+  - LOW 4: a planted rogue .mts file (hypothetical path under src/policy/x/) and a .cjs one carrying a catalog writer: 1 failed (now scanned). A production file importing a file under `test-support/`: 1 failed (import check). RED.
 - Red-first: the OLD (773fbc2) test files against the #376 literal mutant, the #377 second-env-read mutant and the eval mutant: pass 46 / fail 0 each — i.e. the round-1 gaps were real and the new tests are what turn them red. The builder's commit messages claim this; independently confirmed.
 - Full suite (worktree, 401f719): tests 1799, pass 1797, fail 2, skipped 0. Failures: (1) R4 fresh-clone secret-scan — the known Windows EBUSY flake, tracked in #231, not counted against this story; (2) QA-14 dogfood "ADR-0021 unresolved" — a worktree artifact: the `adr/` submodule is empty in a detached worktree so ADR ids cannot resolve; unrelated to the diff (reference-resolver.test.ts untouched). Not reproduced in the main tree because another build is running there; Manager may confirm there.
 

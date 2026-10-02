@@ -160,3 +160,21 @@
 {"at":"2026-09-30T04:07:35.072Z","event":"tier-ratified","scope":"s338-340-allow-redirect-reject","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"policy delivery; allow-widening control"}
 {"at":"2026-09-30T04:43:30.654Z","event":"severity-triaged","scope":"s361-hooks-typecheck","finding":"#374 MED","decision":"fix-now","reason":"in-scope hidden type error; cheap","_incomplete":"agent,from,to,exposure,basis,category"}
 {"at":"2026-09-30T05:19:04.044Z","event":"tier-ratified","scope":"s308-precondition-instruments","proposed":"CRITICAL","ratified":"STANDARD","changed":"true","reason":"test-only instruments S1/S3/S4; no runtime change"}
+{"at":"2026-10-02T18:19:20.545Z","event":"receipt-reopened","scope":"s361-hooks-typecheck","agent":"app-security","trigger":"suspicions","report":"docs/reviews/s361-hooks-typecheck-app-security"}
+{"at":"2026-10-02T18:19:20.608Z","event":"receipt-reopened","scope":"s361-hooks-typecheck","agent":"cross-domain","trigger":"clean-with-issue","report":"docs/reviews/s361-hooks-typecheck-cross-domain"}
+{"at":"2026-10-02T18:19:20.669Z","event":"receipt-reopened","scope":"s361-hooks-typecheck","agent":"red-team","trigger":"clean-with-issue","report":"docs/reviews/s361-hooks-typecheck-red-team"}
+{"at":"2026-10-02T18:19:20.728Z","event":"receipt-reopened","scope":"s361-hooks-typecheck","agent":"red-team-round2","trigger":"med-no-own-issue","report":"docs/reviews/s361-hooks-typecheck-red-team-round2"}
+{"at":"2026-10-02T18:19:20.793Z","event":"receipt-reopened","scope":"s326-deny-reason-cap","agent":"cross-domain","trigger":"suspicions","report":"docs/reviews/s326-deny-reason-cap-cross-domain"}
+{"at":"2026-10-02T18:19:20.854Z","event":"receipt-reopened","scope":"s326-deny-reason-cap","agent":"red-team","trigger":"clean-with-issue","report":"docs/reviews/s326-deny-reason-cap-red-team"}
+{"at":"2026-10-02T18:19:20.918Z","event":"receipt-reopened","scope":"s320-probe-node-version","agent":"cross-domain","trigger":"suspicions","report":"docs/reviews/s320-probe-node-version-cross-domain"}
+{"at":"2026-10-02T18:19:20.983Z","event":"receipt-reopened","scope":"s320-probe-node-version","agent":"code-review","trigger":"not-matched-by-checker","report":"docs/reviews/s320-probe-node-version-code-review"}
+{"at":"2026-10-02T18:19:21.072Z","event":"receipt-reopened","scope":"s338-340-allow-redirect-reject","agent":"cross-domain","trigger":"checksum","report":"docs/reviews/s338-340-allow-redirect-reject-cross-domain"}
+{"at":"2026-10-02T18:19:21.136Z","event":"receipt-reopened","scope":"s338-340-allow-redirect-reject","agent":"red-team","trigger":"clean-with-issue","report":"docs/reviews/s338-340-allow-redirect-reject-red-team"}
+{"at":"2026-10-02T18:19:21.200Z","event":"receipt-reopened","scope":"s308-precondition-instruments","agent":"app-security","trigger":"conditional-verdict","report":"docs/reviews/s308-precondition-instruments-app-security"}
+{"at":"2026-10-02T18:19:21.265Z","event":"receipt-reopened","scope":"s308-precondition-instruments","agent":"app-security-round2","trigger":"suspicions","report":"docs/reviews/s308-precondition-instruments-app-security-round2"}
+{"at":"2026-10-02T18:19:21.328Z","event":"receipt-reopened","scope":"s308-precondition-instruments","agent":"cross-domain","trigger":"clean-with-issue","report":"docs/reviews/s308-precondition-instruments-cross-domain"}
+{"at":"2026-10-02T18:27:34.962Z","event":"story-shipped","scope":"s361-hooks-typecheck","rounds":"0","reports":"5","findings":"15","adrTokensSaved":"164700","councilFired":"false"}
+{"at":"2026-10-02T18:27:35.061Z","event":"story-shipped","scope":"s326-deny-reason-cap","rounds":"0","reports":"4","findings":"5","adrTokensSaved":"128100","councilFired":"false"}
+{"at":"2026-10-02T18:27:35.173Z","event":"story-shipped","scope":"s320-probe-node-version","rounds":"0","reports":"2","findings":"2","adrTokensSaved":"73200","councilFired":"false"}
+{"at":"2026-10-02T18:27:35.303Z","event":"story-shipped","scope":"s338-340-allow-redirect-reject","rounds":"0","reports":"3","findings":"3","adrTokensSaved":"109800","councilFired":"false"}
+{"at":"2026-10-02T18:27:35.392Z","event":"story-shipped","scope":"s308-precondition-instruments","rounds":"0","reports":"3","findings":"11","adrTokensSaved":"128100","councilFired":"false"}

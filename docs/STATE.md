@@ -1,9 +1,31 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-09-29 (PR #365 MERGED by human decision, ahead of the round-2 re-confirm this file had called for — Issues #362/#363 closed correctly, #360/#361/#366/#367 still OPEN and still need independent re-verification post-merge; repo-wide branch cleanup done, ~90 stale branches removed; CLAUDE.md gained a "Branch discipline" section). Entries below this one are superseded but kept for continuity.
+**Last updated:** 2026-10-02 (S7 close-out: 5 stories SHIPPABLE on branch s7/closeout, not pushed; S7 milestone stays open on human-only #308 items)
 
-## Resume point — 2026-09-29 (newest, final): PR #373 open, #371 and #372 fixed on it; merge is human-only
+## Resume point — 2026-10-02 (newest): S7 close-out branch `s7/closeout` SHIPPABLE, not pushed; push, PR and merge are human-only
+
+- **Branch:** `s7/closeout`, cut from `origin/master` at `f703ed3` (PR #373's merge). Not pushed.
+- **SHIPPABLE stories on the branch (all reviews clean, 0 REWORK rounds, council not fired):**
+
+| Story | Tier | Reviews (final verdicts) | Issues the PR closes |
+|---|---|---|---|
+| #361 hooks into the real typecheck gate, baseline empty | CRITICAL | red-team go x3, app-security APPROVE, cross-domain APPROVE | #361 (#374 already closed) |
+| #326 deny-reason cap (512 per reflected entry) | CRITICAL | red-team go x2, app-security APPROVE, cross-domain APPROVE | #326, #375 |
+| #320 probe row accepts PROCEEDS or BLOCKS | STANDARD | code-reviewer SHIP, cross-domain APPROVE | #320 |
+| #338/#340 V4 rejects allow-on-mcp that can match a redirect | CRITICAL | red-team go, app-security APPROVE, cross-domain APPROVE | #338, #340 |
+| #308 precondition instruments (AC-3j, AP-12, R1-6c) | STANDARD | app-security APPROVE (round 2), cross-domain APPROVE | #376, #377 (Refs #308; #308 stays open) |
+
+- **Verify (Manager, quiet tree, 2026-10-02):** build, typecheck and lint rc=0. Every `qa:*` gate rc=0; four are disclosed vacuous passes. Full suite 1799/1799, 0 fail, 0 skipped. Linux CI on master green at `f703ed3`.
+- **Known Windows flakes (not this diff):** pre-commit-scan R4 EBUSY (#231) and the gate-latency p99 under parallel load. Each passes alone.
+- **Rulings this session (human pre-approved the Manager's recommendations):** #338/#340 reject; #325 closed; #355 re-homed to #308 and closed; #374 closed with a ruled residual (Backlog #378). See `docs/decisions.md` 2026-09-30 and 2026-10-02 rows.
+- **Pending human ratification:** the SE ADR-0010 exception for the 8 pinned JSDoc-`any` hook sites (decisions row 2026-10-02). `humanRulingRequired: true` in state.
+- **S7 milestone stays open.** #308 needs human-only items: AP-7 (THOTH-ADR-0001 amendment), AP-3 (connector ruling), AP-2 (inventory re-vendor), AP-11 (bypass mode), live-runtime measurements, the AP-9 pre-flight of the live central source, Q5 (English-only Windows activation), and the S12 wiring approval. #93 and #288 close with #308. #107 waits for a non-English sample or the 2026-10-24 backstop. Plan: `docs/plans/s308-activation-phase1-2026-09-30.md`.
+- **Still human-only / held:** `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5` (empty folders from an earlier session).
+
+**Single next action:** push `s7/closeout` and open its PR (body: `Closes #361 #326 #375 #320 #338 #340 #376 #377`, `Refs #308`), merge after CI is green, and ratify or reject the SE ADR-0010 exception row.
+
+## Prior entry (superseded above): 2026-09-29: PR #373 open, #371 and #372 fixed on it; merge is human-only
 
 - **PR #373** (`review/365-post-merge-reconfirm` → `master`), opened by the human. Its body closes #360, #367, #368, #369, #370, #371 and #372; refs #325.
 - **#371 and #372 fixed before merge (human ruled fix-now):** the AC-3 environment guard is now deny-by-default. Free globals are limited to a pinned allow-set, dangerous names are banned in every position, member writes must be on a pinned allow-list (empty for the real hook), and allowed globals cannot be aliased. App-security round 6 `APPROVE`; reports `docs/reviews/s312-fixnow-360-363-app-security-round{5,6}-reconfirm-2026-09-29.md`.
