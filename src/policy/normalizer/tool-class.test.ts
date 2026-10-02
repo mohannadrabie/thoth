@@ -129,53 +129,31 @@ test("N4: charset admission (PT-13 ruling): only names solely [A-Za-z0-9-] are a
   };
   assert.deepEqual([...buildServerIndex(mixed).byName.keys()], ["central-one"]);
 
-  // the REAL committed fixture: see realFixtureProblems (derived from the file, not typed)
+  // the REAL committed fixture: every entry admitted, nothing rejected (derived from the file, not typed).
+  // RESTORED 2026-10-02 (Issue #308 story C, Issue #385, recorded act under SE ADR-0005; docs/decisions.md row
+  // 2026-10-02 "#308 stories C and H: connector labels dropped (human)" item (1)): the earlier narrowing that allowed
+  // the 8 connector labels is reverted together with the labels; the original assertion stands.
   assert.deepEqual(realFixtureProblems(readFileSync(FIXTURE_PATH, "utf8")), []);
 });
 
-// REPLACED 2026-10-02 (Issue #308 story C, recorded act under SE ADR-0005; docs/decisions.md row 2026-10-02 "#308
-// story C: locked test N4 replaced as a recorded act"). The last block of N4 used to require an empty `rejected` list.
-// The human's AP-3 form (a) ruling adds the 8 knownConnectors as INERT `remote-mutating` entries whose display names
-// fail ADMISSIBLE_SERVER_NAME by design (Issue #381 tracks widening). The replacement is tighter than "allow some":
-// `rejected` must equal EXACTLY the fixture's knownConnectors set, each rejected entry must be `remote-mutating`, and
-// each must carry the INERT / #381 note; any other inadmissible name, or any other entry left unadmitted, fails.
 function realFixtureProblems(json: string): string[] {
   const fixture = parseCentralClassificationFixture(json);
-  const rawTools = (JSON.parse(json) as { centralLayer: { tools: Array<{ name: string; note?: unknown }> } }).centralLayer.tools;
   const merged = mergeToolClassificationLayers(loadBuiltinToolClassificationLayer(), fixture.centralLayer);
-  const index = buildServerIndex(merged);
-  const out: string[] = [];
-  const connectors = new Set(fixture.knownConnectors);
-  const rejectedNames = new Set(index.rejected.map((r) => r.name));
-  for (const name of rejectedNames) if (!connectors.has(name)) out.push(`inadmissible name that is not a knownConnector: ${JSON.stringify(name)}`);
-  for (const name of connectors) if (!rejectedNames.has(name)) out.push(`knownConnector not rejected (admitted, or missing from centralLayer.tools): ${JSON.stringify(name)}`);
-  for (const t of fixture.centralLayer.tools) {
-    if (!rejectedNames.has(t.name)) continue;
-    if (t.class !== "remote-mutating") out.push(`rejected entry ${JSON.stringify(t.name)} has class ${t.class}, not remote-mutating`);
-    const note = rawTools.find((r) => r.name === t.name)?.note;
-    if (typeof note !== "string" || !note.includes("INERT") || !note.includes("#381")) out.push(`rejected entry ${JSON.stringify(t.name)} lacks the INERT / #381 note`);
-  }
-  const admittedCount = fixture.centralLayer.tools.filter((t) => !rejectedNames.has(t.name)).length;
-  if (index.byName.size !== admittedCount) out.push(`admitted ${String(index.byName.size)} entries, expected ${String(admittedCount)}`);
+  const real = buildServerIndex(merged);
+  const out: string[] = real.rejected.map((r) => `inadmissible name in the committed fixture: ${JSON.stringify(r.name)}`);
+  if (real.byName.size !== fixture.centralLayer.tools.length) out.push(`admitted ${String(real.byName.size)} of ${String(fixture.centralLayer.tools.length)} entries`);
   return out;
 }
 
-test("N4 negative controls: an extra inadmissible name, a read-only connector entry, a connector without the note, and an unlisted connector label each fail", () => {
+test("N4 negative control: an injected inadmissible name in the fixture is flagged", () => {
   const json = readFileSync(FIXTURE_PATH, "utf8");
   assert.deepEqual(realFixtureProblems(json), [], "the real fixture is clean");
-  const mutate = (f: (d: { centralLayer: { tools: Array<Record<string, unknown>> }; knownConnectors: string[] }) => void): string => {
-    const d = JSON.parse(json) as { centralLayer: { tools: Array<Record<string, unknown>> }; knownConnectors: string[] };
-    f(d);
-    return JSON.stringify(d);
-  };
-  const extra = realFixtureProblems(mutate((d) => d.centralLayer.tools.push({ name: "stray name", class: "remote-mutating", note: "INERT #381" })));
-  assert.ok(extra.some((l) => l.includes("not a knownConnector")), extra.join("; "));
-  const lowered = realFixtureProblems(mutate((d) => { const t = d.centralLayer.tools.find((x) => d.knownConnectors.includes(x.name as string)); if (t) t.class = "read-only"; }));
-  assert.ok(lowered.some((l) => l.includes("not remote-mutating")), lowered.join("; "));
-  const noNote = realFixtureProblems(mutate((d) => { const t = d.centralLayer.tools.find((x) => d.knownConnectors.includes(x.name as string)); if (t) t.note = "plain"; }));
-  assert.ok(noNote.some((l) => l.includes("INERT")), noNote.join("; "));
-  const unlisted = realFixtureProblems(mutate((d) => { d.knownConnectors.push("claude.ai Not Labelled"); }));
-  assert.ok(unlisted.some((l) => l.includes("knownConnector not rejected")), unlisted.join("; "));
+  for (const bad of ["claude.ai Gmail", "stray name", "under_score"]) {
+    const d = JSON.parse(json) as { centralLayer: { tools: Array<Record<string, unknown>> } };
+    d.centralLayer.tools.push({ name: bad, class: "remote-mutating" });
+    const problems = realFixtureProblems(JSON.stringify(d));
+    assert.ok(problems.some((l) => l.includes(JSON.stringify(bad))), `${bad}: ${problems.join("; ")}`);
+  }
 });
 
 test("N4b: an unlisted server cannot inherit an entry (PT-13): runtime names generated by the sanitizer from space, dot and colon variants of a declared name are unresolved; a name mixing capitals and underscores is rejected and reported", () => {

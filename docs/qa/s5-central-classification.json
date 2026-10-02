@@ -2,7 +2,7 @@
   "version": "0.2.0-mo-dev-stopgap",
   "notes": [
     "This fixture is the single source of truth for both allowlists below: the ONLY place either may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure.",
-    "There is no expiry date, and only one narrow test reads this file's contents (src/policy/tools/connector-labels.test.ts: every knownConnectors entry has a remote-mutating label; names read from this file at run time, none typed): entries apply until removed, and the PR diff of this file is the review. Adding a name to either list silently suppresses that name's SUR-03 halt at the next SessionStart. Standing exception recorded in docs/adr/ (project-tier ADR) and docs/decisions.md's 2026-09-19 row.",
+    "There is no expiry date and no test that pins this file's contents: entries apply until removed, and the PR diff of this file is the review. Adding a name to either list silently suppresses that name's SUR-03 halt at the next SessionStart. Standing exception recorded in docs/adr/ (project-tier ADR) and docs/decisions.md's 2026-09-19 row.",
     "centralLayer.tools[].class is rule data since S7 (GitHub Issue #93): the tool-class normalizer turns an entry's class into a marker verb a central or project rule can match, for MCP tool calls whose server name consists solely of [A-Za-z0-9-]. The kernel-gate hook that runs it is built but NOT WIRED and no shipped rule matches a class yet (baseline allow content is an activation precondition), so today a class drives no live enforcement decision. Classifying a tool here also removes it from SUR-03's unclassified/halt set.",
     "knownConnectors is a pure display-name string match against ~/.claude.json's claudeAiMcpEverConnected array -- spoofable in principle, NOT a real security control (GitHub Issue #90). A connector renamed, or a new connector named identically to an entry, defeats it completely. It stands only on the human's explicit acceptance of that risk, until an out-of-repo classification source ships (Issue #224)."
   ],
@@ -13,15 +13,7 @@
       { "name": "aws-knowledge-mcp-server", "class": "remote-mutating", "note": "network egress (AWS docs/knowledge lookup); no remote-read-only bucket exists" },
       { "name": "aws-api-mcp-server", "class": "remote-mutating", "note": "executes AWS API/CLI calls against real resources" },
       { "name": "terraform", "class": "remote-mutating", "note": "can plan/apply real infrastructure changes" },
-      { "name": "playwright", "class": "remote-mutating", "note": "drives a browser against live web pages; network egress" },
-      { "name": "claude.ai Gmail", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Excalidraw", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Google Drive", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Google Calendar", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Adobe for creativity", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Canva", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Spotify", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" },
-      { "name": "claude.ai Claude Docs", "class": "remote-mutating", "note": "claude.ai connector, INERT under grammar v1: a server name must match [A-Za-z0-9-]+ and connectors arrive as claude_ai_<Name>, so calls stay opaque and POL-05-denied once wired; widening is Issue #381" }
+      { "name": "playwright", "class": "remote-mutating", "note": "drives a browser against live web pages; network egress" }
     ]
   },
   "knownConnectors": [
