@@ -5,7 +5,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 ## Resume point — 2026-10-02 (newest): #308 stories G, C, H SHIPPABLE on `s308/activation`, not pushed
 
-- **Branch:** `s308/activation`, cut from `origin/master` at `9d2e412` (PR #380's merge). 29 commits, not pushed, no PR yet.
+- **Branch:** `s308/activation`, cut from `origin/master` at `9d2e412` (PR #380's merge). Pushed; PR #389 (merge is human-only).
 - **Breakdown:** `docs/plans/s308-activation-phase0-2026-10-02.md` (stories A to K). Order: G, C, H done; then A (ADR-0001 amendment draft) and B (live `claude -p` tests) in parallel; then D, E, F, J. K (`.claude/settings.json` wiring) needs its own human approval.
 
 | Story | Tier | Final verdicts | Issues fixed on the branch |
@@ -20,7 +20,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Owed:** pre-flight rerun after stories E and F. The decisions archive sweep (5 rows due) is still deferred (secret-scan path allowlist, as last session).
 - **Still human-only / held:** push `s308/activation` and open the PR; merge; `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5`.
 
-**Single next action:** push `s308/activation` and open its PR; then start a new session with "go on #308" for story A (draft) and story B.
+**Single next action:** merge PR #389 once CI is green; then start a new session with "go on #308" for story A (draft) and story B.
 
 ## Prior entry (superseded above): 2026-10-02: S7 close-out PR #380 (merged as 9d2e412); #308 rulings given
 
