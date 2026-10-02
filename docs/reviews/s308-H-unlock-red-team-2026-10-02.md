@@ -37,7 +37,7 @@ Evidence (mutation applied in the worktree, then reverted):
     node --test src/policy/gate/unlock-text.test.ts hooks/pretooluse-kernel-gate-unlock.test.ts
       src/policy/gate/render-hook-output.test.ts src/policy/tools/*.test.ts hooks/pretooluse-kernel-gate*.test.ts
       -> story-tests-exit=0; tests 142, pass 142, fail 0, skipped 0   (mutant SURVIVES)
-    node --test hooks/zz-redteam-h-proof.test.ts
+    node --test <worktree>/hooks/(red-team scratch proof test, not committed)
       -> pass 8, fail 2: RT-H-4 corrupted built-in inventory; RT-H-5 missing built-in inventory   (mutant KILLED)
 
 Fail-closed is not affected (exit 2 either way): the damage is wording only, so severity is LOW.
@@ -64,7 +64,7 @@ Evidence: story H3 (canary, sandbox root, fixture path, stack-frame marker, `Syn
 - Full suite in worktree: `npm test`: tests 1840, pass 1838, fail 2, skipped 0. Both failures were environmental and re-ran green in isolation: the latency one above, and QA-14 dogfood `reference-resolver.test.ts`, which failed only because the worktree's `adr/` submodule was empty (`adr-entries=0`). After `git submodule update --init adr`: tests 85, pass 85, fail 0, skipped 0.
 - `npm run typecheck`: rc=0. eslint on changed sources: 0 errors.
 
-## Proof tests (scratch, `hooks/zz-redteam-h-proof.test.ts` in the worktree, not committed)
+## Proof tests (scratch proof-test file in the red-team worktree, not committed; copy kept in the session scratchpad)
 
 Run on a3d9d68: tests 10, pass 10, fail 0, skipped 0. Under mutant M1: pass 8, fail 2 (RT-H-4, RT-H-5).
 - RT-H-1 missing fixture (ENOENT) gives the catalog line, exit 2
