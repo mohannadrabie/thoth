@@ -148,7 +148,7 @@ function realFixtureProblems(json: string): string[] {
 test("N4 negative control: an injected inadmissible name in the fixture is flagged", () => {
   const json = readFileSync(FIXTURE_PATH, "utf8");
   assert.deepEqual(realFixtureProblems(json), [], "the real fixture is clean");
-  for (const bad of ["claude.ai Gmail", "stray name", "under_score"]) {
+  for (const bad of ["some.dotted", "stray name", "under_score"]) {
     const d = JSON.parse(json) as { centralLayer: { tools: Array<Record<string, unknown>> } };
     d.centralLayer.tools.push({ name: bad, class: "remote-mutating" });
     const problems = realFixtureProblems(JSON.stringify(d));

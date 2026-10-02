@@ -94,7 +94,7 @@ Commit order inside the story is in section 6.
 | C3b | The seeded mutants stay flagged: Bash/Task lowered, each AP-12 name at read-only in the fixture, unknown class, different casing | Same file, mutants kept unchanged | existing, must stay green |
 | C3c | New mutant: the real built-in layer with `PowerShell` flipped to read-only is flagged | Same file, new test | NEW |
 | C3d | Each AP-12 name is asserted PRESENT in the inventory (not skipped when absent), so a later inventory drop cannot make the assertion vacuous | Same file, `assert.ok(present.length === AP12_NAMED.length)` over the derived list | NEW |
-| C4 | The 8 `knownConnectors` carry class `remote-mutating`, names read from the fixture at run time (Q-C (e)) | NEW `src/policy/tools/connector-labels.test.ts`: for every `knownConnectors` entry assert a matching label entry with class `remote-mutating`; seeded mutant: drop one label, expect failure | NEW, red first. Form depends on Q1 |
+| C4 | The 8 `knownConnectors` carry class `remote-mutating`, names read from the fixture at run time (Q-C (e)) | NEW the connector-labels test (built, then removed with the labels: human ruling, Issue #385): for every `knownConnectors` entry assert a matching label entry with class `remote-mutating`; seeded mutant: drop one label, expect failure | NEW, red first. Form depends on Q1 |
 | C4b | A label cannot lower or collide: the fixture still loads, `assertNoBuiltinClassLowering` passes | Existing `central-classification.test.ts` and `classification-builtin-override.test.ts` | existing |
 | C5 | SessionStart and the gate assemble the same catalog | NEW `src/policy/tools/shared-inventory-agreement.test.ts`: (i) `assembleCatalog(resolveFixtureLocation(repoRoot))` deep-equals `assembleCatalog(moduleRelativeFixtureLocation())`; (ii) every non-`mcp__` inventory name is classified in both catalogs and the classes are equal; (iii) the SessionStart hook run in a sandbox over the real repo reports no unclassified built-in. Seeded mutant: a project-relative fixture with one changed class makes (i) fail | NEW, red first |
 | C6 | Existing classification tests and R1-6c still green | `node --test src/qa/catalog-single-source.test.ts src/policy/tools/*.test.ts hooks/*.test.ts` | existing |
@@ -116,7 +116,7 @@ Commit order inside the story is in section 6.
 
 ## 6. Plan: commits on `s308/activation` (no branch switch; one PR)
 
-1. **Tests first (red):** `vendor-tool-inventory.test.ts` + committed init fixture, `shared-inventory-agreement.test.ts`, `connector-labels.test.ts`, the C2 reverse test. All fail (module absent, labels absent).
+1. **Tests first (red):** `vendor-tool-inventory.test.ts` + committed init fixture, `shared-inventory-agreement.test.ts`, the connector-labels test (removed, Issue #385), the C2 reverse test. All fail (module absent, labels absent).
 2. **Script:** `src/qa/vendor-tool-inventory.ts` + `package.json` script. Tests for C1 go green.
 3. **Re-vendor + classify (one pair):** run the script, commit `docs/qa/tool-inventory.json`; add 25 `CLASSIFICATION` entries and `CLASSIFICATION_NAMES`; add the 8 connector labels. C2, C4, C5 go green; AP-12 tests 2 fails here only if this commit is split, so keep it single.
 4. **Recorded act: tripwire replacement.** Rewrite `arbitrary-exec-classification.test.ts` header and tests per C3 to C3d; add one `docs/decisions.md` row (SE ADR-0005; what changed, why it strengthens). Own commit, not mixed with 3.
