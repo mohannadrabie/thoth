@@ -20,9 +20,9 @@
 //   - the real built-in layer with one of them flipped to read-only is flagged (C3c);
 //   - a classification-less addition of an unknown name still throws (no classified-by-default).
 //
-// ARBITRARY_EXEC is the five AP-12 names PLUS four built-ins this instrument adds on its own judgement
-// (Bash, SlashCommand, Task, Monitor: each runs caller-chosen commands or delegates to an agent that can; Monitor was
-// added 2026-10-02 on the story C app-security review: it streams a background command's output, so it runs one). The
+// ARBITRARY_EXEC is the five AP-12 names PLUS five built-ins this instrument adds on its own judgement
+// (Bash, SlashCommand, Task, Monitor, ScheduleWakeup: each runs caller-chosen commands or delegates to an agent that can; Monitor was
+// added 2026-10-02 on the story C app-security review: it streams a background command's output, so it runs one; ScheduleWakeup added 2026-10-02 on the same review: it schedules a prompt to run later, the same class as CronCreate). The
 // addition is a tightening only; removing a name is a reviewed change. The set is NOT a proof that no
 // other tool can execute arbitrary code (an MCP server tool can; MCP classes come from the fixture).
 //
@@ -37,7 +37,7 @@ import { loadCentralClassificationFixture } from "../policy/tools/central-classi
 import type { ToolClassificationSet } from "../policy/tools/classification.ts";
 
 const AP12_NAMED: readonly string[] = ["PowerShell", "Skill", "Workflow", "CronCreate", "RemoteTrigger"];
-const ADDED_BUILTINS: readonly string[] = ["Bash", "SlashCommand", "Task", "Monitor"];
+const ADDED_BUILTINS: readonly string[] = ["Bash", "SlashCommand", "Task", "Monitor", "ScheduleWakeup"];
 const ARBITRARY_EXEC: ReadonlySet<string> = new Set([...AP12_NAMED, ...ADDED_BUILTINS].map((n) => n.toLowerCase()));
 const KNOWN_CLASSES: ReadonlySet<string> = new Set(["read-only", "workspace-mutating", "remote-mutating"]);
 
@@ -138,10 +138,10 @@ test("AP-12 seeded mutants: a differently cased name and an unknown class are fl
   assert.ok(unknown.some((l) => l.includes("unknown class")), unknown.join("\n"));
 });
 
-test("AP-12 seeded mutant: the REAL built-in layer with each added built-in (Bash, SlashCommand, Task, Monitor) flipped to read-only is flagged", () => {
+test("AP-12 seeded mutant: the REAL built-in layer with each added built-in (Bash, SlashCommand, Task, Monitor, ScheduleWakeup) flipped to read-only is flagged", () => {
   const real = realLayers();
   // the names are listed literally (not ADDED_BUILTINS) so dropping one from that list makes this test fail
-  for (const name of ["Bash", "SlashCommand", "Task", "Monitor"]) {
+  for (const name of ["Bash", "SlashCommand", "Task", "Monitor", "ScheduleWakeup"]) {
     const builtin = asSet(real.builtin.tools.map((t) => (t.name === name ? { name: t.name, class: "read-only" } : t)));
     const found = findReadOnlyArbitraryExec({ builtin, central: real.central, merged: mergeToolClassificationLayers(builtin, real.central) });
     assert.ok(found.some((l) => l.startsWith("builtin: ") && l.includes(name)), `${name}: ${found.join("; ")}`);
