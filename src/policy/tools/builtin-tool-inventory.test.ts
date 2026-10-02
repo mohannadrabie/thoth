@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  CLASSIFICATION_NAMES,
   buildBuiltinToolClassificationLayer,
   loadBuiltinToolClassificationLayer,
   loadBuiltinToolInventory,
@@ -50,4 +51,15 @@ test("loadBuiltinToolClassificationLayer: end-to-end, loads the real file and cl
   const names = layer.tools.map((t) => t.name);
   assert.ok(names.includes("Bash"));
   assert.ok(names.includes("Edit"));
+});
+
+test("C2 reverse: every CLASSIFICATION key is in the vendored inventory (no dead classification entry)", () => {
+  const inv = new Set(loadBuiltinToolInventory().tools);
+  const dead = [...CLASSIFICATION_NAMES].filter((n) => !inv.has(n));
+  assert.deepEqual(dead, []);
+});
+
+test("C2b: ToolSearch is classified read-only (it returns schemas; the gate, not this class, bounds the tools it exposes)", () => {
+  const layer = loadBuiltinToolClassificationLayer();
+  assert.equal(layer.tools.find((t) => t.name === "ToolSearch")?.class, "read-only");
 });
