@@ -31,6 +31,7 @@
     "qa:normalizer-registry-purity": "node src/qa/normalizer-registry-purity-check.ts",
     "qa:gate-command-path": "node src/qa/gate-command-path-check.ts",
     "qa:gate-matcher-drift": "node src/qa/gate-matcher-drift-check.ts",
+    "qa:vendor-tool-inventory": "node src/qa/vendor-tool-inventory.ts",
     "qa:gate-manifest": "node src/qa/gate-manifest-check.ts",
     "qa:gate-latency-budget": "node src/qa/gate-latency-budget-check.ts",
     "qa:hook-typecheck-coverage": "node src/qa/hook-typecheck-coverage-check.ts",

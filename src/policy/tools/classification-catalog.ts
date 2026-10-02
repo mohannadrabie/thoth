@@ -69,6 +69,19 @@ export function moduleRelativeFixtureLocation(): FixtureLocation {
   return { fixtureSource: "module-relative", fixturePath: DEFAULT_FIXTURE_PATH };
 }
 
+/** The error name every catalog or fixture failure carries (story H, #308 X-11): the hook's stderr prints only
+ * this name, and the gate's closed unlock table (src/policy/gate/unlock-text.ts, CATALOG_FAILURE_ERROR_NAME;
+ * a test asserts the two are equal) maps it to the classification-file unlock. The message is unchanged for
+ * the callers that print it (print-cli, sessionstart); it never reaches the gate hook's stderr. */
+export const CATALOG_ERROR_NAME = "ClassificationCatalogError";
+
+export class ClassificationCatalogError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = CATALOG_ERROR_NAME;
+  }
+}
+
 export interface AssembledCatalog {
   builtinLayer: ToolClassificationSet;
   fixture: CentralClassificationFixture;
@@ -107,7 +120,7 @@ export function assertNoBuiltinClassLowering(builtin: ToolClassificationSet, cen
   const also = others.map((e) => `${JSON.stringify(e.name)} (built-in ${String(builtinClass.get(e.name))}, entry ${String(e.class)})`);
   const uncounted = lowering.length - 1 - others.length;
   const alsoText = also.length > 0 ? ` Also lowering: ${also.join("; ")}${uncounted > 0 ? `; and ${String(uncounted)} more` : ""}.` : "";
-  throw new Error(
+  throw new ClassificationCatalogError(
     `fixture entry ${JSON.stringify(first.name)} lowers built-in ${String(builtinClass.get(first.name))} to ${String(first.class)}. ` +
       `Unlock: raise its class or remove the entry from the fixture. A central entry may keep or raise a built-in's class, never lower it.${alsoText} Fixture: ${fixturePath}`,
   );
@@ -117,8 +130,15 @@ export function assertNoBuiltinClassLowering(builtin: ToolClassificationSet, cen
  * built-in's class, and merges them (central wins by name). Throws on a malformed fixture or a
  * lowering entry (never "no fixture found, so exempt everything"). */
 export function assembleCatalog(location: FixtureLocation): AssembledCatalog {
-  const builtinLayer = loadBuiltinToolClassificationLayer();
-  const fixture = loadCentralClassificationFixture(location.fixturePath);
+  let builtinLayer: ToolClassificationSet;
+  let fixture: CentralClassificationFixture;
+  try {
+    builtinLayer = loadBuiltinToolClassificationLayer();
+    fixture = loadCentralClassificationFixture(location.fixturePath);
+  } catch (err) {
+    // A missing, unreadable or malformed built-in layer or fixture: the same typed error, same message.
+    throw new ClassificationCatalogError(err instanceof Error ? err.message : String(err), { cause: err });
+  }
   assertNoBuiltinClassLowering(builtinLayer, fixture.centralLayer, location.fixturePath);
   const merged = mergeToolClassificationLayers(builtinLayer, fixture.centralLayer);
   return { builtinLayer, fixture, merged };

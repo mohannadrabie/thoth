@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - Issue #308 story H (X-11: gate failures name their real unlock)
+
+CRITICAL tier (session gate, `hooks/pretooluse-kernel-gate.mjs` and `src/policy/gate/*`). Wording only; nothing is wired, exit codes and stdout polarity are unchanged. Refs #308.
+
+- `src/policy/gate/unlock-text.ts` (new, pure, no imports): one closed table. `policyLoadUnlock(layer)` for a policy-load refusal, `hookFailureUnlock(errorName)` for the hook's stderr line, `boundedLayerName` / `boundedReasonKind` (a value outside the loader's closed set prints as `unknown`), `GENERIC_UNLOCK` (the old line, byte-identical).
+- Policy-load deny reason now ends with an unlock clause by layer: `project` and `shipped-defaults` (a human corrects that file through a reviewed change), `central` (the central policy owner corrects it outside this session). Unknown layer: generic line.
+- Catalog or classification-fixture failure on an `mcp__` call: stderr names the classification file ("a human must fix the tool classification file through a reviewed pull request; retrying will not help") instead of "retry the call ... Node". `src/policy/tools/classification-catalog.ts` throws a typed `ClassificationCatalogError` at the source (lowering entry, malformed or unreadable fixture, built-in layer); the hook's `loadCatalog` is unchanged (single return) and prints only the error name, so no path or entry name reaches stderr. Any other internal failure keeps the generic line. Design B per the decisions row "#308 stories C and H", item 2.
+- Pins edited as recorded acts (decisions row "#308 remainder: AP-3 form, Phase 1 answers", item 3): `PINNED_PAIRS` in `src/policy/config/hook-import-pins.test.ts` gains one pair, `gate.hookFailureUnlock` (routed through `gate`, so the AC-7 `render` count and the AC-3h / AC-3 / R1-6c pins are untouched); `STORY_TEST_FILES` in `src/policy/gate/gate-structure.test.ts` gains the two new test files.
+- Tests: `src/policy/gate/unlock-text.test.ts`, `hooks/pretooluse-kernel-gate-unlock.test.ts`, and two cases appended to `src/policy/gate/render-hook-output.test.ts`.
+- `docs/runbooks/policy-load-recovery.md`: the quoted deny text and the catalog row now show the new strings.
+
+### Changed - Issue #308 story C (tool inventory re-vendored from the live init event, 23 built-ins classified, AP-12 tripwire replaced)
+
+STANDARD tier. No hook, settings or loader change; nothing is wired, so no live enforcement decision changes. Refs #308.
+
+- `src/qa/vendor-tool-inventory.ts` (new instrument, `npm run qa:vendor-tool-inventory`, not in CI): re-vendors `docs/qa/tool-inventory.json` from the `system`/`init` event of `claude -p`, run from a scratch folder outside the repo. Evidence tier `measured` (Claude Code 2.1.267, win32, permissionMode default). Merge is a union with provenance: `measuredTools` (33), `carriedForward` (9, earlier `derived`). `--from` replays a saved event. Counts (23 new, 9 carried forward, 10 in both) are the script's diff of the capture against the pre-story inventory at commit 82adbe3 (`git show 4459b0c^:docs/qa/tool-inventory.json`, passed with `--inventory <file> --dry-run`); run against the committed inventory it now prints NEW (0). `extractBuiltinNames` refuses any built-in name that is not a plain identifier.
+- `src/qa/fixtures/claude-init-2.1.267.json`: the scrubbed capture the committed inventory is derived from (kept: version, mode, platform, date, non-`mcp__` names; removed: cwd, session id, uuid, apiKeySource, mcp_servers, paths, commands, agents, skills, plugins, model, every `mcp__` name). CI checks the committed inventory against it.
+- `src/policy/tools/builtin-tool-inventory.ts`: 23 new `CLASSIFICATION` entries (higher bucket where ambiguous) and a read-only `CLASSIFICATION_NAMES` export; new reverse test (no dead entry).
+- Connector labels: the 8 `remote-mutating` entries for `knownConnectors` were added and then DROPPED in the same story (human ruling, Issue #385: a project `.mcp.json` server named like a connector became classified and skipped the SUR-03 unclassified-tool halt). `docs/qa/s5-central-classification.json` is unchanged from before the story; the intent moves to Issue #381. N4 in `src/policy/normalizer/tool-class.test.ts` keeps its original empty-`rejected` assertion, plus a negative control.
+- `src/policy/tools/shared-inventory-agreement.test.ts` (new): C5(i)/(ii) check fixture-location agreement only; C5(iii) runs the real SessionStart hook and fails on a catalog-failure or unclassified halt reason, proven by a seeded mutant (Monitor deleted from `CLASSIFICATION` in a temp copy; Issue #386).
+- `src/qa/arbitrary-exec-classification.test.ts`: the absent-and-throws AP-12 tripwire is replaced by presence plus non-read-only for PowerShell, Skill, Workflow, CronCreate, RemoteTrigger, with a seeded mutant per name; `Monitor` joins the exec set (a strengthening, recorded under SE ADR-0005).
+
+### Added - Issue #308 story G (policy-load recovery runbook, AP-6 row, read-only pre-flight; docs only)
+
+STANDARD tier. No code, hook or settings change. Refs #308.
+
+- `docs/runbooks/policy-load-recovery.md`: out-of-session recovery for a policy that fails to load or loads wrong. Failure table per `reasonKind` x `failedLayer` (row labels diffed against the unions in `loader.ts` by a script), central repair, the schema-valid central typo blast radius (X-12), and the half-provisioned key on a non-English host (X-1, #309). Registry write commands appear only as fenced examples labelled human-only, elevated, out of session.
+- `docs/decisions.md`: AP-6 row for S5 criterion 12 (partly superseded by S7; built-ins stay refused).
+- `docs/reviews/s308-G-preflight-evidence-2026-10-02.md`: raw `npm run policy:print` output against the live source (central `absent`, 0 rules, rc=0) with before/after `git status` and `reg query` proofs; baseline for the rerun owed after stories E and F.
+
 ### Fixed - #338/#340 R2-24 non-canonical-prefix candidates (test-only)
 
 - `src/policy/config/rule-reachability.test.ts`: R2-24 now enumerates non-canonical targets (`MCP/`, `Mcp/standin-x/`, `./mcp/`, `/mcp/`, ` mcp/`) and proves, with an injected case-insensitive kernel matcher, that it fails if the kernel matcher stops being case-sensitive (red-team finding 1, M10); header comments corrected. Refs #338 #340.

@@ -21,6 +21,9 @@ import type { VerdictOutcome } from "../kernel/verdict.ts";
 import { normalize } from "../normalizer/registry.ts";
 import type { MergedToolClassificationSet } from "../tools/classification.ts";
 import { routeToolName } from "./tool-routing.ts";
+// Story H: the hook reads the closed error-name to unlock lookup through the `gate` namespace it already imports.
+export { hookFailureUnlock } from "./unlock-text.ts";
+import { boundedLayerName, boundedReasonKind, policyLoadUnlock } from "./unlock-text.ts";
 
 export interface LoadedGatePolicy {
   ok: true;
@@ -83,7 +86,11 @@ export function decideToolCall(input: unknown, ports: GatePorts): GateResult {
 
   const policy = ports.loadPolicy();
   if (!policy.ok) {
-    return refuse("policy-load-failure", `policy load failed: layer ${policy.failedLayer}, kind ${policy.reasonKind}; fail-closed`);
+    // Story H: layer and kind print only from their closed sets (else `unknown`), and the clause names the unlock.
+    return refuse(
+      "policy-load-failure",
+      `policy load failed: layer ${boundedLayerName(policy.failedLayer)}, kind ${boundedReasonKind(policy.reasonKind)}; fail-closed. ${policyLoadUnlock(policy.failedLayer)}`,
+    );
   }
   const record = normalize(route.toolType, built.raw);
   const verdict = decide({ rules: policy.ruleSet, defaultOutcome: policy.defaultOutcome }, record);

@@ -140,3 +140,50 @@ test("G20: renderHookOutput: every odd shape is exit 2 with stderr and no stdout
     assert.ok(out.stderr.trim().length > 0, `shape ${JSON.stringify(shape)}: a stderr message`);
   }
 });
+
+// --- Story H (#308 X-11): the refusal's unlock clause, end to end through decideToolCall and the renderer ---
+// Layers and kinds are derived from the loader's exported enum types (compile-time exhaustive records),
+// never typed by hand as a completeness claim. Server names are stand-ins (G19).
+import { decideToolCall } from "./decide-tool-call.ts";
+import type { GatePorts } from "./decide-tool-call.ts";
+import type { FailedLayerName, LoadFailureReasonKind } from "../config/loader.ts";
+import { GENERIC_UNLOCK, policyLoadUnlock } from "./unlock-text.ts";
+
+const H_LAYERS: Record<FailedLayerName, true> = { central: true, "shipped-defaults": true, project: true };
+const H_KINDS: Record<LoadFailureReasonKind, true> = { "json-parse-error": true, "schema-invalid": true, "read-error": true };
+const H_BASH = { command: "kubectl get pod/x --context=c" };
+
+function failingPorts(failedLayer: unknown, reasonKind: unknown): GatePorts {
+  return {
+    loadPolicy: () => ({ ok: false, failedLayer, reasonKind }) as never,
+    loadCatalog: () => ({ version: "0.0.0-test", tools: [{ name: "standin", class: "read-only", sourceLayer: "central" }] }),
+  };
+}
+function reasonFor(toolName: string, toolInput: unknown, p: GatePorts): string {
+  const out = renderHookOutput(decideToolCall({ tool_name: toolName, tool_input: toolInput, session_id: "h-test" }, p), sanitizeForTerminal);
+  assert.equal(out.exitCode, 0);
+  assert.equal(out.stderr, "");
+  const reason = parsedDeny(out.stdout).permissionDecisionReason;
+  assert.equal(typeof reason, "string");
+  return reason as string;
+}
+
+test("H2b-refusal-unlock-per-layer-and-kind: every failedLayer x reasonKind yields the layer's exact unlock string, for Bash and MCP", () => {
+  const layers = Object.keys(H_LAYERS) as FailedLayerName[];
+  const kinds = Object.keys(H_KINDS) as LoadFailureReasonKind[];
+  console.log(`H2b instrument: ${String(layers.length)} layers x ${String(kinds.length)} kinds x 2 tools derived from the loader's exported types`);
+  for (const layer of layers) {
+    for (const kind of kinds) {
+      const expected = `policy load failed: layer ${layer}, kind ${kind}; fail-closed. ${policyLoadUnlock(layer)}`;
+      assert.equal(reasonFor("Bash", H_BASH, failingPorts(layer, kind)), expected, `Bash ${layer} ${kind}`);
+      assert.equal(reasonFor("mcp__standin__x", {}, failingPorts(layer, kind)), expected, `MCP ${layer} ${kind}`);
+    }
+  }
+});
+
+test("H4-unknown-layer-falls-back-to-generic-and-is-bounded (render level): an out-of-set layer or kind prints as unknown, and nothing hostile is reflected", () => {
+  for (const odd of ["x\u001b[2J", 42, undefined, "Project"]) {
+    assert.equal(reasonFor("Bash", H_BASH, failingPorts(odd, "json-parse-error")), `policy load failed: layer unknown, kind json-parse-error; fail-closed. ${GENERIC_UNLOCK}`);
+    assert.equal(reasonFor("Bash", H_BASH, failingPorts("project", odd)), `policy load failed: layer project, kind unknown; fail-closed. ${policyLoadUnlock("project")}`);
+  }
+});

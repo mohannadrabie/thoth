@@ -84,7 +84,13 @@ const PROJECT_POLICY_PATH = join(HERE, "..", ".thoth", "policy.json");
 
 // PRINCIPLES rule 2: a block names its unlock. Fixed text: it must carry no path, no stack frame and no
 // parser text (the stderr redaction test rejects them), because stderr is a model-visible channel.
+// It is the load-failure fallback (no module is loaded then) and equals GENERIC_UNLOCK in
+// src/policy/gate/unlock-text.ts (a test asserts it). Once the modules load, `unlockFor` picks the text by error name.
 const UNLOCK = "Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout).";
+
+/** Set after the project modules load (story H, #308 X-11): the closed error-name to unlock-text lookup.
+ * @type {((errorName: string) => string) | undefined} */
+let unlockFor;
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -118,7 +124,7 @@ function failClosed(what, err) {
     } catch {
       name = "Error";
     }
-    process.stderr.write(`pretooluse-kernel-gate.mjs: ${what}, fail-closed (exit 2). ${UNLOCK} Error type: ${name}\n`);
+    process.stderr.write(`pretooluse-kernel-gate.mjs: ${what}, fail-closed (exit 2). ${unlockFor?.(name) ?? UNLOCK} Error type: ${name}\n`);
   } finally {
     process.exit(2);
   }
@@ -163,6 +169,8 @@ async function main() {
       import("../src/policy/tools/classification-catalog.ts"),
       import("../src/policy/config/sanitize.ts"),
     ]);
+
+    unlockFor = gate.hookFailureUnlock;
 
     if (raw.trim() === "") {
       throw new Error("empty stdin: no hook payload received at all");
