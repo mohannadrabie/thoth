@@ -1,6 +1,6 @@
 {
-  "scope": "s308-C",
-  "tier": "STANDARD",
+  "scope": "s308-remainder",
+  "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 0,
   "humanRulingRequired": false,
@@ -750,5 +750,6 @@
       "reviewRoundsTotal": 0,
       "last": "built (design B), CRITICAL review dispatched"
     }
-  }
+  },
+  "note_2026_10_02c": "Stories G, C, H SHIPPABLE on s308/activation (not pushed). Next: A draft + B live tests, then D, E, F, J; K human-only."
 }

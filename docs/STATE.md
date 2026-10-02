@@ -1,9 +1,28 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-02 (S7 close-out: 5 stories SHIPPABLE on branch s7/closeout, not pushed; S7 milestone stays open on human-only #308 items)
+**Last updated:** 2026-10-02 (#308 remainder: stories G, C, H SHIPPABLE on `s308/activation`, not pushed; A, B, D, E, F, J next; K held for the human)
 
-## Resume point — 2026-10-02 (newest): S7 close-out PR #380 open, CI green; merge is human-only; #308 rulings given
+## Resume point — 2026-10-02 (newest): #308 stories G, C, H SHIPPABLE on `s308/activation`, not pushed
+
+- **Branch:** `s308/activation`, cut from `origin/master` at `9d2e412` (PR #380's merge). 29 commits, not pushed, no PR yet.
+- **Breakdown:** `docs/plans/s308-activation-phase0-2026-10-02.md` (stories A to K). Order: G, C, H done; then A (ADR-0001 amendment draft) and B (live `claude -p` tests) in parallel; then D, E, F, J. K (`.claude/settings.json` wiring) needs its own human approval.
+
+| Story | Tier | Final verdicts | Issues fixed on the branch |
+|---|---|---|---|
+| G: recovery runbook (`docs/runbooks/policy-load-recovery.md`), read-only pre-flight, AP-6 row | STANDARD | infra-security APPROVE-WITH-CONDITIONS, then REWORK on the fix (stripped registry backslashes), fixed and settled by grep; cross-domain APPROVE-WITH-CONDITIONS, fixed | #382, #383, #384 |
+| C: tool inventory re-vendored from this install (33 measured + 9 carried), AP-12 strengthened, agreement test | STANDARD | app-security APPROVE; cross-domain APPROVE-WITH-CONDITIONS, then re-confirm APPROVE | #385, #386 |
+| H: per-failure unlock wording (closed table, typed `ClassificationCatalogError`) | CRITICAL | red-team go, app-security APPROVE, cross-domain APPROVE | none (LOW fix-now only) |
+
+- **Rulings this session:** AP-1 fallback stays `allow` (human). Connector labels dropped until #381 (human; they were not inert at SessionStart). Q3 closed per-kind unlock map, Q4 #288 disclosure does not bind, H design B, N4 restored (Manager). All in `docs/decisions.md` rows dated 2026-10-02.
+- **Verify (Manager, quiet tree):** build, typecheck, lint rc=0. Every `qa:*` rc=0; five are disclosed vacuous passes (no policy content ships yet). QA-14 diff mode 0 unresolved. Full suite 1840/1841, 0 skipped; the 1 is R4 `EBUSY` on temp-folder cleanup (#231, Windows only). `51a82b0` (one test-list addition) ran its file 18/0/0 after the full run.
+- **Deferred to Backlog:** #381 (grammar for connector names), #387 (re-vendor provenance decay), #388 (other refusals name no unlock). Residuals: transient fixture read error told "retrying will not help" (measure in story B/J); the 9-pair runbook completeness script is not committed.
+- **Owed:** pre-flight rerun after stories E and F. The decisions archive sweep (5 rows due) is still deferred (secret-scan path allowlist, as last session).
+- **Still human-only / held:** push `s308/activation` and open the PR; merge; `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5`.
+
+**Single next action:** push `s308/activation` and open its PR; then start a new session with "go on #308" for story A (draft) and story B.
+
+## Prior entry (superseded above): 2026-10-02: S7 close-out PR #380 (merged as 9d2e412); #308 rulings given
 
 - **Branch:** `s7/closeout`, cut from `origin/master` at `f703ed3` (PR #373's merge). Pushed; PR #380.
 - **SHIPPABLE stories on the branch (all reviews clean, 0 REWORK rounds, council not fired):**
