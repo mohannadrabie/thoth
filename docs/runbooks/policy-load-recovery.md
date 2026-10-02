@@ -7,11 +7,15 @@ Out-of-session repair for a policy that fails to load or loads wrong. Covers the
 - An operator with an elevated shell, working outside any gated Claude Code session.
 - A gated session cannot repair its own policy. It must not try (see "What a session must not do").
 
+> Activation status: the kernel gate hook is not wired into `.claude/settings.json` yet (stories J and K wire it). Until then `npm run policy:print` is the only consumer of the load path. The deny behavior below applies once the gate is wired.
+
 ## Symptom
 
 - Every gated call is denied with category `policy-load-failure`.
 - The deny text reads `policy load failed: layer <failedLayer>, kind <reasonKind>; fail-closed` and names no rule.
+- Today's deny text carries layer and kind only (`src/policy/gate/decide-tool-call.ts`, single `refuse()` site). It has no `Unlock:` clause. Story H changes this text (per-layer unlock, `unknown` for an out-of-set layer or kind).
 - Look the pair up in the failure table below to find the repair owner.
+- A different symptom, stderr `internal exception, fail-closed (exit 2)` on `mcp__` calls only, is the catalog row at the end of the table.
 
 ## Diagnose (read-only, safe in or out of session)
 
@@ -26,15 +30,22 @@ One row per `reasonKind` by `failedLayer` pair. The row labels are checked again
 
 | Pair (kind x layer) | Cause | Repair owner | Repair |
 |---|---|---|---|
-| `json-parse-error` x `central` | `CentralPolicyJson` value is not valid JSON | Central policy owner | Write a corrected value, or remove it. |
-| `schema-invalid` x `central` | Valid JSON, wrong shape, or a rule the load checks reject (for example an allow rule reachable by a shell redirect, Issues #338 and #340) | Central policy owner | Write a corrected value, or remove it. The deny text carries an `Unlock:` clause naming the fix. |
-| `read-error` x `central` | `reg.exe` could not be run, or the read failed with an unclassified error. Includes the half-provisioned key on a non-English host (see below). | Central policy owner | Fix the host or key state, write the value, or remove the key. |
+| `json-parse-error` x `central` | `CentralPolicyJson` value is not valid JSON | Central policy owner | Write a corrected value (see "Central repair"). Removal only with a recorded owner decision. |
+| `schema-invalid` x `central` | Valid JSON, wrong shape, or a rule the load checks reject (for example an allow rule reachable by a shell redirect, Issues #338 and #340) | Central policy owner | Write a corrected value. Removal only with a recorded owner decision. `npm run policy:print` prints the loader message, which carries an `Unlock:` clause naming the fix (`src/policy/config/rule-reachability.ts`). The gate deny text does not carry it today. |
+| `read-error` x `central` | `reg.exe` could not be run, or the read failed with an unclassified error. Includes the half-provisioned key on a non-English host (see below). | Central policy owner | Fix the host or key state and write the value. Removing the key only with a recorded owner decision. |
 | `json-parse-error` x `shipped-defaults` | `src/policy/config/shipped-defaults.json` is not valid JSON | Repo maintainer | Reviewed PR that fixes the file. |
 | `schema-invalid` x `shipped-defaults` | File parses, fails the rule schema or load checks | Repo maintainer | Reviewed PR. The message names the file. |
 | `read-error` x `shipped-defaults` | File missing or unreadable | Repo maintainer | Restore the file from git (reviewed PR if the content changes). |
 | `json-parse-error` x `project` | `.thoth/policy.json` is not valid JSON | Repo maintainer | Reviewed PR that fixes the file. |
 | `schema-invalid` x `project` | File parses, fails the rule schema or load checks | Repo maintainer | Reviewed PR. The message names the file. |
 | `read-error` x `project` | `.thoth/policy.json` missing or unreadable | Repo maintainer | Restore the file from git. |
+| Catalog or classification-fixture failure (not a loader pair) | `docs/qa/s5-central-classification.json` is malformed, or an entry lowers a built-in tool's class. Raised by `assembleCatalog`, which `needsCatalog` routes call for `mcp__` names only | Repo maintainer | Reviewed PR to the classification fixture. |
+
+Catalog row notes:
+
+- Symptom today: stderr `pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2). Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout). Error type: <name>`. Exit code 2.
+- Every `mcp__` call is denied. `Bash` is unaffected: its route has `needsCatalog: false` (`src/policy/gate/tool-routing.ts`), so the catalog is never loaded for it.
+- This text changes with story H (per-kind unlock). Update this row when H merges.
 
 ## Central repair
 
@@ -43,22 +54,44 @@ One row per `reasonKind` by `failedLayer` pair. The row labels are checked again
 - Channel: registry key `HKLM\SOFTWARE\Policies\Thoth`, value `CentralPolicyJson`, type `REG_SZ`.
 - The value is the whole policy as single-line minified JSON.
 - An absent key or value is valid: central contributes zero rules and the load succeeds.
+- Do not loosen the key's ACL (for example, do not grant Users or Authenticated Users write) to get around an access-denied. The key stays writable by administrators only.
 
-Write a corrected value (placeholder, substitute the real minified policy JSON; do not paste secrets):
+Write a corrected value. Preferred repair. Keep the intended policy in a file outside the repo or in a location the owner controls; do not paste secrets.
+
+PowerShell form (preferred: no cmd escaping, JSON read from a file):
+
+```powershell
+# human, elevated, out of session
+$json = (Get-Content -Raw -Path .central-policy.min.json).Trim()
+if (-not (Test-Path 'HKLM:SOFTWAREPoliciesThoth')) { New-Item -Path 'HKLM:SOFTWAREPoliciesThoth' -Force | Out-Null }
+Set-ItemProperty -Path 'HKLM:SOFTWAREPoliciesThoth' -Name CentralPolicyJson -Type String -Value $json
+# read back and compare byte for byte against the intended JSON
+$stored = (Get-ItemProperty -Path 'HKLM:SOFTWAREPoliciesThoth').CentralPolicyJson
+if ($stored -ceq $json) { 'MATCH' } else { 'MISMATCH: do not leave this value in place'; Compare-Object $json $stored }
+```
+
+`reg add` form (fragile; use only if PowerShell is unavailable). Escape each `"` in the JSON as `\"`. In a `.bat` file double each `%` (`%%`). Interactive `cmd` leaves an undefined `%NAME%` alone, but a `&`, `|`, `<` or `>` after an escaped quote can be read by `cmd` as an operator. Example for `{"version":1,"rules":[]}`:
 
 ```bat
 :: human, elevated, out of session
-reg add "HKLM\SOFTWARE\Policies\Thoth" /v CentralPolicyJson /t REG_SZ /d "<minified-policy-json>" /f
+reg add "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson /t REG_SZ /d "{\"version\":1,\"rules\":[]}" /f
+:: read back, then compare the output by eye or with a diff tool against the intended JSON
+reg query "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson
 ```
 
-Remove the value (policy returns to absent):
+- A mismatch after either form is a failed repair. Rewrite before leaving the machine.
+- A value that matches but is the wrong policy is the X-12 case (next sections).
+
+Remove the value only with a recorded owner decision:
+
+> Removing `CentralPolicyJson` drops ALL central rules. The load succeeds with zero central rules and every session on the machine falls back to shipped-defaults, project rules and the bootstrap posture (`posture: allow (source: bootstrap)` in the pre-flight evidence). That is a fail-open for the whole machine, not an equal repair. Record who decided, why, and when; restore the owner's policy afterwards.
 
 ```bat
-:: human, elevated, out of session
-reg delete "HKLM\SOFTWARE\Policies\Thoth" /v CentralPolicyJson /f
+:: human, elevated, out of session, recorded owner decision required
+reg delete "HKLMSOFTWAREPoliciesThoth" /v CentralPolicyJson /f
 ```
 
-Remove the whole key (also clears a half-provisioned key):
+Remove the whole key (also clears a half-provisioned key). Same consequence and same recorded-decision requirement as removing the value:
 
 ```bat
 :: human, elevated, out of session
@@ -88,7 +121,7 @@ reg delete "HKLM\SOFTWARE\Policies\Thoth" /f
 - English-language Windows: the read resolves to absent. Load succeeds.
 - Non-English Windows: the read rethrows the original error. Load fails as `read-error` x `central`. Every gated call is denied.
 - Pinned by test C12 in `src/policy/config/central-source.test.ts`.
-- Repair: write the value, or delete the key (see "Central repair").
+- Repair: write the value (preferred), or delete the key with a recorded owner decision (see "Central repair" for the consequence).
 - Activation is accepted for English hosts only (human ruling, plan Q5).
 
 ## Project and shipped-defaults failures
@@ -100,6 +133,7 @@ reg delete "HKLM\SOFTWARE\Policies\Thoth" /f
 
 ## What a session must not do
 
-- Do not run `reg add` or `reg delete` against `HKLM\SOFTWARE\Policies\Thoth`. The shell classifier and the OS ACL refuse it (see the header of `src/policy/config/central-source.ts`).
+- Do not run `reg add` or `reg delete` against `HKLM\SOFTWARE\Policies\Thoth`. In the one session measured, the tool-permission classifier refused the write and the process token was UAC-filtered (see the header of `src/policy/config/central-source.ts`). That is one session's configuration, not a guarantee. The rule stands regardless: a session does not run these.
 - Do not edit the policy files to clear a deny while the gate is failing closed. That is the operator's repair.
+- Do not loosen the key ACL to make a write succeed.
 - Do not retry in a loop. A load failure is deterministic until the source changes.
