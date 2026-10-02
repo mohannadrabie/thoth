@@ -9,12 +9,16 @@
 //   (2) the built-in layer or the central fixture carries an entry for that name with class `read-only`
 //       (so it is flagged even if a later merge would hide it), or
 //   (3) an entry has a class the instrument does not know (fail closed: an unknown class is not proven safe).
-// Names compare case-insensitively. Names absent from the catalog are not a violation today: the vendored
-// inventory (docs/qa/tool-inventory.json) does not contain the five AP-12 names, so a real assertion that the
-// five are non-read-only cannot exist until AP-2 re-vendors the inventory. What CAN be pinned now, and is:
-//   - adding any of the five to an inventory without a classification throws (no classified-by-default), so
-//     the re-vendor forces a reviewed classification, and this instrument then judges that classification;
-//   - a central fixture entry named like one of them at `read-only` is flagged.
+// Names compare case-insensitively. REPLACED 2026-10-02 (Issue #308 story C, recorded act, decisions row 2026-10-02
+// "#308 remainder: AP-3 form ..." item (4)): AP-2 re-vendored the inventory from the live init event and all five AP-12
+// names are now vendored, so the earlier "absent from the inventory, adding one throws" test (which asserted the
+// ABSENCE of the five and told its reader to replace it with this assertion once they were vendored) is replaced by
+// the real assertion: each of the five is PRESENT in the real inventory and classed workspace-mutating or
+// remote-mutating, never read-only. This is a strengthening (absent-allowed became present-and-non-read-only), not a
+// weakening or deletion under SE ADR-0005. What stays pinned:
+//   - every one of the five is present (a later inventory drop cannot make the assertion vacuous, C3d);
+//   - the real built-in layer with one of them flipped to read-only is flagged (C3c);
+//   - a classification-less addition of an unknown name still throws (no classified-by-default).
 //
 // ARBITRARY_EXEC is the five AP-12 names PLUS three built-ins this instrument adds on its own judgement
 // (Bash, SlashCommand, Task: each runs caller-chosen commands or delegates to an agent that can). The
@@ -75,13 +79,30 @@ test("AP-12: no arbitrary-execution tool in the real inventory + classification 
   for (const t of present) assert.notEqual(t.class, "read-only", t.name);
 });
 
-test("AP-12: an inventory that gains an AP-12 name without a classification throws (no classified-by-default), so a re-vendor forces a reviewed class", () => {
+test("AP-12 (C3, C3d): each of the five named tools is PRESENT in the real inventory and classed workspace-mutating or remote-mutating", () => {
   const inventory = loadBuiltinToolInventory();
+  const layer = loadBuiltinToolClassificationLayer();
+  const present = AP12_NAMED.filter((n) => inventory.tools.includes(n));
+  assert.deepEqual(present, [...AP12_NAMED], "every AP-12 name must be vendored; a drop would make this assertion vacuous");
   for (const name of AP12_NAMED) {
-    assert.ok(!inventory.tools.includes(name), `${name} is now vendored: replace this test with a non-read-only assertion over the real class`);
-    assert.throws(() => buildBuiltinToolClassificationLayer({ ...inventory, tools: [...inventory.tools, name] }), /no CLASSIFICATION entry/, name);
+    const cls = layer.tools.find((t) => t.name === name)?.class;
+    assert.ok(cls === "workspace-mutating" || cls === "remote-mutating", `${name} is classed ${String(cls)}`);
   }
 });
+
+test("AP-12: an inventory gaining an unclassified name still throws (no classified-by-default)", () => {
+  const inventory = loadBuiltinToolInventory();
+  assert.throws(() => buildBuiltinToolClassificationLayer({ ...inventory, tools: [...inventory.tools, "TotallyUnknownFutureExecTool"] }), /no CLASSIFICATION entry/);
+});
+
+for (const name of AP12_NAMED) {
+  test(`AP-12 seeded mutant (C3c): the REAL built-in layer with ${name} flipped to read-only is flagged`, () => {
+    const real = realLayers();
+    const builtin = { version: real.builtin.version, tools: real.builtin.tools.map((t) => (t.name === name ? { name: t.name, class: "read-only" } : t)) } as ToolClassificationSet;
+    const found = findReadOnlyArbitraryExec({ builtin, central: real.central, merged: mergeToolClassificationLayers(builtin, real.central) });
+    assert.ok(found.some((l) => l.startsWith("builtin: ") && l.includes(name)), found.join("\n"));
+  });
+}
 
 const asSet = (tools: Array<{ name: string; class: string }>): ToolClassificationSet => ({ version: "mutant", tools: tools as ToolClassificationSet["tools"] });
 
