@@ -15,7 +15,7 @@ V4's predicate matches the kernel's real matcher for every target and verb spell
 
 - `src/policy/kernel/kernel.ts:133-138` `matchesTarget`: an absent or empty `targets` matches anything. Otherwise `pattern.endsWith("/") ? t.startsWith(pattern) : t === pattern`. The comparison is byte-exact and case-sensitive, with no globs and no normalization.
 - `kernel.ts:127-131` `matchesVerb`: an absent or empty `verbs` matches anything. Otherwise it needs an exact shared verb.
-- A class record always has the form `mcp/<server>/<tool>` with one marker verb (`tool-class.ts:65-72`). Shell and cluster records carry only `resolveVerb` output (KNOWN_VERBS) or the constant `write` (`shell.ts:356`, `shell.ts:393-396`, `structured-cluster.ts:45`). R2-19 enforces that emitted verbs are a subset of KNOWN_VERBS.
+- A class record always has the form `mcp/<server>/<tool>` with one marker verb (`tool-class.ts:65-72`). Shell and cluster records carry only `resolveVerb` output (KNOWN_VERBS) or the constant `write` (`src/policy/normalizer/shell.ts:356`, `shell.ts:393-396`, `structured-cluster.ts:45`). R2-19 enforces that emitted verbs are a subset of KNOWN_VERBS.
 - Loader: `parseLayerText` (`loader.ts:134-165`) runs `checkRuleReachability` on each layer, and the whole load fails on the first failing layer. The gate hook reaches rules only through `loadEffectivePolicy` (`hooks/pretooluse-kernel-gate.mjs:181`). `bootstrap-ruleset.ts:54` holds `rules: []`. No other path feeds rules to the kernel.
 
 Consequence: a rule pattern can match a record target under `mcp/` only when the pattern itself starts with `mcp/`, or when it has no targets (row 83(a), kept loading on purpose). An allow rule whose verbs are non-empty and contain no KNOWN verb can't share a verb with any non-class record. V4's predicate is therefore the exact complement.
@@ -26,7 +26,7 @@ Consequence: a rule pattern can match a record target under `mcp/` only when the
 
 - **Scenario:** a future story makes `matchesTarget` case-insensitive or path-normalizing. The plausible trigger is Windows, where `> SRC/x` writes the same file as `src/x`. After that change, `allow [write] on "MCP/srv/"` loads, because V4 is byte-exact `startsWith("mcp/")`, and the kernel then matches the shell redirect record `mcp/srv/x`. That brings back the exact widening #338/#340 closed, and V4 says nothing.
 - **Current defence:** R2-24 claims the kernel is authoritative. But `candidateAllowRules` builds its target set only from `MCP_TARGET_PREFIX`, `V4_TARGETS`, emitted `mcp/` targets and their directory prefixes. All of them start with `mcp/`, so the oracle never offers a spelling the kernel might newly match.
-- **Evidence (M10, run in the worktree):** `kernel.ts:137` was mutated to compare `toLowerCase()` on both sides.
+- **Evidence (M10, run in the worktree):** `src/policy/kernel/kernel.ts:137` was mutated to compare `toLowerCase()` on both sides.
 
 ```text
 --- M10 kernel case-insensitive: reachability pair
@@ -74,7 +74,7 @@ probe: 132 (spelling x verbset) allow rules; 19 rejected by V4; 0 load AND the r
 ### 4. [CLEAN][demonstrated] Verb spellings and normalizer-vocabulary drift
 
 - Case, whitespace, duplicates, a marker plus a case-variant, and unknown verbs all load under V4 only when no KNOWN verb is present. They can't match a non-class record, because those records carry only KNOWN verbs (probe above: 0 leaks).
-- The load-bearing half is "emitted verbs are a subset of KNOWN_VERBS". Mutant M9 (the plain-redirect record at `shell.ts:356` emits `["append"]`) is killed:
+- The load-bearing half is "emitted verbs are a subset of KNOWN_VERBS". Mutant M9 (the plain-redirect record at `src/policy/normalizer/shell.ts:356` emits `["append"]`) is killed:
 
 ```text
 M9 normalizer emits non-catalog verb 'append' for plain redirects: tests=31 pass=26 fail=5 skipped=0 -> KILLED ["R2-13","R2-6","R2-17","R2-19","R2-24"]
@@ -102,7 +102,7 @@ V4 checks each target element (`rule-reachability.ts:204-211`). One MCP target r
 
 ### 7. [CLEAN][demonstrated] Does R2-24 use the real kernel and the real normalizer?
 
-It imports `decide` from `../kernel/kernel.ts` and `normalize` from `../normalizer/registry.ts` with the shell normalizer registered. The extended-candidate run under M10 went red, which shows the comparator calls the live `kernel.ts`. Its vacuity guards hold: 172 rejected candidates the kernel allows under, and the mutant-predicate self-test catches 86/86/172.
+It imports `decide` from `src/policy/kernel/kernel.ts` and `normalize` from `src/policy/normalizer/registry.ts` with the shell normalizer registered. The extended-candidate run under M10 went red, which shows the comparator calls the live `kernel.ts`. Its vacuity guards hold: 172 rejected candidates the kernel allows under, and the mutant-predicate self-test catches 86/86/172.
 
 ### 8. [CLEAN][demonstrated] Is the R2-24 redirect corpus complete?
 
@@ -136,7 +136,7 @@ A grep for `validateRuleSet|mergeLayers|loadEffectivePolicy|checkRuleReachabilit
 
 ## Scariest unproven assumption
 
-V4 is correct only as long as `kernel.ts:137` stays byte-exact. Nothing in the 1699-test suite pins that, and a case-insensitive matcher passes every test today.
+V4 is correct only as long as `src/policy/kernel/kernel.ts:137` stays byte-exact. Nothing in the 1699-test suite pins that, and a case-insensitive matcher passes every test today.
 
 ## Go / no-go: GO
 

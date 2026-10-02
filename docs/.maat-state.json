@@ -3,7 +3,7 @@
   "tier": "CRITICAL",
   "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 0,
-  "humanRulingRequired": true,
+  "humanRulingRequired": false,
   "councilHeld": false,
   "councilVerdict": null,
   "roundsSinceLastGo": 0,
@@ -732,5 +732,5 @@
       }
     ]
   },
-  "note_2026_10_02": "S7 close-out: 5 stories SHIPPABLE on s7/closeout (not merged). humanRulingRequired: SE ADR-0010 exception (decisions 2026-10-02) pending ratification; #308 human items open."
+  "note_2026_10_02": "S7 close-out: 5 stories SHIPPABLE in PR #380. SE ADR-0010 exception ratified by the human 2026-10-02. #308 human items open."
 }

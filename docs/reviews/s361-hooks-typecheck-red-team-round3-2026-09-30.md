@@ -127,7 +127,7 @@ Mutant K4 changes `if (a.hook === hook)` to `if (true)` (line 312). It survives 
 ### 4. [ISSUE][LOW][demonstrated] An `any` from a production helper under a hooks/ subdirectory is never scanned
 **Code:** `listProductionHooks` is non-recursive and only matches `.mjs` / `.js` (`src/qa/hook-typecheck-coverage-check.ts:137-142`). The suppression scan only sees listed hooks. The lint block for hooks is recursive (`hooks/**/*.mjs`), so `ban-ts-comment` still applies there, but lint has no JSDoc-`any` rule.
 
-Drill: I created `hooks/lib/pass.mjs` with `/** @param {any} x */ export function pass(x) { return x; }`. The relay imported it and called `haltStatePath(pass(123))`.
+Drill: I created a planted hooks/lib helper (hypothetical path) with `/** @param {any} x */ export function pass(x) { return x; }`. The relay imported it and called `haltStatePath(pass(123))`.
 
     H1  build rc=0 | QA-18 rc=0 | lint rc=0 | relay tests 6 pass / 37 fail / 0 skipped
     // @ts-nocheck in the same helper: eslint reports 1 ban-ts-comment error (caught)

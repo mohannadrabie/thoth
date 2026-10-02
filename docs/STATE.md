@@ -19,11 +19,11 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Verify (Manager, quiet tree, 2026-10-02):** build, typecheck and lint rc=0. Every `qa:*` gate rc=0; four are disclosed vacuous passes. Full suite 1799/1799, 0 fail, 0 skipped. Linux CI on master green at `f703ed3`.
 - **Known Windows flakes (not this diff):** pre-commit-scan R4 EBUSY (#231) and the gate-latency p99 under parallel load. Each passes alone.
 - **Rulings this session (human pre-approved the Manager's recommendations):** #338/#340 reject; #325 closed; #355 re-homed to #308 and closed; #374 closed with a ruled residual (Backlog #378). See `docs/decisions.md` 2026-09-30 and 2026-10-02 rows.
-- **Pending human ratification:** the SE ADR-0010 exception for the 8 pinned JSDoc-`any` hook sites (decisions row 2026-10-02). `humanRulingRequired: true` in state.
+- **Ratified by the human 2026-10-02:** the SE ADR-0010 exception for the 8 pinned JSDoc-`any` hook sites (decisions row 2026-10-02).
 - **S7 milestone stays open.** #308 needs human-only items: AP-7 (THOTH-ADR-0001 amendment), AP-3 (connector ruling), AP-2 (inventory re-vendor), AP-11 (bypass mode), live-runtime measurements, the AP-9 pre-flight of the live central source, Q5 (English-only Windows activation), and the S12 wiring approval. #93 and #288 close with #308. #107 waits for a non-English sample or the 2026-10-24 backstop. Plan: `docs/plans/s308-activation-phase1-2026-09-30.md`.
 - **Still human-only / held:** `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5` (empty folders from an earlier session).
 
-**Single next action:** push `s7/closeout` and open its PR (body: `Closes #361 #326 #375 #320 #338 #340 #376 #377`, `Refs #308`), merge after CI is green, and ratify or reject the SE ADR-0010 exception row.
+**Single next action:** push `s7/closeout` and open its PR (body: `Closes #361 #326 #375 #320 #338 #340 #376 #377`, `Refs #308`), merge after CI is green.
 
 ## Prior entry (superseded above): 2026-09-29: PR #373 open, #371 and #372 fixed on it; merge is human-only
 

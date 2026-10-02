@@ -42,7 +42,7 @@ Proposed: **STANDARD**. Justification: it loosens one assertion in the probe tha
 
 ## 6. Sensitive areas and reports required
 
-- Evidence / audit trail (assurance evidence, SUR-10 probe table): `src/qa/gate-fail-open-probe.ts` and its test record what the gate does on launch faults. This is a QA record, not `hooks/audit-log.mjs`, but it is the incapability evidence CLAUDE.md names, so treat as touched.
+- Evidence / audit trail (assurance evidence, SUR-10 probe table): `src/qa/gate-fail-open-probe.ts` and its test record what the gate does on launch faults. This is a QA record, not the audit-log hook (not yet built), but it is the incapability evidence CLAUDE.md names, so treat as touched.
 - Not touched: `hooks/*`, `scripts/guard/*`, `src/policy/*`, CI, secret scanning, policy delivery.
 - Reports: one domain reviewer, `code-reviewer` (test correctness: the tolerance cannot mask a third outcome), plus the standing `cross-domain-reviewer` (every tier above TRIVIAL). A fresh dated report in `docs/reviews/` is required by the hard rule for the evidence surface; no `red-team` at STANDARD unless the Manager raises the tier.
 
