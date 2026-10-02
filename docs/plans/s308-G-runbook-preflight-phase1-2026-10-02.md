@@ -57,7 +57,7 @@ Location (checked: `docs/` has no `runbooks/` directory and no runbook file; `gr
 
 - Proposed path: `docs/runbooks/policy-load-recovery.md`.
 - Reason: first runbook in the repo, so a `docs/runbooks/` directory sets the convention; avoids mixing with `docs/qa` (instrument fixtures) and `docs/plans` (dated, per-story).
-- Alternative if the Manager wants no new directory: `docs/policy-load-recovery.md`.
+- Alternative if the Manager wants no new directory: the same file name directly under docs/ (not chosen).
 - No `docs/` index file exists to update.
 - QA-14 reference-resolver scans `docs/` markdown; the new path is covered with no config change (confirm in Phase 2 by running it).
 
@@ -155,7 +155,7 @@ Spike check (PRINCIPLES 17, 18): no unmeasured number this plan depends on. The 
 
 1. **Criterion 12 source text.** `grep -i "criterion 12" docs/decisions.md` returns nothing today, and I have not located the S5 plan's criterion 12 wording. Which S5 document is authoritative, and is the AP-6 disposition "accepted residual", "closed", or "re-homed"? (Blocks G1/G1a only; the Manager writes the row.)
 2. **Tier.** Confirm STANDARD (runbook gets `infra-security-reviewer` plus cross-domain), or hold at TRIVIAL as decomposed.
-3. **Runbook path.** Confirm `docs/runbooks/policy-load-recovery.md` (new directory) versus `docs/policy-load-recovery.md`.
+3. **Runbook path.** Confirm `docs/runbooks/policy-load-recovery.md` (new directory) versus the same file name directly under docs/.
 
 📊 ADR cache HIT: reused 37 ADR(s) [adr/devops:12, adr/software-engineering:23, docs/adr:2] from catalog — ≈18300 tokens saved this pass (fp 13c1476) [CACHE=HIT]
 

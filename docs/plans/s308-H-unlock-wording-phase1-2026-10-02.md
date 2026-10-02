@@ -94,7 +94,7 @@ All tests are written first, run red for the stated reason, then the code lands.
 | H6 | Module-load failure (no type stripping, missing `src`) still prints the literal `UNLOCK` | existing A6 (`pretooluse-kernel-gate-launch.test.ts`), run unchanged | existing | none expected |
 | H7 | Closedness: both tables are total over their closed sets, and every value is non-empty, letters/punctuation ASCII only, one line | `H7-tables-are-closed-total-and-single-line` | `unlock-text.test.ts`; keys derived from the loader's enum types via a `Record<FailedLayerName, ...>` compile-time exhaustiveness check, not typed by hand | table absent |
 | H8 | Hook literal `UNLOCK` equals `GENERIC_UNLOCK` | `H8-hook-generic-unlock-in-sync` | `unlock-text.test.ts` (reads hook source, extracts the literal) | module absent |
-| H9 | Sanitizer: every table string is unchanged by `sanitizeForTerminal` and non-empty after it | `H9-unlock-strings-survive-sanitizer-unchanged` | `unlock-text.test.ts` (imports `config/sanitize.ts`; test files may) | module absent |
+| H9 | Sanitizer: every table string is unchanged by `sanitizeForTerminal` and non-empty after it | `H9-unlock-strings-survive-sanitizer-unchanged` | `unlock-text.test.ts` (imports `src/policy/config/sanitize.ts`; test files may) | module absent |
 | H10 | Exit codes and stdout polarity unchanged: refusal is still exit 0 with deny JSON; catalog failure still exit 2 with empty stdout | covered inside H1 and H2 | `-unlock.test.ts` | n/a |
 
 - Completeness claim rule (CLAUDE.md): "every layer x kind" is enumerated from the loader's exported types by the test, not by prose here.

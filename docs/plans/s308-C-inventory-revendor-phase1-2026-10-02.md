@@ -28,7 +28,7 @@ Re-vendor `docs/qa/tool-inventory.json` from this Claude Code install with a scr
   - `main`: runs the command above with `cwd` = an OS temp dir outside the repo (no repo settings or hooks load), reads the init event, writes `docs/qa/tool-inventory.json`, prints the generated diff.
   - `--from <init.jsonl>`: reads a saved init event instead of spawning (tests, and reproducing the diff in review).
   - No tool name is typed by hand anywhere. The `capturedAt`, `claude_code_version`, `platform`, `permissionMode` fields come from the event and the process.
-- **Exact command (this pass, run in a scratch folder; raw output kept in the session scratchpad `probe/init.jsonl`, `probe/plan.jsonl`):**
+- **Exact command (this pass, run in a scratch folder; raw output kept in the session scratchpad, files init.jsonl and plan.jsonl):**
 
 ```bash
 cd "$(mktemp -d)" && claude -p "say ok" --output-format stream-json --verbose --max-turns 1 > init.jsonl
