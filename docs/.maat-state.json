@@ -739,6 +739,16 @@
       "reviewRoundsSinceClean": 0,
       "reviewRoundsTotal": 1,
       "last": "#384 fixed in e635cf1; reviewer settling check (grep empty) passes, no further review needed per reconfirm report"
+    },
+    "s308-C": {
+      "reviewRoundsSinceClean": 0,
+      "reviewRoundsTotal": 0,
+      "last": "APPROVE + APPROVE-WITH-CONDITIONS on 92a891d; fix-now routed"
+    },
+    "s308-H": {
+      "reviewRoundsSinceClean": 0,
+      "reviewRoundsTotal": 0,
+      "last": "built (design B), CRITICAL review dispatched"
     }
   }
 }
