@@ -90,7 +90,7 @@ export function extractInitEvent(text: string): InitEvent {
 export function extractBuiltinNames(event: InitEvent): string[] {
   const tools = event.tools;
   if (!Array.isArray(tools) || !tools.every((t) => typeof t === "string")) throw new Error("init event: `tools` must be an array of strings");
-  const names = [...new Set((tools as string[]).filter((t) => !t.startsWith(MCP_PREFIX)))].sort();
+  const names = [...new Set((tools).filter((t) => !t.startsWith(MCP_PREFIX)))].sort();
   if (names.length === 0) throw new Error("init event: no built-in (non-mcp__) tool names found");
   return names;
 }

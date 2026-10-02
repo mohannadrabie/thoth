@@ -98,7 +98,7 @@ test("AP-12: an inventory gaining an unclassified name still throws (no classifi
 for (const name of AP12_NAMED) {
   test(`AP-12 seeded mutant (C3c): the REAL built-in layer with ${name} flipped to read-only is flagged`, () => {
     const real = realLayers();
-    const builtin = { version: real.builtin.version, tools: real.builtin.tools.map((t) => (t.name === name ? { name: t.name, class: "read-only" } : t)) } as ToolClassificationSet;
+    const builtin = asSet(real.builtin.tools.map((t) => (t.name === name ? { name: t.name, class: "read-only" } : t)));
     const found = findReadOnlyArbitraryExec({ builtin, central: real.central, merged: mergeToolClassificationLayers(builtin, real.central) });
     assert.ok(found.some((l) => l.startsWith("builtin: ") && l.includes(name)), found.join("\n"));
   });

@@ -93,7 +93,7 @@ test("C1b: the committed capture re-derives the committed inventory's measured l
   assert.equal(inv.permissionMode, event.permissionMode);
   assert.equal(inv.evidenceTier, "measured");
   const tools = inv.tools as string[];
-  const measured = new Set(inv.measuredTools as string[]);
+  const measured = new Set(inv.measuredTools);
   assert.deepEqual(inv.carriedForward, tools.filter((t) => !measured.has(t)));
   for (const m of measured) assert.ok(tools.includes(m), m);
   assert.deepEqual([...tools].sort(), tools, "tools is written sorted so a re-run is a clean diff");
