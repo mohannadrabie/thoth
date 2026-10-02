@@ -12,6 +12,7 @@ STANDARD tier. Three instruments for the S7 activation preconditions; nothing is
 - AP-12 (`src/qa/arbitrary-exec-classification.test.ts`): asserts no arbitrary-execution tool is classifiable read-only over the real inventory and classification catalog; seeded mutants must be flagged. The vendored inventory does not yet contain the five named tools (AP-2 re-vendor pending), so a re-vendored name without a classification is pinned to throw.
 - R1-6c (`src/qa/catalog-single-source.test.ts`): enumerates the definition, call and writer sites of the gate's catalog port and asserts the hook's `loadCatalog` is exactly the `assembleCatalog(...).merged` funnel. Coverage versus the #355 shapes 3 and 4 (assembled-name reads) is NOT provided, by design; that exposure stays measured by the R1-6b real-tree scan.
 - Plan addendum: `docs/plans/s308-precondition-instruments-phase1-2026-09-30.md`.
+- Round 2 (test-only, Refs #376 #377 #308): R1-6c pins each `catalog:` writer by value (`ctx.catalog` in tool-routing.ts) and scans `.mts`/`.cts`/`.cjs`, failing on any production import of test-support or `.test.` files; AC-3j-4 keys env sites by scope, property text and occurrence count, flags `eval`/`Function`/`.constructor(` routes, and pins the four node:fs importers (deny-by-default for fs/net/http/dns/etc.).
 
 ### Fixed - Issues #338 and #340 (an allow rule that can match a shell redirect record is now a load error)
 
