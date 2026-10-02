@@ -3,7 +3,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 **Last updated:** 2026-10-02 (S7 close-out: 5 stories SHIPPABLE on branch s7/closeout, not pushed; S7 milestone stays open on human-only #308 items)
 
-## Resume point — 2026-10-02 (newest): S7 close-out branch `s7/closeout` SHIPPABLE, not pushed; push, PR and merge are human-only
+## Resume point — 2026-10-02 (newest): S7 close-out PR #380 open, CI green; merge is human-only; #308 rulings given
 
 - **Branch:** `s7/closeout`, cut from `origin/master` at `f703ed3` (PR #373's merge). Not pushed.
 - **SHIPPABLE stories on the branch (all reviews clean, 0 REWORK rounds, council not fired):**
@@ -23,7 +23,11 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **S7 milestone stays open.** #308 needs human-only items: AP-7 (THOTH-ADR-0001 amendment), AP-3 (connector ruling), AP-2 (inventory re-vendor), AP-11 (bypass mode), live-runtime measurements, the AP-9 pre-flight of the live central source, Q5 (English-only Windows activation), and the S12 wiring approval. #93 and #288 close with #308. #107 waits for a non-English sample or the 2026-10-24 backstop. Plan: `docs/plans/s308-activation-phase1-2026-09-30.md`.
 - **Still human-only / held:** `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5` (empty folders from an earlier session).
 
-**Single next action:** push `s7/closeout` and open its PR (body: `Closes #361 #326 #375 #320 #338 #340 #376 #377`, `Refs #308`), merge after CI is green.
+- **PR #380 open** (`s7/closeout` → `master`), pushed by the Manager at the human's request. CI green after a citation fix (QA-14 diff mode: run `node src/qa/reference-resolver.ts origin/master HEAD` before pushing).
+- **#308 human rulings given 2026-10-02** (decisions row "#308 activation: human rulings"): amend THOTH-ADR-0001; 8 claude.ai connectors labelled remote-mutating; bypass mode keeps silent allow; English-only activation accepted; the team re-vendors the tool inventory; starting rules "read freely, protect the gate"; the team runs live tests in scratch `claude -p` sessions.
+- **#308 next session (fresh branch from `master` after #380 merges), in plan order:** ADR-0001 amendment PR (human accepts) → inventory re-vendor + connector labels (AP-2/AP-3/AP-8) → baseline rules + AC-10 deny protection + `activation-preconditions` test (AP-1/AP-10) → AP-6 decisions row, AP-9 runbook (incl. live central-source pre-flight), X-11 unlock wording → AP-13 launcher → live measurements (AP-4/AP-5, X-2/X-3, U-5, U-8) → S12 wiring, separately approved by the human. Plan: `docs/plans/s308-activation-phase1-2026-09-30.md`.
+
+**Single next action:** merge PR #380 once CI is green, then start a new session with "go on #308".
 
 ## Prior entry (superseded above): 2026-09-29: PR #373 open, #371 and #372 fixed on it; merge is human-only
 
