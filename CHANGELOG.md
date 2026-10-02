@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - #338/#340 R2-24 non-canonical-prefix candidates (test-only)
+
+- `src/policy/config/rule-reachability.test.ts`: R2-24 now enumerates non-canonical targets (`MCP/`, `Mcp/standin-x/`, `./mcp/`, `/mcp/`, ` mcp/`) and proves, with an injected case-insensitive kernel matcher, that it fails if the kernel matcher stops being case-sensitive (red-team finding 1, M10); header comments corrected. Refs #338 #340.
+
 ### Added - Issue #308 precondition instruments (test-only; no runtime change)
 
 STANDARD tier. Three instruments for the S7 activation preconditions; nothing is wired and no production file changed. Refs #308.

@@ -10,11 +10,13 @@
 // registerNormalizer call site, so a silently-added fourth registrant is caught rather than making R2-19
 // falsely reject a matchable rule with nothing noticing.
 //
-// Three checks, applied per element of `verbs` and `targets`:
+// Four checks, applied per element of `verbs` and `targets`:
 //   V1 a verb starting with the class-marker prefix that is not one of the three markers;
 //   V2 a target that is the MCP prefix plus a server name with no trailing "/" (no CLASS record's target is
 //      a server alone, and a pattern without a trailing "/" matches exactly);
-//   V3 a target under the MCP prefix whose server segment is not an admitted server name.
+//   V3 a target under the MCP prefix whose server segment is not an admitted server name;
+//   V4 (allow-redirect-reachable, Issues #338 and #340) an ALLOW rule with a target under the MCP prefix whose
+//      verbs are absent, empty or hold a catalog verb (it can match a shell redirect record).
 // V2 and V3 apply to a rule in exactly two cases (S7-B Issue #328 narrowed them; S7-C Issues #334 and #335
 // closed the two residuals): (i) its verbs hold at least one class marker and no verb a normalizer emits (a
 // class-marker-only list, or a marker plus a stray verb: the kernel needs a shared verb, so only a class
@@ -25,8 +27,9 @@
 // record through a verb a normalizer emits is reachable and is never rejected by V2 or V3 (R2-13 in
 // loader-reachability.test.ts proves that against the real shell normalizer and the real kernel). A verb
 // list with no class marker is out of scope (docs/backlog.md).
-// NOT rejected (documented): legacy mutating verbs plus an MCP target (shape c: matches shell-emitted
-// records only, never a class record; a disclosed residual routed to the activation story, Issue #329).
+// NOT rejected (documented): legacy mutating verbs plus an MCP target on a DENY rule only (shape c: matches
+// shell-emitted records only, never a class record; a deny can only deny more, so this is a disclosed,
+// deny-only residual routed to the activation story, Issue #329). The allow form is rejected by V4.
 //
 // NAMES. Stand-in server names only; committed fixture names are read at run time (G19).
 import { test } from "node:test";
@@ -218,7 +221,7 @@ test("R2-4 shape-c-loads: legacy mutating verbs plus an MCP server prefix load w
 // CATALOG_VERBS row). Such an allow can match a shell redirect record (verb write) into a directory of that
 // name, a silent allow widening, so V4 (allow-redirect-reachable) rejects it. The `deny` column is unchanged
 // (a deny only denies more), and so is every row with no catalog verb (marker rows, stray-only rows).
-test("R2-12 v2-v3-scope (Issues #328, #334, #335, Manager rulings): a target V2 or V3 would reject loads unless the rule has (i) a class marker and no verb a normalizer emits, or (ii) an allow effect with no verbs; V1 is unchanged", () => {
+test("R2-12 v2-v3-scope (Issues #328, #334, #335, #338, #340, Manager rulings): a target V2 or V3 would reject is rejected per the deny and allow columns of the table (deny: only a class marker and no verb a normalizer emits; allow: also any verb set that is empty or holds a catalog verb, which V4 rejects); V1 is unchanged", () => {
   const [m0, m1] = [MARKERS[0] as string, MARKERS[1] as string];
   const stray = "some-other-verb";
   // `deny` / `allow`: true means the check must reject the rule for a bad target under that effect
@@ -848,8 +851,12 @@ function redirectRecords(): ActionRecord[] {
 /** Every candidate allow rule: verbs in {absent, empty, each catalog verb, each catalog verb plus a marker, each
  * marker, a marker plus each stray verb, each stray verb alone} x targets in {bare prefix, presentable server
  * and server/tool, the V2/V3 targets, every emitted target verbatim, every directory prefix of each}. */
+const NON_CANONICAL_PREFIX_TARGETS = ["MCP/", "Mcp/standin-x/", "./mcp/", "/mcp/", " mcp/"];
+
 function candidateAllowRules(emitted: string[]): Rule[] {
-  const targetSet = new Set<string>([MCP_TARGET_PREFIX, ...V4_TARGETS]);
+  // Non-canonical spellings of the prefix (Issue #338/#340 red-team finding 1): every emitted target starts with
+  // "mcp/", so without these a case-insensitive or otherwise lax kernel matcher would pass this suite unnoticed.
+  const targetSet = new Set<string>([MCP_TARGET_PREFIX, ...V4_TARGETS, ...NON_CANONICAL_PREFIX_TARGETS]);
   for (const t of emitted) {
     targetSet.add(t);
     for (let i = t.indexOf("/"); i >= 0; i = t.indexOf("/", i + 1)) targetSet.add(t.slice(0, i + 1));
@@ -863,11 +870,11 @@ function candidateAllowRules(emitted: string[]): Rule[] {
 
 /** The soundness comparator: the candidates `reject` lets load although the real kernel, under a deny baseline,
  * returns allow for a real redirect record. Empty means the reject function is sound against the kernel. */
-function unsoundCandidates(reject: (rule: Rule) => boolean, rules: Rule[], records: ActionRecord[]): string[] {
+function unsoundCandidates(reject: (rule: Rule) => boolean, rules: Rule[], records: ActionRecord[], kernelOutcome: (rule: Rule, record: ActionRecord) => string = (rule, r) => decide({ rules: ruleSet(rule), defaultOutcome: "deny" }, r).outcome): string[] {
   const unsound: string[] = [];
   for (const rule of rules) {
     if (reject(rule)) continue;
-    const hit = records.find((r) => decide({ rules: ruleSet(rule), defaultOutcome: "deny" }, r).outcome === "allow");
+    const hit = records.find((r) => kernelOutcome(rule, r) === "allow");
     if (hit !== undefined) unsound.push(`allow verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)} loads but the kernel allows redirect record verbs ${JSON.stringify(hit.verbs)} targets ${JSON.stringify(hit.targets)}`);
   }
   return unsound;
@@ -919,6 +926,20 @@ test("R2-24 allow-redirect-soundness-against-the-real-kernel (Issues #338, #340,
   };
   console.log(`R2-24 mutants: unsound candidates found per mutant ${JSON.stringify(caught)}`);
   for (const [name, n] of Object.entries(caught)) assert.ok(n > 0, `the comparator must catch the mutant "${name}"`);
+
+  // 3b. the kernel side can fail too (red-team finding 1, mutant M10): a kernel whose target matcher is case-
+  // insensitive allows redirect records under candidates the check (correctly, for the real kernel) lets load;
+  // the non-canonical-prefix candidates make this suite catch it. The mutant is injected, so the proof is permanent.
+  const ciKernel = (rule: Rule, r: ActionRecord): string => {
+    const verbs = rule.verbs ?? [];
+    const targets = rule.targets ?? [];
+    const verbOk = verbs.length === 0 || r.verbs.some((v) => verbs.includes(v));
+    const targetOk = targets.length === 0 || r.targets.some((t) => targets.some((p) => (p.endsWith("/") ? t.toLowerCase().startsWith(p.toLowerCase()) : t.toLowerCase() === p.toLowerCase())));
+    return verbOk && targetOk ? "allow" : "deny";
+  };
+  const ciUnsound = unsoundCandidates(real, candidates, records, ciKernel);
+  console.log(`R2-24 M10 (case-insensitive kernel matcher, injected): ${String(ciUnsound.length)} unsound candidates`);
+  assert.ok(ciUnsound.some((u) => /targets \["(MCP\/|Mcp\/standin-x\/)"\]/.test(u)), "R2-24 must fail under a case-insensitive kernel matcher, via a non-canonical-prefix candidate");
 
   // 4. control rules: an allow aimed elsewhere does not match (the kernel says deny), and a path allow that the
   // kernel allows against a non-mcp record is not rejected
