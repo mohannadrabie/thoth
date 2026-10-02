@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - Issue #308 story H (X-11: gate failures name their real unlock)
+
+CRITICAL tier (session gate, `hooks/pretooluse-kernel-gate.mjs` and `src/policy/gate/*`). Wording only; nothing is wired, exit codes and stdout polarity are unchanged. Refs #308.
+
+- `src/policy/gate/unlock-text.ts` (new, pure, no imports): one closed table. `policyLoadUnlock(layer)` for a policy-load refusal, `hookFailureUnlock(errorName)` for the hook's stderr line, `boundedLayerName` / `boundedReasonKind` (a value outside the loader's closed set prints as `unknown`), `GENERIC_UNLOCK` (the old line, byte-identical).
+- Policy-load deny reason now ends with an unlock clause by layer: `project` and `shipped-defaults` (a human corrects that file through a reviewed change), `central` (the central policy owner corrects it outside this session). Unknown layer: generic line.
+- Catalog or classification-fixture failure on an `mcp__` call: stderr names the classification file ("a human must fix the tool classification file through a reviewed pull request; retrying will not help") instead of "retry the call ... Node". `src/policy/tools/classification-catalog.ts` throws a typed `ClassificationCatalogError` at the source (lowering entry, malformed or unreadable fixture, built-in layer); the hook's `loadCatalog` is unchanged (single return) and prints only the error name, so no path or entry name reaches stderr. Any other internal failure keeps the generic line. Design B per the decisions row "#308 stories C and H", item 2.
+- Pins edited as recorded acts (decisions row "#308 remainder: AP-3 form, Phase 1 answers", item 3): `PINNED_PAIRS` in `src/policy/config/hook-import-pins.test.ts` gains one pair, `gate.hookFailureUnlock` (routed through `gate`, so the AC-7 `render` count and the AC-3h / AC-3 / R1-6c pins are untouched); `STORY_TEST_FILES` in `src/policy/gate/gate-structure.test.ts` gains the two new test files.
+- Tests: `src/policy/gate/unlock-text.test.ts`, `hooks/pretooluse-kernel-gate-unlock.test.ts`, and two cases appended to `src/policy/gate/render-hook-output.test.ts`.
+- `docs/runbooks/policy-load-recovery.md`: the quoted deny text and the catalog row now show the new strings.
+
 ### Changed - Issue #308 story C (tool inventory re-vendored from the live init event, 23 built-ins classified, connector labels, AP-12 tripwire replaced)
 
 STANDARD tier. No hook, settings or loader change; nothing is wired, so no live enforcement decision changes. Refs #308.

@@ -12,8 +12,9 @@ Out-of-session repair for a policy that fails to load or loads wrong. Covers the
 ## Symptom
 
 - Every gated call is denied with category `policy-load-failure`.
-- The deny text reads `policy load failed: layer <failedLayer>, kind <reasonKind>; fail-closed` and names no rule.
-- Today's deny text carries layer and kind only (`src/policy/gate/decide-tool-call.ts`, single `refuse()` site). It has no `Unlock:` clause. Story H changes this text (per-layer unlock, `unknown` for an out-of-set layer or kind).
+- The deny text reads `policy load failed: layer <failedLayer>, kind <reasonKind>; fail-closed. Unlock: <fix for that layer>` and names no rule.
+- The text is built at one site (`src/policy/gate/decide-tool-call.ts`, `refuse()`); the unlock clause comes from a closed table (`src/policy/gate/unlock-text.ts`). A layer or kind outside the known set prints as `unknown` with the generic line (`Unlock: retry the call; ...`).
+- The clause by layer: `project` and `shipped-defaults` say a human must correct that policy file through a reviewed change; `central` says the central policy owner must correct it outside this session.
 - Look the pair up in the failure table below to find the repair owner.
 - A different symptom, stderr `internal exception, fail-closed (exit 2)` on `mcp__` calls only, is the catalog row at the end of the table.
 
@@ -31,7 +32,7 @@ One row per `reasonKind` by `failedLayer` pair. The row labels are checked again
 | Pair (kind x layer) | Cause | Repair owner | Repair |
 |---|---|---|---|
 | `json-parse-error` x `central` | `CentralPolicyJson` value is not valid JSON | Central policy owner | Write a corrected value (see "Central repair"). Removal only with a recorded owner decision. |
-| `schema-invalid` x `central` | Valid JSON, wrong shape, or a rule the load checks reject (for example an allow rule reachable by a shell redirect, Issues #338 and #340) | Central policy owner | Write a corrected value. Removal only with a recorded owner decision. `npm run policy:print` prints the loader message, which carries an `Unlock:` clause naming the fix (`src/policy/config/rule-reachability.ts`). The gate deny text does not carry it today. |
+| `schema-invalid` x `central` | Valid JSON, wrong shape, or a rule the load checks reject (for example an allow rule reachable by a shell redirect, Issues #338 and #340) | Central policy owner | Write a corrected value. Removal only with a recorded owner decision. `npm run policy:print` prints the loader message, which carries an `Unlock:` clause naming the fix (`src/policy/config/rule-reachability.ts`). The gate deny text carries only the layer-level clause (`the central policy owner must correct the central policy outside this session`), not that loader message. |
 | `read-error` x `central` | `reg.exe` could not be run, or the read failed with an unclassified error. Includes the half-provisioned key on a non-English host (see below). | Central policy owner | Fix the host or key state and write the value. Removing the key only with a recorded owner decision. |
 | `json-parse-error` x `shipped-defaults` | `src/policy/config/shipped-defaults.json` is not valid JSON | Repo maintainer | Reviewed PR that fixes the file. |
 | `schema-invalid` x `shipped-defaults` | File parses, fails the rule schema or load checks | Repo maintainer | Reviewed PR. The message names the file. |
@@ -43,9 +44,9 @@ One row per `reasonKind` by `failedLayer` pair. The row labels are checked again
 
 Catalog row notes:
 
-- Symptom today: stderr `pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2). Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout). Error type: <name>`. Exit code 2.
+- Symptom: stderr `pretooluse-kernel-gate.mjs: internal exception, fail-closed (exit 2). Unlock: a human must fix the tool classification file through a reviewed pull request; retrying will not help. Error type: ClassificationCatalogError`. Exit code 2.
+- Any other internal failure keeps the generic line (`Unlock: retry the call; if it fails again a human must repair the gate hook ...`) with its own error type.
 - Every `mcp__` call is denied. `Bash` is unaffected: its route has `needsCatalog: false` (`src/policy/gate/tool-routing.ts`), so the catalog is never loaded for it.
-- This text changes with story H (per-kind unlock). Update this row when H merges.
 
 ## Central repair
 
