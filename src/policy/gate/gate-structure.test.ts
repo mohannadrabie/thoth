@@ -88,6 +88,9 @@ const STORY_TEST_FILES = [
   "src/policy/tools/classification-builtin-override.test.ts",
   "src/policy/config/rule-reachability.test.ts",
   "src/policy/config/loader-reachability.test.ts",
+  // Story H (#308 X-11; decisions row "#308 remainder: AP-3 form, Phase 1 answers", item 3): the unlock-wording tests.
+  "src/policy/gate/unlock-text.test.ts",
+  "hooks/pretooluse-kernel-gate-unlock.test.ts",
 ];
 
 // Issue #359/#312 fix-now (red-team F1, named proof-test), re-oracled Issue #362/#363 (red-team

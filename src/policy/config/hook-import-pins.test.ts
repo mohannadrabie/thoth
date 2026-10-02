@@ -56,6 +56,7 @@ const PINNED_PAIRS: ReadonlySet<string> = new Set([
   "catalog.moduleRelativeFixtureLocation",
   "central.defaultCentralPolicySource",
   "gate.decideToolCall",
+  "gate.hookFailureUnlock",
   "loader.loadEffectivePolicy",
   "render.renderHookOutput",
   "sanitizeMod.sanitizeForTerminal",
