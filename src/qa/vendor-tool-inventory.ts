@@ -62,6 +62,10 @@ export interface ScrubbedCapture {
 }
 
 const MCP_PREFIX = "mcp__";
+/** A built-in name written into the committed inventory must be a plain identifier: a letter first, then letters and
+ * digits, at most 64 characters. Anything else is refused rather than vendored (names flow into code comments, test
+ * names and the generated diff). */
+const BUILTIN_IDENTIFIER = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
 
 /** Finds the `system`/`init` event in stream-json lines, or a single JSON object (a scrubbed capture). */
 export function extractInitEvent(text: string): InitEvent {
@@ -91,6 +95,8 @@ export function extractBuiltinNames(event: InitEvent): string[] {
   const tools = event.tools;
   if (!Array.isArray(tools) || !tools.every((t) => typeof t === "string")) throw new Error("init event: `tools` must be an array of strings");
   const names = [...new Set((tools).filter((t) => !t.startsWith(MCP_PREFIX)))].sort();
+  const odd = names.filter((n) => !BUILTIN_IDENTIFIER.test(n));
+  if (odd.length > 0) throw new Error(`init event: built-in name(s) that are not plain identifiers (${BUILTIN_IDENTIFIER.source}): ${odd.map((n) => JSON.stringify(n)).join(", ")}`);
   if (names.length === 0) throw new Error("init event: no built-in (non-mcp__) tool names found");
   return names;
 }

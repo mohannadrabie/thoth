@@ -32,6 +32,13 @@ test("extractBuiltinNames refuses an event with no tools array rather than retur
   assert.throws(() => extractBuiltinNames({ type: "system", subtype: "init", tools: ["mcp__a__b"] }), /no built-in/);
 });
 
+test("extractBuiltinNames rejects a name that is not a plain identifier (nothing odd reaches the committed inventory)", () => {
+  for (const bad of ["Bad Name", "has/slash", "quote\"d", "semi;colon", "", "-leading", "new\nline", "<script>", "a".repeat(65)]) {
+    assert.throws(() => extractBuiltinNames({ type: "system", subtype: "init", tools: ["Fine", bad] }), /identifier/, JSON.stringify(bad));
+  }
+  assert.deepEqual(extractBuiltinNames({ type: "system", subtype: "init", tools: ["Read", "ListMcpResourcesTool", "Tool2"] }), ["ListMcpResourcesTool", "Read", "Tool2"]);
+});
+
 test("extractInitEvent finds the system/init line among stream-json lines and also accepts a single scrubbed object", () => {
   const lines = [JSON.stringify({ type: "assistant" }), JSON.stringify(syntheticEvent), JSON.stringify({ type: "result" })].join("\n");
   assert.equal(extractInitEvent(lines).claude_code_version, "9.9.9");
