@@ -10,11 +10,13 @@
 // registerNormalizer call site, so a silently-added fourth registrant is caught rather than making R2-19
 // falsely reject a matchable rule with nothing noticing.
 //
-// Three checks, applied per element of `verbs` and `targets`:
+// Four checks, applied per element of `verbs` and `targets`:
 //   V1 a verb starting with the class-marker prefix that is not one of the three markers;
 //   V2 a target that is the MCP prefix plus a server name with no trailing "/" (no CLASS record's target is
 //      a server alone, and a pattern without a trailing "/" matches exactly);
-//   V3 a target under the MCP prefix whose server segment is not an admitted server name.
+//   V3 a target under the MCP prefix whose server segment is not an admitted server name;
+//   V4 (allow-redirect-reachable, Issues #338 and #340) an ALLOW rule with a target under the MCP prefix whose
+//      verbs are absent, empty or hold a catalog verb (it can match a shell redirect record).
 // V2 and V3 apply to a rule in exactly two cases (S7-B Issue #328 narrowed them; S7-C Issues #334 and #335
 // closed the two residuals): (i) its verbs hold at least one class marker and no verb a normalizer emits (a
 // class-marker-only list, or a marker plus a stray verb: the kernel needs a shared verb, so only a class
@@ -25,8 +27,9 @@
 // record through a verb a normalizer emits is reachable and is never rejected by V2 or V3 (R2-13 in
 // loader-reachability.test.ts proves that against the real shell normalizer and the real kernel). A verb
 // list with no class marker is out of scope (docs/backlog.md).
-// NOT rejected (documented): legacy mutating verbs plus an MCP target (shape c: matches shell-emitted
-// records only, never a class record; a disclosed residual routed to the activation story, Issue #329).
+// NOT rejected (documented): legacy mutating verbs plus an MCP target on a DENY rule only (shape c: matches
+// shell-emitted records only, never a class record; a deny can only deny more, so this is a disclosed,
+// deny-only residual routed to the activation story, Issue #329). The allow form is rejected by V4.
 //
 // NAMES. Stand-in server names only; committed fixture names are read at run time (G19).
 import { test } from "node:test";
@@ -210,17 +213,25 @@ test("R2-4 shape-c-loads: legacy mutating verbs plus an MCP server prefix load w
 // such a target. The rule is stricter, nothing is deleted, and every other row keeps its expectation. The
 // matrix gains an effect dimension (an ALLOW rule with no verbs is now rejected on these targets, Issue
 // #335) and rows for the stray-verb shapes (Issue #334).
-test("R2-12 v2-v3-scope (Issues #328, #334, #335, Manager rulings): a target V2 or V3 would reject loads unless the rule has (i) a class marker and no verb a normalizer emits, or (ii) an allow effect with no verbs; V1 is unchanged", () => {
+//
+// REPLACEMENT (Issues #338 and #340; SE ADR-0005, recorded as the 2026-09-30 decisions rows "reject at load,
+// fail closed" and its Q1 reading): the `allow` column of every row whose verbs hold at least one catalog
+// verb is FLIPPED from `allow: false` to `allow: true` (one legacy verb; the legacy mutating verbs; a marker
+// plus a legacy verb; a legacy verb plus a marker; a marker, a stray verb and a catalog verb; every
+// CATALOG_VERBS row). Such an allow can match a shell redirect record (verb write) into a directory of that
+// name, a silent allow widening, so V4 (allow-redirect-reachable) rejects it. The `deny` column is unchanged
+// (a deny only denies more), and so is every row with no catalog verb (marker rows, stray-only rows).
+test("R2-12 v2-v3-scope (Issues #328, #334, #335, #338, #340, Manager rulings): a target V2 or V3 would reject is rejected per the deny and allow columns of the table (deny: only a class marker and no verb a normalizer emits; allow: also any verb set that is empty or holds a catalog verb, which V4 rejects); V1 is unchanged", () => {
   const [m0, m1] = [MARKERS[0] as string, MARKERS[1] as string];
   const stray = "some-other-verb";
   // `deny` / `allow`: true means the check must reject the rule for a bad target under that effect
   const verbSets: { label: string; verbs: string[] | undefined; deny: boolean; allow: boolean }[] = [
     { label: "no verbs field (matches every verb, so every shell record)", verbs: undefined, deny: false, allow: true },
     { label: "an empty verbs array (matches every verb)", verbs: [], deny: false, allow: true },
-    { label: "one legacy verb", verbs: ["write"], deny: false, allow: false },
-    { label: "the legacy mutating verbs", verbs: ["write", "create", "modify", "delete", "move", "rename", "execute"], deny: false, allow: false },
-    { label: "a marker plus a legacy verb", verbs: [m0, "write"], deny: false, allow: false },
-    { label: "a legacy verb plus a marker", verbs: ["write", m0], deny: false, allow: false },
+    { label: "one legacy verb", verbs: ["write"], deny: false, allow: true },
+    { label: "the legacy mutating verbs", verbs: ["write", "create", "modify", "delete", "move", "rename", "execute"], deny: false, allow: true },
+    { label: "a marker plus a legacy verb", verbs: [m0, "write"], deny: false, allow: true },
+    { label: "a legacy verb plus a marker", verbs: ["write", m0], deny: false, allow: true },
     { label: "REPLACED ROW: a marker plus a verb outside the marker namespace (was rejects false)", verbs: [m0, stray], deny: true, allow: true },
     { label: "a marker plus an empty string", verbs: [m0, ""], deny: true, allow: true },
     { label: "a marker plus a case-variant of a catalog verb", verbs: [m0, "WRITE"], deny: true, allow: true },
@@ -228,15 +239,15 @@ test("R2-12 v2-v3-scope (Issues #328, #334, #335, Manager rulings): a target V2 
     { label: "a marker plus a near-miss of a catalog verb", verbs: [m0, "writ"], deny: true, allow: true },
     { label: "a stray verb plus a marker", verbs: [stray, m0], deny: true, allow: true },
     { label: "two markers plus a stray verb", verbs: [m0, m1, stray], deny: true, allow: true },
-    { label: "a marker, a stray verb and a catalog verb (a normalizer emits one of them)", verbs: [m0, stray, "read"], deny: false, allow: false },
+    { label: "a marker, a stray verb and a catalog verb (a normalizer emits one of them)", verbs: [m0, stray, "read"], deny: false, allow: true },
     { label: "only stray verbs, no marker (backlog scope, ruling Q2)", verbs: [stray, "WRITE"], deny: false, allow: false },
     { label: "an empty string alone, no marker (backlog scope)", verbs: [""], deny: false, allow: false },
     { label: "one marker", verbs: [m0], deny: true, allow: true },
     { label: "two markers", verbs: [m0, m1], deny: true, allow: true },
     { label: "every marker", verbs: [...MARKERS], deny: true, allow: true },
     ...CATALOG_VERBS.flatMap((v) => [
-      { label: `a marker plus the catalog verb ${v}`, verbs: [m0, v], deny: false, allow: false },
-      { label: `the catalog verb ${v} plus a marker`, verbs: [v, m0], deny: false, allow: false },
+      { label: `a marker plus the catalog verb ${v}`, verbs: [m0, v], deny: false, allow: true },
+      { label: `the catalog verb ${v} plus a marker`, verbs: [v, m0], deny: false, allow: true },
     ]),
   ];
   let cases = 0;
@@ -322,18 +333,28 @@ test("R2-6 drift-emitted-vocabulary-accepted: every verb, every target and every
       rejected.push(`record verbs ${JSON.stringify(r.verbs)} targets ${JSON.stringify(r.targets)}: ${e.message}`);
     }
   }
-  // S7-C (Issue #335): an ALLOW rule authored from an emitted record with its own verbs still loads (only an
-  // allow rule with NO verbs on a target the runtime never presents is rejected, and a record with verbs
-  // never yields one)
+  // REPLACEMENT (Issues #338 and #340; SE ADR-0005, 2026-09-30 decisions rows). This used to say an ALLOW
+  // rule authored from ANY emitted record with verbs still loads. Now it loads unless the record is a shell
+  // redirect into a directory named like the MCP prefix (a target under the prefix AND a verb a normalizer
+  // emits): that allow can match the redirect record, so V4 rejects it (R2-24 measures this against the real
+  // kernel). Every other whole-record allow (class records, cluster records, shell records on other paths)
+  // keeps loading, and the deny loops above are unchanged.
   let allowRules = 0;
+  let allowRejectedByV4 = 0;
   for (const r of records) {
     if (r.verbs.length === 0) continue;
     allowRules += 1;
-    for (const e of checkRuleReachability(ruleSet(allow("drift-allow-record", [...r.verbs], r.targets.length > 0 ? [...r.targets] : undefined)))) {
-      rejected.push(`allow record verbs ${JSON.stringify(r.verbs)} targets ${JSON.stringify(r.targets)}: ${e.message}`);
+    const errors = checkRuleReachability(ruleSet(allow("drift-allow-record", [...r.verbs], r.targets.length > 0 ? [...r.targets] : undefined)));
+    const redirectIntoMcpDir = r.targets.some((t) => t.startsWith(MCP_TARGET_PREFIX)) && r.verbs.some((v) => KNOWN_VERBS.has(v));
+    if (redirectIntoMcpDir) {
+      allowRejectedByV4 += 1;
+      if (errors.length === 0) rejected.push(`allow record verbs ${JSON.stringify(r.verbs)} targets ${JSON.stringify(r.targets)}: loaded, but it can match the shell redirect record it was authored from`);
+    } else {
+      for (const e of errors) rejected.push(`allow record verbs ${JSON.stringify(r.verbs)} targets ${JSON.stringify(r.targets)}: ${e.message}`);
     }
   }
-  console.log(`R2-6: ${String(allowRules)} whole-record allow rules (records with verbs) also checked`);
+  console.log(`R2-6: ${String(allowRules)} whole-record allow rules (records with verbs) also checked; ${String(allowRejectedByV4)} redirect-into-mcp-directory allows rejected by V4, the rest load`);
+  assert.ok(allowRejectedByV4 > 0, "the corpus holds redirect records under the MCP prefix, so this branch can fail");
   assert.deepEqual(rejected, [], "the check rejects nothing a normalizer emits");
 });
 
@@ -497,19 +518,37 @@ test("R2-17 part 2 allow-without-verbs-rejected (Issue #335, AC-335-1, AC-335-2)
   assert.deepEqual(problems, []);
 });
 
-test("R2-17 part 3 ruled-edges-hold (Issue #335, AC-335-4): an allow rule keeps loading with write or any single catalog verb on a bad target, with no verbs on a well-formed or non-MCP target and on the bare MCP prefix; an allow with a marker alone on a bad target is still rejected; a deny rule with no verbs or empty verbs on the same targets loads", () => {
+// REPLACEMENT (Issues #338 and #340; SE ADR-0005, 2026-09-30 decisions rows "reject at load, fail closed" and
+// its Q1 reading): this test used to pin that an allow rule keeps loading with write or any single catalog
+// verb on a V2/V3 bad target, and with no verbs (absent or empty) on `mcp/standin-x/`, `mcp/standin-x/some-tool`
+// and the bare `mcp/` prefix. Those cells are FLIPPED to rejects (V4, allow-redirect-reachable): each such
+// allow can match a shell redirect record (verb write) and the real kernel allows it (R2-17 part 1, R2-24).
+// Unchanged: the deny rows, the allow-with-a-marker-alone-on-a-bad-target rejection, and the filesystem-path
+// and no-target allow rows (kept loading by decisions row 83(a)).
+test("R2-17 part 3 ruled-edges (Issues #335, #338, #340; REPLACES the old ruled-edges-hold): an allow rule with write or any single catalog verb on a bad target, or with no verbs on a well-formed or bare MCP target, is now rejected; a marker alone on a bad target is still rejected; a deny rule with no verbs or empty verbs on the same targets loads; path-shaped and no-target allow rules load", () => {
   const problems: string[] = [];
   const expectLoads = (label: string, rule: Rule): void => {
     const errors = checkRuleReachability(ruleSet(rule));
     if (errors.length > 0) problems.push(`${label}: rejected: ${errors[0]?.message ?? ""}`);
   };
+  const expectRejects = (label: string, rule: Rule): void => {
+    const errors = checkRuleReachability(ruleSet(rule));
+    if (errors.length === 0) problems.push(`${label}: loaded, expected a rejection`);
+    else if (errors.length > 1) problems.push(`${label}: ${String(errors.length)} errors for one target element, expected one`);
+    else if (errors[0]?.field !== "rules[0].targets[0]") problems.push(`${label}: field ${errors[0]?.field ?? ""}`);
+  };
   for (const target of BAD_TARGETS) {
-    for (const v of CATALOG_VERBS) expectLoads(`allow [${v}] + ${JSON.stringify(target)}`, allow("edge-verb", [v], [target]));
+    for (const v of CATALOG_VERBS) expectRejects(`allow [${v}] + ${JSON.stringify(target)}`, allow("edge-verb", [v], [target]));
     expectLoads(`deny with no verbs + ${JSON.stringify(target)}`, deny("edge-deny-none", undefined, [target]));
     expectLoads(`deny with empty verbs + ${JSON.stringify(target)}`, deny("edge-deny-empty", [], [target]));
-    if (checkRuleReachability(ruleSet(allow("edge-marker", [MARKERS[0] as string], [target]))).length === 0) problems.push(`allow [marker] + ${JSON.stringify(target)}: loaded, expected the all-markers rejection`);
+    expectRejects(`allow [marker] + ${JSON.stringify(target)}`, allow("edge-marker", [MARKERS[0] as string], [target]));
   }
-  for (const ok of [`${MCP_TARGET_PREFIX}standin-x/`, `${MCP_TARGET_PREFIX}standin-x/some-tool`, MCP_TARGET_PREFIX, "src/policy/", "docs/notes.md"]) {
+  for (const rejectedTarget of [`${MCP_TARGET_PREFIX}standin-x/`, `${MCP_TARGET_PREFIX}standin-x/some-tool`, MCP_TARGET_PREFIX]) {
+    expectRejects(`allow with no verbs + ${JSON.stringify(rejectedTarget)}`, allow("edge-none", undefined, [rejectedTarget]));
+    expectRejects(`allow with empty verbs + ${JSON.stringify(rejectedTarget)}`, allow("edge-none-empty", [], [rejectedTarget]));
+    expectLoads(`deny with no verbs + ${JSON.stringify(rejectedTarget)}`, deny("edge-deny-ok", undefined, [rejectedTarget]));
+  }
+  for (const ok of ["src/policy/", "docs/notes.md"]) {
     expectLoads(`allow with no verbs + ${JSON.stringify(ok)}`, allow("edge-ok", undefined, [ok]));
     expectLoads(`allow with empty verbs + ${JSON.stringify(ok)}`, allow("edge-ok-empty", [], [ok]));
   }
@@ -686,4 +725,251 @@ test("R2-21 part 2 fourth-registrant-detected self-test (Issue #339, AC-339-3, m
   ];
   assert.deepEqual(registrantFiles(controls), [], "a bare mention with no following '{' is never flagged (same shape as the two real prose mentions R2-21 part 1 proves are not flagged)");
   console.log(`R2-21 part 2: fourth registrant ${fourth.rel} flagged; ${String(controls.length)} controls confirmed clean`);
+});
+
+// --- R2-22 to R2-25 (Issues #338 and #340; docs/plans/s338-340-allow-redirect-reject-phase1-2026-09-30.md) ----
+//
+// V4 (allow-redirect-reachable): at load, on every layer, an ALLOW rule keyed on an MCP-shaped target (some
+// target starts with the MCP prefix, the bare prefix included) is rejected when it can match a record the
+// shell normalizer emits for a redirect into a directory of that name: its verbs are absent or empty (match
+// every verb) or include at least one catalog verb (a verb a normalizer emits; the shell record carries
+// write). A marker-only allow on a presentable target (the form the rule-author facts prescribe) and a
+// marker plus stray allow keep loading, as do filesystem-path allows (decisions row 83(a)) and every deny.
+// The KERNEL, not the reading, is authoritative: R2-24 enumerates candidate rules and fails if the real
+// kernel allows a real redirect record under one the check does not reject.
+
+const V4_TARGETS: readonly string[] = [MCP_TARGET_PREFIX, `${MCP_TARGET_PREFIX}standin-x/`, `${MCP_TARGET_PREFIX}standin-x/some-tool`, ...BAD_TARGETS];
+
+interface VerbShape {
+  label: string;
+  verbs: string[] | undefined;
+}
+/** Every verb shape that must be rejected on a V4 target: no verbs, empty verbs, each catalog verb alone, and
+ * each catalog verb next to a marker. */
+function rejectedVerbShapes(): VerbShape[] {
+  return [
+    { label: "absent verbs", verbs: undefined },
+    { label: "empty verbs", verbs: [] },
+    ...CATALOG_VERBS.map((v) => ({ label: `[${v}]`, verbs: [v] })),
+    ...CATALOG_VERBS.map((v) => ({ label: `[marker, ${v}]`, verbs: [MARKERS[0] as string, v] })),
+  ];
+}
+
+test("R2-22 allow-redirect-rejected-on-every-layer (Issues #338, #340, AC-1 to AC-3): an allow rule with no verbs, empty verbs, any catalog verb, or a marker plus a catalog verb, on the bare MCP prefix, a presentable server, a server and tool, and each V2 and V3 target, is a schema-invalid load failure on central, shipped-defaults and project, exactly one error at the target's own field path, naming the rule id and the layer, with the layer-aware Unlock, the shell-redirect reason and the class-marker-only fix", () => {
+  const problems: string[] = [];
+  let cases = 0;
+  for (const target of V4_TARGETS) {
+    for (const shape of rejectedVerbShapes()) {
+      const rule = allow("v4-allow", shape.verbs === undefined ? undefined : [...shape.verbs], [target]);
+      const errors = checkRuleReachability(ruleSet(rule));
+      const unitWhere = `unit / ${shape.label} + ${JSON.stringify(target)}`;
+      if (errors.length !== 1) problems.push(`${unitWhere}: ${String(errors.length)} errors, expected exactly one for one target element`);
+      else if (errors[0]?.field !== "rules[0].targets[0]") problems.push(`${unitWhere}: field ${errors[0]?.field ?? ""}`);
+      for (const layer of LAYERS) {
+        cases += 1;
+        const where = `${layer} / ${shape.label} + ${JSON.stringify(target)}`;
+        problems.push(...loaderRejectionProblems(layer, where, rule));
+        const r = loadOnLayer(layer, [rule]).result;
+        if (r.ok) continue;
+        if (!/shell redirect/.test(r.message)) problems.push(`${where}: the message does not say the rule can match a shell redirect: ${r.message}`);
+        const unlock = r.message.slice(r.message.indexOf("Unlock:"));
+        if (!/class marker verb/.test(unlock)) problems.push(`${where}: the unlock does not name the class marker fix: ${unlock}`);
+        for (const m of MARKERS) if (!unlock.includes(m)) problems.push(`${where}: the unlock does not list the marker ${m}: ${unlock}`);
+      }
+    }
+  }
+  console.log(`R2-22: ${String(cases)} (target x verb shape x layer) loads computed over ${String(V4_TARGETS.length)} targets and ${String(rejectedVerbShapes().length)} verb shapes`);
+  assert.deepEqual(problems, []);
+});
+
+test("R2-22b v4-message-wording: for a catalog-verb allow the text says the verb can match a shell redirect record and the fix keeps only a class marker verb (or a filesystem path target); a multi-target rule reports every offending element at its own index and skips the clean ones", () => {
+  const [e] = checkRuleReachability(ruleSet(allow("wording-v4", ["write"], [`${MCP_TARGET_PREFIX}standin-x/`])), { layer: "project", file: "a/project.json" });
+  assert.ok(e !== undefined);
+  assert.ok(e.message.includes(JSON.stringify("wording-v4")) && e.message.includes(JSON.stringify(`${MCP_TARGET_PREFIX}standin-x/`)), "names the rule id and the target");
+  assert.ok(/can match a shell redirect/.test(e.message), e.message);
+  assert.ok(/silently widens allow/.test(e.message), e.message);
+  assert.ok(/no other verb/.test(e.message) && /filesystem path/.test(e.message), `the fix names the marker-only shape and the path alternative: ${e.message}`);
+  const errors = checkRuleReachability(ruleSet(allow("multi", ["write"], ["src/policy/", `${MCP_TARGET_PREFIX}standin-x/`, "docs/notes.md", MCP_TARGET_PREFIX])));
+  assert.deepEqual(errors.map((x) => x.field), ["rules[0].targets[1]", "rules[0].targets[3]"]);
+});
+
+test("R2-23 shapes-that-keep-loading (Issues #338, #340, AC-4, AC-6): a deny rule on the whole shape matrix, an allow with only a marker (or a marker plus a stray verb, or only stray verbs) on a presentable server, server and tool, or the bare prefix, an allow on a filesystem path or with no targets, and a deny with no verbs keep loading on every layer", () => {
+  const [m0, m1] = [MARKERS[0] as string, MARKERS[1] as string];
+  const rules: { label: string; rule: Rule }[] = [];
+  for (const target of V4_TARGETS) {
+    for (const shape of rejectedVerbShapes()) {
+      rules.push({ label: `deny ${shape.label} + ${JSON.stringify(target)}`, rule: deny("d", shape.verbs === undefined ? undefined : [...shape.verbs], [target]) });
+    }
+  }
+  const presentable = [MCP_TARGET_PREFIX, `${MCP_TARGET_PREFIX}standin-x/`, `${MCP_TARGET_PREFIX}standin-x/some-tool`];
+  for (const target of presentable) {
+    for (const verbs of [[m0], [m0, m1], [...MARKERS], [m0, "some-other-verb"], [m0, "WRITE"], ["some-other-verb"], ["WRITE"], [""]]) {
+      rules.push({ label: `allow ${JSON.stringify(verbs)} + ${JSON.stringify(target)}`, rule: allow("a", verbs, [target]) });
+    }
+  }
+  for (const target of ["src/policy/", "docs/notes.md", "src/policy/x.ts"]) {
+    for (const verbs of [undefined, [], ["write"], [m0]] as (string[] | undefined)[]) rules.push({ label: `allow ${JSON.stringify(verbs)} + path ${target}`, rule: allow("p", verbs, [target]) });
+  }
+  rules.push({ label: "allow with no verbs and no targets", rule: allow("bare") });
+  rules.push({ label: "allow with a catalog verb and no targets", rule: allow("bare-verb", ["write"]) });
+  const problems: string[] = [];
+  for (const layer of LAYERS) {
+    for (const { label, rule } of rules) {
+      const r = loadOnLayer(layer, [rule]).result;
+      if (!r.ok) problems.push(`${layer} / ${label}: rejected: ${r.message}`);
+    }
+  }
+  console.log(`R2-23: ${String(rules.length)} keeps-loading rules x ${String(LAYERS.length)} layers computed`);
+  assert.deepEqual(problems, []);
+});
+
+/** Real shell redirect records whose target sits under the MCP prefix: the redirect corpus plus verb-first
+ * shapes built from every catalog verb (as R2-17 part 1), each through the REAL shell normalizer,
+ * de-duplicated by verbs, targets and unresolved fields. */
+function redirectRecords(): ActionRecord[] {
+  const out = new Map<string, ActionRecord>();
+  const add = (r: ActionRecord): void => {
+    if (!r.targets.some((t) => t.startsWith(MCP_TARGET_PREFIX))) return;
+    out.set(JSON.stringify([r.verbs, r.targets, r.unresolved]), r);
+  };
+  const targets = new Set<string>();
+  for (const call of mcpRedirectCalls()) {
+    const r = normalize("shell", call);
+    add(r);
+    for (const t of r.targets) if (t.startsWith(MCP_TARGET_PREFIX)) targets.add(t);
+  }
+  for (const target of targets) {
+    for (const v of CATALOG_VERBS) {
+      for (const command of [`tool ${v} > ${target}`, `tool ${v} pods/x --context c > ${target}`, `tool ${v} x --context c > ${target}`, `tool ${v} ${target}`]) {
+        add(normalize("shell", { command, environment: "unknown", identity: "s338-340" }));
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** Every candidate allow rule: verbs in {absent, empty, each catalog verb, each catalog verb plus a marker, each
+ * marker, a marker plus each stray verb, each stray verb alone} x targets in {bare prefix, presentable server
+ * and server/tool, the V2/V3 targets, every emitted target verbatim, every directory prefix of each}. */
+const NON_CANONICAL_PREFIX_TARGETS = ["MCP/", "Mcp/standin-x/", "./mcp/", "/mcp/", " mcp/"];
+
+function candidateAllowRules(emitted: string[]): Rule[] {
+  // Non-canonical spellings of the prefix (Issue #338/#340 red-team finding 1): every emitted target starts with
+  // "mcp/", so without these a case-insensitive or otherwise lax kernel matcher would pass this suite unnoticed.
+  const targetSet = new Set<string>([MCP_TARGET_PREFIX, ...V4_TARGETS, ...NON_CANONICAL_PREFIX_TARGETS]);
+  for (const t of emitted) {
+    targetSet.add(t);
+    for (let i = t.indexOf("/"); i >= 0; i = t.indexOf("/", i + 1)) targetSet.add(t.slice(0, i + 1));
+  }
+  const verbSets: (string[] | undefined)[] = [undefined, [], ...CATALOG_VERBS.map((v) => [v]), ...CATALOG_VERBS.map((v) => [MARKERS[0] as string, v]), ...MARKERS.map((m) => [m]), [...MARKERS]];
+  for (const stray of STRAY_VERBS) verbSets.push([MARKERS[0] as string, stray], [stray]);
+  const rules: Rule[] = [];
+  for (const target of targetSet) for (const verbs of verbSets) rules.push(allow("cand", verbs === undefined ? undefined : [...verbs], [target]));
+  return rules;
+}
+
+/** The soundness comparator: the candidates `reject` lets load although the real kernel, under a deny baseline,
+ * returns allow for a real redirect record. Empty means the reject function is sound against the kernel. */
+function unsoundCandidates(reject: (rule: Rule) => boolean, rules: Rule[], records: ActionRecord[], kernelOutcome: (rule: Rule, record: ActionRecord) => string = (rule, r) => decide({ rules: ruleSet(rule), defaultOutcome: "deny" }, r).outcome): string[] {
+  const unsound: string[] = [];
+  for (const rule of rules) {
+    if (reject(rule)) continue;
+    const hit = records.find((r) => kernelOutcome(rule, r) === "allow");
+    if (hit !== undefined) unsound.push(`allow verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)} loads but the kernel allows redirect record verbs ${JSON.stringify(hit.verbs)} targets ${JSON.stringify(hit.targets)}`);
+  }
+  return unsound;
+}
+
+test("R2-24 allow-redirect-soundness-against-the-real-kernel (Issues #338, #340, AC-5): over candidate allow rules enumerated from the real shell normalizer's redirect records (marker-only and marker plus stray included), every candidate the REAL kernel allows a REAL redirect record under is rejected by the check, and nothing else is (load = not explained by V2, V3 or V4); the comparator can fail (mutant predicates and control rules)", () => {
+  const records = redirectRecords();
+  const emitted = [...new Set(records.flatMap((r) => r.targets.filter((t) => t.startsWith(MCP_TARGET_PREFIX))))];
+  assert.ok(records.length > 0 && emitted.length > 0, "the corpus holds redirect records under the MCP prefix (the instrument must be able to fail)");
+  const candidates = candidateAllowRules(emitted);
+  const real = (rule: Rule): boolean => checkRuleReachability(ruleSet(rule)).length > 0;
+
+  // 1. soundness (load-bearing): no candidate loads while the kernel allows a real redirect record under it
+  const unsound = unsoundCandidates(real, candidates, records);
+  assert.deepEqual(unsound, [], "an allow the check lets load matches a real redirect record: the kernel, not the reading, is authoritative; STOP and report");
+
+  // 2. precision: the rejected set is exactly V4 union V2/V3 (recomputed here from the exported vocabulary)
+  const problems: string[] = [];
+  let rejected = 0;
+  let loaded = 0;
+  let kernelAllowedAndRejected = 0;
+  let markerOnlyLoaded = 0;
+  for (const rule of candidates) {
+    const verbs = rule.verbs ?? [];
+    const targets = rule.targets ?? [];
+    const v4 = targets.some((t) => t.startsWith(MCP_TARGET_PREFIX)) && (verbs.length === 0 || verbs.some((v) => KNOWN_VERBS.has(v)));
+    const v23 = verbs.some((v) => MARKERS.includes(v)) && !verbs.some((v) => KNOWN_VERBS.has(v)) && targets.some(failsV2OrV3);
+    const errors = checkRuleReachability(ruleSet(rule));
+    if (errors.length > 0) rejected += 1;
+    else loaded += 1;
+    if ((errors.length > 0) !== (v4 || v23)) problems.push(`verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)}: check ${errors.length > 0 ? "rejects" : "loads"}, expected ${v4 || v23 ? "a rejection" : "a load"}`);
+    if (errors.length > 1 && !targets.some(failsV2OrV3)) problems.push(`verbs ${JSON.stringify(rule.verbs)} targets ${JSON.stringify(rule.targets)}: ${String(errors.length)} errors for one target element (only V2 and V3 together may speak twice)`);
+    if (errors.length > 0 && records.some((r) => decide({ rules: ruleSet(rule), defaultOutcome: "deny" }, r).outcome === "allow")) kernelAllowedAndRejected += 1;
+    if (errors.length === 0 && verbs.length > 0 && verbs.every((v) => MARKERS.includes(v)) && targets.some((t) => t.startsWith(MCP_TARGET_PREFIX))) markerOnlyLoaded += 1;
+  }
+  console.log(`R2-24: ${String(records.length)} real redirect records (${String(emitted.length)} distinct mcp targets); ${String(candidates.length)} candidate allow rules: ${String(rejected)} rejected, ${String(loaded)} load; ${String(kernelAllowedAndRejected)} rejected candidates the kernel allows a real redirect record under; ${String(unsound.length)} unsound; ${String(markerOnlyLoaded)} marker-only candidates on mcp targets load and match no redirect record`);
+  assert.deepEqual(problems, []);
+  assert.ok(kernelAllowedAndRejected > 0, "the kernel does allow real redirect records under some candidates, so the soundness direction is measured, not vacuous");
+  assert.ok(markerOnlyLoaded > 0, "marker-only allows on presentable targets are in the candidate set and load (CONDITION: marker-only and marker plus stray candidates are enumerated)");
+
+  // 3. the comparator can fail: mutant predicates that drop a branch are caught, as is one that rejects nothing
+  const mutantNoEmptyBranch = (rule: Rule): boolean => real(rule) && (rule.verbs ?? []).length > 0;
+  const mutantNoCatalogBranch = (rule: Rule): boolean => real(rule) && !(rule.verbs ?? []).some((v) => KNOWN_VERBS.has(v));
+  const mutantRejectNothing = (): boolean => false;
+  const caught: Record<string, number> = {
+    "drop the no-verbs branch": unsoundCandidates(mutantNoEmptyBranch, candidates, records).length,
+    "drop the catalog-verb branch": unsoundCandidates(mutantNoCatalogBranch, candidates, records).length,
+    "reject nothing": unsoundCandidates(mutantRejectNothing, candidates, records).length,
+  };
+  console.log(`R2-24 mutants: unsound candidates found per mutant ${JSON.stringify(caught)}`);
+  for (const [name, n] of Object.entries(caught)) assert.ok(n > 0, `the comparator must catch the mutant "${name}"`);
+
+  // 3b. the kernel side can fail too (red-team finding 1, mutant M10): a kernel whose target matcher is case-
+  // insensitive allows redirect records under candidates the check (correctly, for the real kernel) lets load;
+  // the non-canonical-prefix candidates make this suite catch it. The mutant is injected, so the proof is permanent.
+  const ciKernel = (rule: Rule, r: ActionRecord): string => {
+    const verbs = rule.verbs ?? [];
+    const targets = rule.targets ?? [];
+    const verbOk = verbs.length === 0 || r.verbs.some((v) => verbs.includes(v));
+    const targetOk = targets.length === 0 || r.targets.some((t) => targets.some((p) => (p.endsWith("/") ? t.toLowerCase().startsWith(p.toLowerCase()) : t.toLowerCase() === p.toLowerCase())));
+    return verbOk && targetOk ? "allow" : "deny";
+  };
+  const ciUnsound = unsoundCandidates(real, candidates, records, ciKernel);
+  console.log(`R2-24 M10 (case-insensitive kernel matcher, injected): ${String(ciUnsound.length)} unsound candidates`);
+  assert.ok(ciUnsound.some((u) => /targets \["(MCP\/|Mcp\/standin-x\/)"\]/.test(u)), "R2-24 must fail under a case-insensitive kernel matcher, via a non-canonical-prefix candidate");
+
+  // 4. control rules: an allow aimed elsewhere does not match (the kernel says deny), and a path allow that the
+  // kernel allows against a non-mcp record is not rejected
+  const first = records[0] as ActionRecord;
+  assert.equal(decide({ rules: ruleSet(allow("elsewhere", undefined, [`${MCP_TARGET_PREFIX}some-other-place/`])), defaultOutcome: "deny" }, first).outcome, "deny", "a control rule aimed at another target returns the deny baseline");
+  const pathRecord = normalize("shell", { command: "echo x > src/policy/a.txt", environment: "unknown", identity: "s338-340" });
+  const pathRule = allow("path-control", undefined, ["src/policy/"]);
+  assert.deepEqual(pathRecord.targets, ["src/policy/a.txt"]);
+  assert.equal(decide({ rules: ruleSet(pathRule), defaultOutcome: "deny" }, pathRecord).outcome, "allow", "the kernel allows a real non-mcp redirect record under the path allow");
+  assert.deepEqual(checkRuleReachability(ruleSet(pathRule)), [], "a filesystem-path allow is not rejected (decisions row 83(a))");
+});
+
+test("R2-25 headers-no-longer-call-the-allow-shapes-residual (Issues #338, #340, AC-8): neither rule-reachability.ts nor tool-class-format.ts still calls the allow-on-MCP-target shapes benign, disclosed or not rejected; both name V4 as the rejecting check", () => {
+  const files = {
+    "rule-reachability.ts": readFileSync(MODULE_PATH, "utf8"),
+    "tool-class-format.ts": readFileSync(fileURLToPath(new URL("../normalizer/tool-class-format.ts", import.meta.url)), "utf8"),
+  };
+  const stale: [RegExp, string][] = [
+    [/NOT BENIGN/, "the 'not benign' paragraph"],
+    [/still load by ruling/, "the 'still load by ruling' claim"],
+    [/is not rejected there/, "the fact-4 'not rejected there' sentence"],
+    [/allow rule keyed on a presentable server\s+target without a marker verb \(Issue #338\)/, "the Issue #338 backlog exclusion"],
+    [/disclosed residual routed to the activation story[^.]*\(Issue #33[89]\)|\(Issue #340\)/, "an open-residual citation of #338 or #340"],
+  ];
+  const problems: string[] = [];
+  for (const [name, text] of Object.entries(files)) {
+    for (const [re, what] of stale) if (re.test(text)) problems.push(`${name} still holds ${what}`);
+    if (!/\bV4\b/.test(text)) problems.push(`${name} does not name the V4 check`);
+    if (!/allow-redirect/.test(text)) problems.push(`${name} does not name the allow-redirect rule`);
+  }
+  console.log(`R2-25: ${String(Object.keys(files).length)} headers scanned for ${String(stale.length)} stale phrases`);
+  assert.deepEqual(problems, []);
 });

@@ -5,18 +5,17 @@
 //
 // The 3 production hooks (hooks/*.mjs, non-recursive — hooks/*.test.ts and hooks/test-support/**
 // are a different, non-production concern, same lane-scoping tsconfig.hooks.json's own header
-// already establishes) are checked against tsconfig.hooks-coverage.json — a QA-ONLY project
-// (never wired into `npm run build`/`npm run typecheck`) that includes all 3, unlike the real
-// build gate's tsconfig.hooks.json, which includes only the one hook (pretooluse-kernel-gate.mjs)
-// that's fully clean today.
+// already establishes) are checked against tsconfig.hooks-coverage.json, a QA-only project
+// resolved by this instrument. Since Issue #361 closed, all 3 hooks are ALSO in the real build
+// gate's tsconfig.hooks.json and typecheck clean; the pinned baseline is empty. This instrument
+// stays as a complementary guard: it fails CI if a NEW hook under hooks/ is not covered, and it
+// scans for suppressions no compiler can see.
 //
-// EXCEPTION LIST (dated, named — Issue #361, not a phantom docs/backlog.md line, red-team round 2
-// finding R5): hooks/sessionstart-tool-enum.mjs and hooks/userpromptsubmit-halt-relay.mjs each
-// carry pre-existing, unrelated implicit-any/type-mismatch diagnostics (measured 2026-09-28: 30
-// and 22 respectively) that this fix-now round does not scope in fixing. Rather than exempting
-// them from coverage entirely (which would make a NEW regression on either file invisible again —
-// exactly the Issue #361 gap this instrument exists to close), each is held to a PINNED set of
-// diagnostic IDENTITIES instead of a raw count.
+// HISTORY (kept because the ratchet mechanics below still apply to any future pinned entry): until
+// Issue #361 closed (2026-09-30), hooks/sessionstart-tool-enum.mjs and
+// hooks/userpromptsubmit-halt-relay.mjs carried pre-existing implicit-any/type-mismatch
+// diagnostics (measured 2026-09-28: 30 and 22) and were held to a PINNED set of diagnostic
+// IDENTITIES instead of a raw count, so a NEW regression stayed visible while the debt was paid down.
 //
 // Issue #367 (app-security HIGH) + red-team round-3 finding R4 (2026-09-28), same defect, two
 // routes: the ORIGINAL implementation compared a raw COUNT (`count > baseline`). A `// @ts-ignore`
@@ -52,8 +51,9 @@
 //
 // Suppressions (Issue #367 / N2 / N4): none of the above can see a diagnostic that a suppression
 // removes from the compiler's output. So this instrument also fails any hook containing a `@ts-*`
-// pragma, an `eslint-disable` directive, or a JSDoc `@type {any}`/`{*}` cast — see
-// `scanHookSuppressions` — independent of lint config.
+// pragma, an `eslint-disable` directive, or a JSDoc type the TypeScript CHECKER resolves to `any` (or an
+// `Object` reference), outside 8 pinned SITES — see `scanHookSuppressions`, which also records what it
+// does not catch (a double cast through `unknown`) — independent of lint config.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
@@ -121,8 +121,7 @@ function expandSnapshot(snapshot: BaselineSnapshot): Record<string, readonly str
   return out;
 }
 
-/** Dated, named exception list (Issue #361): hooks held to a pinned MULTISET of diagnostic
- * identities instead of zero, loaded from the committed, generated snapshot
+/** Hooks held to a pinned MULTISET of diagnostic identities instead of zero (empty since Issue #361 closed), loaded from the committed, generated snapshot
  * (src/qa/hook-typecheck-baseline.json). Any hook NOT listed must have zero diagnostics. Each
  * identity appears once per occurrence (duplicates are intentional: see the header). */
 export const PINNED_BASELINES: Readonly<Record<string, readonly string[]>> = existsSync(BASELINE_SNAPSHOT_PATH)
@@ -142,21 +141,195 @@ export function listProductionHooks(repoRoot: string): string[] {
     .sort();
 }
 
-/** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29).
- * A suppression removes a real diagnostic from `ts.getPreEmitDiagnostics`' output entirely, so no
- * baseline, count or identity scheme can see it: it has to be refused at the source. The class, not
- * a list of spellings: every `@ts-*` pragma, any `eslint-disable` directive (it can switch the lint
- * ban off), and a JSDoc `@type {any}` / `@type {*}` cast (kills the diagnostic with no pragma at all).
- * A plain text scan on purpose: deny-by-default. It also flags the same text inside a string literal,
- * and that false positive is the accepted price of not having to parse comments; the unlock is to
- * reword. Returns one finding per distinct class hit, empty when the source is clean. */
-export function scanHookSuppressions(source: string): string[] {
+/** One reviewed exception to the JSDoc `any` ban (Issue #374), keyed by SITE, not annotation text: a
+ * hook annotation that stays `any` because it types an untrusted JSON-input shape whose narrowing
+ * would need a runtime code-token change in a hook whose inline sanitize copy must stay token-identical
+ * (Issue #361 AC-7: JSDoc-only). `site` is `<enclosing function>: @<tag> <target>` (target = the
+ * parameter/variable/property the tag types, empty for `@returns`), so moving an allowed `any` to a
+ * different function or parameter is a NEW site and fails, even when the annotation text and the
+ * count are unchanged. `count` is the exact number of any-typed type nodes at that site. Extending
+ * this list is a visible edit, mirrored by the exact-contents pin in
+ * hook-typecheck-coverage-check.round3.test.ts. */
+export interface JsdocAnyAllowance {
+  hook: string;
+  site: string;
+  count: number;
+  reason: string;
+}
+export const JSDOC_ANY_ALLOWLIST: readonly JsdocAnyAllowance[] = [
+  { hook: "hooks/pretooluse-kernel-gate.mjs", site: "failClosed: @param err", count: 1, reason: "a thrown value can be any shape; the handler deliberately probes it defensively" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "wasReasonActive: @param initialHaltState", count: 1, reason: "untrusted halt-state JSON read from disk; every property access is guarded at runtime" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "reconcileReason: @param initialHaltState", count: 1, reason: "same untrusted halt-state JSON, passed on to the reconciler" },
+  { hook: "hooks/sessionstart-tool-enum.mjs", site: "isProjectMcpServerEnabled: @param projectSettings", count: 1, reason: "untrusted .claude/settings.json content; shape-checked at runtime" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "inspectHaltState: @param haltState", count: 1, reason: "untrusted halt-state JSON; inspectHaltState is the runtime shape validator, and narrowing needs a code-token change in the relay" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "inspectHaltState: @type activeReasons", count: 1, reason: "activeReasons entries are validated JSON entries, produced by inspectHaltState" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "composeTrustedSummary: @param activeReasons", count: 1, reason: "same validated entries, passed on to the trusted-summary renderer" },
+  { hook: "hooks/userpromptsubmit-halt-relay.mjs", site: "composeDiagnosticLines: @param activeReasons", count: 1, reason: "same validated entries, passed on to the diagnostic-lines renderer" },
+];
+
+/** A program plus the absolute path of the hook source file being scanned inside it. */
+export interface ScanContext {
+  program: ts.Program;
+  fileName: string;
+}
+
+interface JsdocAnyHit {
+  site: string;
+  /** `@param {any} x`-style text for the finding message. */
+  text: string;
+  kind: "any" | "Object";
+}
+
+function isFunctionLike(n: ts.Node): n is ts.FunctionLikeDeclaration {
+  return ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n) || ts.isConstructorDeclaration(n);
+}
+
+function functionName(fn: ts.FunctionLikeDeclaration): string {
+  if (fn.name && ts.isIdentifier(fn.name)) return fn.name.text;
+  const parent = fn.parent;
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+  return "<anonymous>";
+}
+
+/** The function a JSDoc block belongs to: the annotated function itself, else the nearest enclosing one. */
+function enclosingFunctionName(owner: ts.Node): string {
+  for (let n: ts.Node | undefined = owner; n; n = n.parent) if (isFunctionLike(n)) return functionName(n);
+  return "<module>";
+}
+
+function tagTarget(tag: ts.JSDocTag, owner: ts.Node, sf: ts.SourceFile): string {
+  const name = (tag as { name?: ts.Node }).name;
+  if (name) return name.getText(sf);
+  if (ts.isVariableStatement(owner)) {
+    const decl = owner.declarationList.declarations[0];
+    if (decl && ts.isIdentifier(decl.name)) return decl.name.text;
+  }
+  return "";
+}
+
+/** Checks each JSDoc tag's `typeExpression` (any tag carrying one, either `@param` order, including types
+ * nested in generics, unions, `@typedef` properties and `@callback` signatures) and flags every node whose
+ * type the CHECKER resolves to `any` AT THAT NODE, plus any explicit `Object` reference. Because the test is
+ * the resolved type of the node, differing spellings of `any` are caught: `{?}`, `{*}`, `{any}`,
+ * `{"}" | any}`, a type on the next line, an alias that is itself `any`, `ReturnType<typeof JSON.parse>`.
+ * A flagged `any` node is not descended into, so `{"}" | any}` (a union that absorbs to `any`) is one hit.
+ * NOT covered (Backlog chore #378): it does not walk `@template` defaults/constraints or `@extends` /
+ * `@implements` class expressions; it does not see an `any` nested INSIDE a lib or imported alias (for
+ * example `ReturnType<typeof Object.values>`, whose node type is not itself `any`); and it does not flag
+ * `{Function}`. */
+function collectJsdocAnySites(program: ts.Program, sf: ts.SourceFile): JsdocAnyHit[] {
+  const checker = program.getTypeChecker();
+  const hits: JsdocAnyHit[] = [];
+  const seenTags = new Set<number>();
+  const visitType = (n: ts.Node, tag: ts.JSDocTag, owner: ts.Node): void => {
+    const isTypeLike = ts.isTypeNode(n) || n.kind === ts.SyntaxKind.JSDocAllType || n.kind === ts.SyntaxKind.JSDocUnknownType;
+    if (isTypeLike) {
+      const kind: "any" | "Object" | undefined =
+        checker.getTypeFromTypeNode(n as ts.TypeNode).flags & ts.TypeFlags.Any
+          ? "any"
+          : ts.isTypeReferenceNode(n) && ts.isIdentifier(n.typeName) && n.typeName.text === "Object"
+            ? "Object"
+            : undefined;
+      if (kind !== undefined) {
+        const target = tagTarget(tag, owner, sf);
+        const site = `${enclosingFunctionName(owner)}: @${tag.tagName.text}${target ? ` ${target}` : ""}`;
+        const typeText = n.getText(sf).replace(/\s+/g, " ");
+        hits.push({ site, kind, text: `@${tag.tagName.text} {${typeText}}${target ? ` ${target}` : ""}` });
+        if (kind === "any") return;
+      }
+    }
+    ts.forEachChild(n, (c) => visitType(c, tag, owner));
+  };
+  const visit = (node: ts.Node): void => {
+    for (const doc of (node as { jsDoc?: ts.JSDoc[] }).jsDoc ?? []) {
+      for (const tag of doc.tags ?? []) {
+        if (seenTags.has(tag.pos)) continue;
+        seenTags.add(tag.pos);
+        const expr = (tag as { typeExpression?: ts.Node }).typeExpression;
+        if (expr) visitType(expr, tag, node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return hits;
+}
+
+// One in-memory program per scan of a bare source string (tests, ad-hoc use). The virtual file lives
+// at <cwd>/hooks/ so relative `import("../src/...")` types resolve like a real hook's; every other
+// file (lib.d.ts, imported modules) is read from disk once and cached.
+let virtualScanOptions: ts.CompilerOptions | undefined;
+const diskSourceCache = new Map<string, ts.SourceFile | undefined>();
+const slashed = (p: string): string => p.split("\\").join("/");
+function scanContextForSource(source: string): ScanContext {
+  if (virtualScanOptions === undefined) {
+    const cfgPath = join(process.cwd(), COVERAGE_TSCONFIG);
+    const read = ts.readConfigFile(cfgPath, (p) => ts.sys.readFile(p));
+    virtualScanOptions = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(cfgPath)).options;
+  }
+  const fileName = slashed(join(process.cwd(), "hooks", "__jsdoc-scan__.mjs"));
+  const host = ts.createCompilerHost(virtualScanOptions);
+  const realGetSourceFile = host.getSourceFile.bind(host);
+  const realFileExists = host.fileExists.bind(host);
+  const realReadFile = host.readFile.bind(host);
+  host.getSourceFile = (name, languageVersionOrOptions, ...rest) => {
+    if (slashed(name) === fileName) return ts.createSourceFile(name, source, languageVersionOrOptions, true, ts.ScriptKind.JS);
+    if (!diskSourceCache.has(name)) diskSourceCache.set(name, realGetSourceFile(name, languageVersionOrOptions, ...rest));
+    return diskSourceCache.get(name);
+  };
+  host.fileExists = (name) => slashed(name) === fileName || realFileExists(name);
+  host.readFile = (name) => (slashed(name) === fileName ? source : realReadFile(name));
+  return { program: ts.createProgram({ rootNames: [fileName], options: virtualScanOptions, host }), fileName };
+}
+
+/** Type-suppression CLASS scan (Issue #367 + red-team N2/N4, app-security finding 1, 2026-09-29;
+ * JSDoc-any half rebuilt on the TypeScript checker by Issue #374 round 3, 2026-09-30).
+ *
+ * WHAT IT CATCHES: (1) every `@ts-*` pragma and any `eslint-disable` directive (a text scan: a
+ * suppression removes a diagnostic from the compiler's output, so nothing downstream can see it);
+ * (2) every JSDoc type node, in any tag and any position, that the checker resolves to `any` (`{any}`,
+ * `{?}`, `{*}`, unions and aliases that absorb to any, lib-derived any such as
+ * `ReturnType<typeof JSON.parse>`), excused only by an exact-count SITE in JSDOC_ANY_ALLOWLIST for the
+ * named `hook`; (3) an explicit `Object` reference in a JSDoc type: not `any` under strict, so the
+ * checker does not subsume it, and it stays a separate type-node-level ban that is never allow-listed.
+ *
+ * WHAT IT DOES NOT CATCH (recorded residuals; the JSDoc-type gaps are tracked in Backlog chore #378):
+ * a `@template` default or constraint and an `@extends` / `@implements` class expression (those type
+ * positions are not walked); an `any` nested inside a lib or imported alias (e.g.
+ * `ReturnType<typeof Object.values>`) since only the node's own resolved type is tested; `{Function}`;
+ * helper modules outside `hooks/*.mjs` (the hook listing is non-recursive); a double cast through
+ * `unknown` in runtime-visible code,
+ * for example `/** @type {Foo} *\/ (/** @type {unknown} *\/ (x))`, is a legitimate `unknown` plus a
+ * legitimate narrowing and sits outside the JSDoc-`any` class; and a JSDoc block the TypeScript parser
+ * does not attach to any node is not compiled either, so it is not seen. Returns one finding per
+ * distinct hit, empty when the source is clean. */
+export function scanHookSuppressions(
+  source: string,
+  hook?: string,
+  allowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST,
+  context?: ScanContext,
+): string[] {
   const findings: string[] = [];
   const pragma = /@ts-(?:ignore|expect-error|nocheck|check)\b/.exec(source);
   if (pragma) findings.push(pragma[0]);
   if (/eslint-disable/.test(source)) findings.push("eslint-disable");
-  const cast = /@type\s*\{\s*(?:any|\*)\s*\}/.exec(source);
-  if (cast) findings.push(cast[0]);
+
+  const ctx = context ?? scanContextForSource(source);
+  const sf = ctx.program.getSourceFile(ctx.fileName);
+  if (!sf) return [...findings, `${ctx.fileName}: not in the scan program (its JSDoc types cannot be checked)`];
+  const allowed = new Map<string, number>();
+  for (const a of allowlist) if (a.hook === hook) allowed.set(a.site, (allowed.get(a.site) ?? 0) + a.count);
+  const seen = new Map<string, number>();
+  const reported = new Set<string>();
+  for (const hit of collectJsdocAnySites(ctx.program, sf)) {
+    const key = `${hit.kind}|${hit.site}`;
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    if (hit.kind === "any" && n <= (allowed.get(hit.site) ?? 0)) continue;
+    if (reported.has(key)) continue;
+    reported.add(key);
+    findings.push(`${hit.text} [site ${hit.site}]`);
+  }
   return findings;
 }
 
@@ -179,7 +352,7 @@ function countByIdentity(identities: readonly string[]): Map<string, number> {
 function resolveProjectAndDiagnostics(
   repoRoot: string,
   configPathOverride?: string,
-): { fileNames: string[]; diagnosticsByFile: Map<string, DiagnosticInfo[]> } {
+): { fileNames: string[]; diagnosticsByFile: Map<string, DiagnosticInfo[]>; program: ts.Program } {
   const configPath = configPathOverride ?? join(repoRoot, COVERAGE_TSCONFIG);
   const readResult = ts.readConfigFile(configPath, (path) => ts.sys.readFile(path));
   if (readResult.error) {
@@ -198,11 +371,12 @@ function resolveProjectAndDiagnostics(
     if (list) list.push(info);
     else diagnosticsByFile.set(rel, [info]);
   }
-  return { fileNames: parsed.fileNames.map((f) => toRepoRelative(repoRoot, f)), diagnosticsByFile };
+  return { fileNames: parsed.fileNames.map((f) => toRepoRelative(repoRoot, f)), diagnosticsByFile, program };
 }
 
 /**
- * `configPathOverride` lets tests point this at a fixture project instead of the real
+ * `jsdocAnyAllowlist` (tests only) re-keys the reviewed allow-list for a mutated COPY of a real
+ * hook living at a temporary path. `configPathOverride` lets tests point this at a fixture project instead of the real
  * `tsconfig.hooks-coverage.json` — same testability pattern `checkKernelPurity`'s `kernelRoot`
  * parameter and `checkNormalizerRegistryPurity`'s `registryRepoRelPath` parameter already use.
  */
@@ -211,6 +385,7 @@ export function checkHookTypecheckCoverage(
   hooks: string[] = listProductionHooks(repoRoot),
   pinnedBaselines: Readonly<Record<string, readonly string[]>> = PINNED_BASELINES,
   configPathOverride?: string,
+  jsdocAnyAllowlist: readonly JsdocAnyAllowance[] = JSDOC_ANY_ALLOWLIST,
 ): InstrumentResult {
   if (hooks.length === 0) {
     return { ok: true, vacuous: true, summary: "0 production hook(s) found under hooks/ — vacuous pass.", details: [] };
@@ -226,7 +401,8 @@ export function checkHookTypecheckCoverage(
       details.push(`${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — no tsconfig project covers it at all`);
       continue;
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(repoRoot, hook), "utf8"));
+    const abs = resolve(repoRoot, hook);
+    const suppressions = scanHookSuppressions(readFileSync(abs, "utf8"), hook, jsdocAnyAllowlist, { program: project.program, fileName: abs });
     if (suppressions.length > 0) {
       failures++;
       details.push(
@@ -239,7 +415,7 @@ export function checkHookTypecheckCoverage(
     if (pinned === undefined) {
       if (current.length !== 0) {
         failures++;
-        details.push(`${hook}: ${current.length} diagnostic(s) found, expected 0 (not on the Issue #361 exception list — must be fully clean)`);
+        details.push(`${hook}: ${current.length} diagnostic(s) found, expected 0 (no pinned baseline for this hook, so it must be fully clean)`);
       } else {
         details.push(`${hook}: 0 diagnostic(s), fully covered`);
       }
@@ -261,10 +437,14 @@ export function checkHookTypecheckCoverage(
     if (newOrExcess.length > 0) {
       failures++;
       details.push(
-        `${hook}: ${current.length} diagnostic(s) found, ${newOrExcess.length} identity(ies) exceed the pinned Issue #361 baseline — a NEW regression, not the known pre-existing debt: ${newOrExcess.join(", ")}`,
+        `${hook}: ${current.length} diagnostic(s) found, ${newOrExcess.length} identity(ies) exceed the pinned baseline — a NEW diagnostic, not one already accepted in src/qa/hook-typecheck-baseline.json: ${newOrExcess.join(", ")}`,
       );
     } else {
-      details.push(`${hook}: ${current.length} diagnostic(s) (pinned Issue #361 baseline: ${pinned.length}, pre-existing debt, not yet fixed)`);
+      details.push(
+        pinned.length === 0
+          ? `${hook}: 0 diagnostic(s), fully covered (empty pinned baseline)`
+          : `${hook}: ${current.length} diagnostic(s) (pinned baseline: ${pinned.length}, none new)`,
+      );
     }
   }
 
@@ -337,7 +517,8 @@ export function regenerateBaseline(options: RegenerateOptions): RegenerateResult
     if (!project.fileNames.includes(hook)) {
       return { ok: false, added, removed, refusal: `${hook}: does not resolve inside ${COVERAGE_TSCONFIG}'s file list — nothing to measure.` };
     }
-    const suppressions = scanHookSuppressions(readFileSync(resolve(options.repoRoot, hook), "utf8"));
+    const abs = resolve(options.repoRoot, hook);
+    const suppressions = scanHookSuppressions(readFileSync(abs, "utf8"), hook, JSDOC_ANY_ALLOWLIST, { program: project.program, fileName: abs });
     if (suppressions.length > 0) {
       return { ok: false, added, removed, refusal: `${hook}: contains a type-suppression (${suppressions.join(", ")}); remove it before re-pinning — a baseline generated around a hidden diagnostic launders it.` };
     }

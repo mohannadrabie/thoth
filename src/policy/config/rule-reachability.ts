@@ -4,7 +4,7 @@
 // deny rule that silently denies nothing. This module is called by loader.ts's parseLayerText after the
 // schema check passes, and its errors join the same `schema-invalid` failure (no new failure kind).
 //
-// Three checks, applied per ELEMENT of `verbs` and `targets` (a rule listing one valid and one mistyped
+// Four checks, applied per ELEMENT of `verbs` and `targets` (a rule listing one valid and one mistyped
 // marker is rejected, because the mistyped element is inert):
 //   V1  a verb that starts with the class-marker prefix and is not one of the class markers.
 //   V2  a target that is the MCP target prefix plus a server name with no "/" after it: no CLASS record's
@@ -44,20 +44,29 @@
 // R2-13 (loader-reachability.test.ts) proves the shared-namespace half against the real shell normalizer
 // and kernel.
 //
-// NOT rejected, on purpose: the bare MCP prefix (matches every MCP target), a server plus trailing "/",
-// a server plus tool, and the legacy mutating verbs plus an MCP target (shape c: matches only
-// shell-emitted records and never a class record; documented in tool-class-format.ts, rule-author fact 4,
-// and a disclosed residual, Issue #329). A verb list with no class marker (only stray verbs, none a verb a
-// normalizer emits) is out of scope (docs/backlog.md), as is an allow rule keyed on a presentable server
-// target without a marker verb (Issue #338).
+//   V4  allow-redirect-reachable (Issues #338 and #340, Manager rulings 2026-09-30: reject at load, fail closed; SE ADR-0005
+//       replaced the locked tests that pinned the old behavior). An ALLOW rule with any target that starts with
+//       the MCP target prefix (the bare prefix, a server, a server and tool, presentable or not) is rejected when
+//       its verbs are absent or empty (match every verb) or include at least one catalog verb (a verb a
+//       normalizer emits). Such a rule can match the record the shell normalizer emits for a redirect into a
+//       directory of that name (verb write, a file write the baseline may deny), so it loads clean and silently
+//       widens allow. R2-17 part 1 measures with the real kernel that write is the widening verb, and R2-24
+//       enumerates candidate rules against real redirect records: the kernel, not this reading, is
+//       authoritative. V4 is layer-aware like every other check (below) and joins the same `schema-invalid`
+//       failure; where V2 or V3 already rejects the same target element only that message is emitted.
+//       What still loads: an allow whose verbs are class markers only (the form tool-class-format.ts, rule-author
+//       fact 3, prescribes: only a class record carries a marker) or a marker plus a stray verb, on a target the
+//       runtime presents; an allow on a filesystem path or with no targets (row 83(a) of docs/decisions.md);
+//       every DENY rule (a match on a shell record only denies more).
+//       MIGRATION (central rule authors, whose source is out of repo and cannot be measured here): an allow on an
+//       MCP target must carry a class marker verb and no catalog verb; an allow with no verbs on such a target
+//       is now a load error. R2-10 measures the two committed layers (0 rules each).
 //
-// THE SURVIVING SHAPES ARE NOT BENIGN FOR AN ALLOW EFFECT. For a deny, matching a shell-emitted record only
-// denies more. For an allow it is the widening the rejection above exists to stop, and three allow shapes
-// still load by ruling and CAN match a shell redirect record: an allow with a catalog verb (write) on a
-// server target the runtime never presents (R2-17 part 1 measures write as the one widening verb and part 3
-// pins the shape; Issue #340), an allow on a presentable server target that carries no marker verb
-// (Issue #338), and an allow with no verbs on the bare MCP prefix (Issue #338). Each is a disclosed residual
-// routed to the activation story (Issue #308), not a claim that the shape is safe.
+// NOT rejected, on purpose: a DENY on the bare MCP prefix, a server plus trailing "/", a server plus tool, and
+// the legacy mutating verbs plus an MCP target (shape c: matches only shell-emitted records and never a class
+// record; for a deny it only denies more; documented in tool-class-format.ts, rule-author fact 4, and a
+// disclosed residual, Issue #329). A verb list with no class marker (only stray verbs, none a verb a
+// normalizer emits) is out of scope (docs/backlog.md).
 //
 // LAYER-AWARE UNLOCK (S7-B fix-now H6, Issue #333). Every message ends with an `Unlock:` clause naming what the
 // person who is BLOCKED can do. A shipped-defaults or project rule lives in a file the operator can edit, so
@@ -165,6 +174,26 @@ function checkTarget(ruleId: string, target: string, field: string, source: Reac
   return errors;
 }
 
+/** V4 applies to an ALLOW rule whose verbs are absent, empty (both match every verb) or hold at least one verb a
+ * normalizer emits (the shell redirect record carries one): such a rule can match a redirect record. */
+function allowCanMatchShellRecord(rule: Rule): boolean {
+  if (rule.effect !== "allow") return false;
+  const verbs = rule.verbs;
+  return verbs === undefined || verbs.length === 0 || verbs.some((v) => KNOWN_VERBS.has(v));
+}
+
+/** V4 (Issues #338 and #340): an allow target under the MCP prefix, the bare prefix included. */
+function checkAllowRedirect(ruleId: string, target: string, field: string, source: ReachabilitySource): ReachabilityError[] {
+  if (!target.startsWith(MCP_TARGET_PREFIX)) return [];
+  const fix = `use only a class marker verb (one of ${MARKERS.join(", ")}) and no other verb, or a filesystem path target`;
+  return [
+    {
+      field,
+      message: `rule ${quote(ruleId)}: allow rule target ${quote(target)} is under the MCP target prefix and the rule's verbs are absent, empty or hold a verb a normalizer emits, so it can match a shell redirect record into a directory of that name (a file write the baseline may deny) and silently widens allow. ${unlock(source, fix)}`,
+    },
+  ];
+}
+
 /** Returns one error per element that can never match. Empty means every rule's verbs and targets pass.
  * `source` shapes the Unlock clause only (never which rules are rejected); the default is the project layer. */
 export function checkRuleReachability(ruleSet: RuleSet, source: ReachabilitySource = { layer: "project" }): ReachabilityError[] {
@@ -172,9 +201,14 @@ export function checkRuleReachability(ruleSet: RuleSet, source: ReachabilitySour
   ruleSet.rules.forEach((rule, i) => {
     (rule.verbs ?? []).forEach((verb, j) => errors.push(...checkVerb(rule.id, verb, `rules[${String(i)}].verbs[${String(j)}]`, source)));
     const scope = targetScope(rule);
-    if (scope !== undefined) {
-      (rule.targets ?? []).forEach((target, j) => errors.push(...checkTarget(rule.id, target, `rules[${String(i)}].targets[${String(j)}]`, source, scope)));
-    }
+    const v4 = allowCanMatchShellRecord(rule);
+    (rule.targets ?? []).forEach((target, j) => {
+      const field = `rules[${String(i)}].targets[${String(j)}]`;
+      const v23 = scope === undefined ? [] : checkTarget(rule.id, target, field, source, scope);
+      // one error per element: where V2 or V3 already rejects the target (an allow with no verbs on a target the
+      // runtime never presents) its message covers the same fix, so V4 speaks only for the remaining targets
+      errors.push(...(v23.length > 0 || !v4 ? v23 : checkAllowRedirect(rule.id, target, field, source)));
+    });
   });
   return errors;
 }

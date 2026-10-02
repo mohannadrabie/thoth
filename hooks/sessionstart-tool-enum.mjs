@@ -68,6 +68,11 @@ import { extractConnectorIdentities, extractMcpServerNames } from "../src/policy
 // hooks/pretooluse-kernel-gate.mjs). The location is still resolved by main() BEFORE stdin is read, so the catch path below can record it.
 import { assembleCatalog, resolveFixtureLocation } from "../src/policy/tools/classification-catalog.ts";
 
+/** The fixture location a halt-state write may disclose: a resolved `FixtureLocation`, or main()'s
+ * degraded fallback when `resolveFixtureLocation` itself threw (Issue #374: a discriminated union on
+ * `fixtureSource`, so the degraded arm cannot be passed where a resolved location is required).
+ * @typedef {import("../src/policy/tools/classification-catalog.ts").FixtureLocation | { fixtureSource: "unknown", fixturePath: null }} HaltFixtureLocation */
+
 const UNCLASSIFIED_REASON_KEY = "SUR-03-unclassified-tool";
 // Connector-identity schema decision (see src/policy/tools/mcp-enumeration.ts's own header comment
 // on extractConnectorIdentities for the full text): a claude.ai account connector is reported under
@@ -131,7 +136,11 @@ const UNKNOWN_SESSION_ID = "unknown-session";
  * session id, and previously bypassed the anti-collision guard the same way an env-resolved id
  * could; it is now rejected here, on both hook files, by the same one check. A real Claude Code
  * session id (an RFC-4122 UUID) is comfortably inside this pattern — this never narrows the happy
- * path. */
+ * path.
+ *
+ * @param {unknown} id
+ * @returns {id is string}
+ */
 function isValidSessionId(id) {
   return typeof id === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(id);
 }
@@ -202,6 +211,9 @@ function homeDir() {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";
 }
 
+/**
+ * @param {string} sessionId
+ */
 function haltStatePath(sessionId) {
   return join(projectDir(), ".thoth", "halt-state", `${sessionId}.json`);
 }
@@ -229,7 +241,10 @@ function haltStatePath(sessionId) {
  *
  * One edge case remains a deliberately left-unhandled, disclosed residual per this pass's own
  * ratified scope (Manager-approved 2026-09-17): hooks/userpromptsubmit-halt-relay.mjs's own
- * sanitizeDetail may still truncate this string mid-quote on a long multi-name list. */
+ * sanitizeDetail may still truncate this string mid-quote on a long multi-name list.
+ *
+ * @param {string[]} names
+ */
 function quoteNames(names) {
   return names.map((name) => JSON.stringify(name)).join(", ");
 }
@@ -237,7 +252,10 @@ function quoteNames(names) {
 /** Best-effort read of an already-existing halt-state file for merge purposes. A malformed
  * existing file is NOT this script's fail-closed concern (that property belongs to
  * hooks/userpromptsubmit-halt-relay.mjs, tested there) — treated as "nothing to merge with" so this
- * writer can still make forward progress recording its own reason. */
+ * writer can still make forward progress recording its own reason.
+ *
+ * @param {string} sessionId
+ */
 function readExistingHaltState(sessionId) {
   const p = haltStatePath(sessionId);
   if (!existsSync(p)) return undefined;
@@ -265,7 +283,14 @@ function readExistingHaltState(sessionId) {
  * call site that fires only to record the fixture location, so a vanilla, fully-classified session
  * that never calls this function still leaves NO file at all (criterion 4 / AC-4, unmodified). This
  * is an additive top-level field -- `hooks/userpromptsubmit-halt-relay.mjs`'s `inspectHaltState`
- * only ever reads `.reasons`, confirmed by direct trace, so an unknown top-level key is inert to it. */
+ * only ever reads `.reasons`, confirmed by direct trace, so an unknown top-level key is inert to it.
+ *
+ * @param {string} sessionId
+ * @param {string} reasonKey
+ * @param {boolean} set
+ * @param {string} detail
+ * @param {HaltFixtureLocation | undefined} [fixtureLocation]
+ */
 function writeHaltReason(sessionId, reasonKey, set, detail, fixtureLocation) {
   const existing = readExistingHaltState(sessionId);
   const reasons =
@@ -276,6 +301,7 @@ function writeHaltReason(sessionId, reasonKey, set, detail, fixtureLocation) {
 
   const p = haltStatePath(sessionId);
   mkdirSync(join(projectDir(), ".thoth", "halt-state"), { recursive: true });
+  /** @type {Record<string, unknown>} */
   const payload = { sessionId, reasons };
   if (fixtureLocation) {
     payload.fixtureSource = fixtureLocation.fixtureSource;
@@ -287,7 +313,11 @@ function writeHaltReason(sessionId, reasonKey, set, detail, fixtureLocation) {
 /** True iff `reasonKey` was already `set:true` in `initialHaltState` (a snapshot read ONCE at the
  * start of this run, before any of this run's own writes) — used by `reconcileReason` below to
  * decide whether a currently-inactive reason needs an explicit set:false write, or whether it was
- * never active in the first place and the file should simply stay untouched for that key. */
+ * never active in the first place and the file should simply stay untouched for that key.
+ *
+ * @param {any} initialHaltState
+ * @param {string} reasonKey
+ */
 function wasReasonActive(initialHaltState, reasonKey) {
   if (typeof initialHaltState !== "object" || initialHaltState === null) return false;
   const reasons = initialHaltState.reasons;
@@ -323,7 +353,16 @@ function wasReasonActive(initialHaltState, reasonKey) {
  * (or whose stdin parsed cleanly this time, WITH a valid session_id) is unblocked automatically on
  * the next SessionStart, not left bricked forever — without ever creating a spurious file/key for a
  * condition that was never active to begin with, and without ever clearing a reason this invocation
- * cannot prove is its own. */
+ * cannot prove is its own.
+ *
+ * @param {any} initialHaltState
+ * @param {string} sessionId
+ * @param {string} reasonKey
+ * @param {boolean} active
+ * @param {string} activeDetail
+ * @param {HaltFixtureLocation} fixtureLocation
+ * @param {boolean} sessionIdFromStdin
+ */
 function reconcileReason(initialHaltState, sessionId, reasonKey, active, activeDetail, fixtureLocation, sessionIdFromStdin) {
   if (active) {
     writeHaltReason(sessionId, reasonKey, true, activeDetail, fixtureLocation);
@@ -344,6 +383,9 @@ function reconcileReason(initialHaltState, sessionId, reasonKey, active, activeD
   // else: never active, and not previously set -- deliberately leave the file/key untouched.
 }
 
+/**
+ * @param {string} path
+ */
 function readJsonFileIfExists(path) {
   if (!existsSync(path)) return undefined;
   const text = readFileSync(path, "utf8");
@@ -386,6 +428,10 @@ function readJsonFileIfExists(path) {
 // (S7: the body of this resolution now lives in src/policy/tools/classification-catalog.ts as `resolveFixtureLocation(projectDir, exists)`,
 // imported above and called by main(); the comment block above describes its contract unchanged.)
 
+/**
+ * @param {string} serverName
+ * @param {any} projectSettings
+ */
 function isProjectMcpServerEnabled(serverName, projectSettings) {
   if (!projectSettings || typeof projectSettings !== "object") return false;
   if (projectSettings.enableAllProjectMcpServers === true) return true;
@@ -406,7 +452,10 @@ function isProjectMcpServerEnabled(serverName, projectSettings) {
  *
  * `fixtureLocation` (from `resolveFixtureLocation`, resolved once by main() before this is called)
  * names exactly which fixture file to load -- this function no longer re-derives that decision
- * itself, so there is exactly one place in this file that decides project-relative vs. fallback. */
+ * itself, so there is exactly one place in this file that decides project-relative vs. fallback.
+ *
+ * @param {HaltFixtureLocation} fixtureLocation
+ */
 function computeSessionTools(fixtureLocation) {
   const projectSettingsPath = join(projectDir(), ".claude", "settings.json");
   const projectSettings = readJsonFileIfExists(projectSettingsPath);
@@ -464,6 +513,12 @@ function computeSessionTools(fixtureLocation) {
   // in so this function and the halt-state writer agree on the exact same decision (S5 fix-now
   // condition: "record the resolved fixture path in halt-state, so a non-default load is never
   // silent" — see `resolveFixtureLocation`'s own header comment for the full citation).
+  // Issue #374: main()'s degraded fallback (`fixtureSource: "unknown"`, no path) reaches here when
+  // `resolveFixtureLocation` itself threw. Before, `readFileSync(null)` threw inside assembleCatalog;
+  // now the same throw is explicit and typed. Same catch in main(), same fail-closed halt.
+  if (fixtureLocation.fixtureSource === "unknown") {
+    throw new Error("the classification fixture location could not be resolved");
+  }
   const { builtinLayer, fixture, merged } = assembleCatalog(fixtureLocation);
   // Both exemptions apply exactly as the JSON lists them — no date logic, no pin (GitHub Issue #217).
   const knownConnectors = new Set(fixture.knownConnectors);
@@ -521,12 +576,13 @@ async function main() {
   // function is safe just because it looks safe; falling back to "unknown" here still lets the rest
   // of this run's own fail-closed behavior (halting on a genuine condition) proceed unaffected, it
   // only means THIS particular disclosure is degraded, never that a halt is suppressed.
+  /** @type {HaltFixtureLocation} */
   let fixtureLocation = { fixtureSource: "unknown", fixturePath: null };
   try {
     fixtureLocation = resolveFixtureLocation(projectDir(), existsSync);
   } catch (locErr) {
     process.stderr.write(
-      `sessionstart-tool-enum.mjs: failed to resolve fixture location (non-fatal, continuing): ${locErr?.stack ?? locErr}\n`,
+      `sessionstart-tool-enum.mjs: failed to resolve fixture location (non-fatal, continuing): ${/** @type {Error} */ (locErr)?.stack ?? locErr}\n`,
     );
   }
   try {
@@ -607,15 +663,15 @@ async function main() {
         sessionId,
         ENUMERATION_FAILED_REASON_KEY,
         true,
-        `internal exception during tool enumeration: ${err?.message ?? String(err)}`,
+        `internal exception during tool enumeration: ${/** @type {Error} */ (err)?.message ?? String(err)}`,
         fixtureLocation,
       );
     } catch (writeErr) {
       process.stderr.write(
-        `sessionstart-tool-enum.mjs: failed to write halt-state on exception: ${writeErr?.stack ?? writeErr}\n`,
+        `sessionstart-tool-enum.mjs: failed to write halt-state on exception: ${/** @type {Error} */ (writeErr)?.stack ?? writeErr}\n`,
       );
     }
-    process.stderr.write(`sessionstart-tool-enum.mjs: internal exception during enumeration: ${err?.stack ?? err}\n`);
+    process.stderr.write(`sessionstart-tool-enum.mjs: internal exception during enumeration: ${/** @type {Error} */ (err)?.stack ?? err}\n`);
   }
   process.exit(0); // never 2 — SessionStart cannot block on this runtime (gap G5)
 }

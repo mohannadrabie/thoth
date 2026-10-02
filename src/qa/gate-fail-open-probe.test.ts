@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { RECORDED_DECISIONS, classifyOutcome, runProbe } from "./gate-fail-open-probe.ts";
+import { RECORDED_DECISIONS, classifyOutcome, outcomeAccepted, runProbe } from "./gate-fail-open-probe.ts";
 import * as probeModule from "./gate-fail-open-probe.ts";
 
 const runAsyncProbe = (repoRoot: string) => probeModule.runAsyncProbe(repoRoot);
@@ -49,7 +49,7 @@ test("G9: SUR-10 by script: every probed fault's observed outcome equals its rec
     const r = recorded.get(o.id);
     assert.ok(r !== undefined, `probed fault ${o.id} has no recorded decision`);
     assert.equal(r.probed, true, `${o.id} is recorded as not probed but was probed`);
-    assert.equal(o.outcome, r.expect, `${o.id}: observed ${o.outcome}, recorded ${r.expect}; ${o.detail}`);
+    assert.ok(outcomeAccepted(r, o.outcome), `${o.id}: observed ${o.outcome}, recorded ${r.expect} (also accepts ${JSON.stringify(r.alsoAccepts ?? [])}); ${o.detail}`);
   }
   for (const r of RECORDED_DECISIONS) {
     if (r.probed && (r.platform === undefined || r.platform === process.platform)) assert.ok(probedIds.has(r.id), `recorded row ${r.id} was never probed`);
@@ -57,7 +57,8 @@ test("G9: SUR-10 by script: every probed fault's observed outcome equals its rec
     if (r.expect === "BLOCKS") assert.equal(r.ap, undefined, `${r.id}: a BLOCKS path closes no activation precondition, so it carries no AP`);
   }
   const proceeds = observed.filter((o) => o.outcome === "PROCEEDS").map((o) => o.id).sort();
-  const expectedProceeds = ["interpreter-not-on-path", "node-options-bad-flag", "memory-exhaustion", "hook-script-unparseable", ...(process.platform === "win32" ? ["systemroot-nonexistent"] : [])].sort();
+  const systemrootObserved = observed.find((o) => o.id === "systemroot-nonexistent");
+  const expectedProceeds = ["interpreter-not-on-path", "node-options-bad-flag", "memory-exhaustion", "hook-script-unparseable", ...(systemrootObserved?.outcome === "PROCEEDS" ? ["systemroot-nonexistent"] : [])].sort();
   assert.deepEqual(proceeds, expectedProceeds, "only the launcher-owned faults (AP-13: three that kill the process before the hook runs, the hook script that does not parse, and memory exhaustion) remain probed fail-open paths");
 });
 
@@ -179,4 +180,28 @@ test("A11 no-stale-not-fixed-claims: neither the hook header nor the probe heade
     assert.ok(!source.includes("NOT fixed in this story"), `${file} still says "NOT fixed in this story"`);
     assert.ok(!source.includes("belongs to that issue's own story"), `${file} still defers the input-size probe to another story`);
   }
+});
+
+test("A20 systemroot-row-accepts-either-launch-outcome: the win32 systemroot row keeps expect PROCEEDS (AP-13, probed) and also accepts BLOCKS, and its note says why (#320)", () => {
+  const r = row("systemroot-nonexistent");
+  assert.equal(r.expect, "PROCEEDS");
+  assert.deepEqual(r.alsoAccepts, ["BLOCKS"]);
+  assert.equal(r.probed, true, "no skip: the row is still probed");
+  assert.equal(r.ap, "AP-13");
+  assert.match(r.note, /BLOCKS/);
+  assert.match(r.note, /22\.18/);
+  assert.match(r.note, /residual/i);
+  assert.match(r.note, /launcher/i);
+  for (const other of RECORDED_DECISIONS) if (other.id !== "systemroot-nonexistent") assert.equal(other.alsoAccepts, undefined, `${other.id}: only the systemroot row is version-dependent`);
+});
+
+test("A21 outcome-accepted-predicate: accepts expect and alsoAccepts, and rejects anything else", () => {
+  const accepted = outcomeAccepted;
+  const both = { expect: "PROCEEDS", alsoAccepts: ["BLOCKS"] } as const;
+  assert.equal(accepted(both, "PROCEEDS"), true);
+  assert.equal(accepted(both, "BLOCKS"), true);
+  assert.equal(accepted(both, "MAYBE" as "BLOCKS"), false, "a third outcome still fails");
+  assert.equal(accepted({ expect: "PROCEEDS" }, "PROCEEDS"), true);
+  assert.equal(accepted({ expect: "PROCEEDS" }, "BLOCKS"), false, "a row with no alsoAccepts stays exact-match");
+  assert.equal(accepted({ expect: "BLOCKS" }, "PROCEEDS"), false);
 });

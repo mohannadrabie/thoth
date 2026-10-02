@@ -73,6 +73,18 @@ export function isMutating(action: ActionRecord): boolean {
   return action.verbs.some((v) => MUTATING_VERBS.has(v)) || action.unresolved.length > 0;
 }
 
+// Issue #326: `unresolved` entries can carry untrusted command text verbatim (the normalizer
+// reflects the verb/resource tokens it could not resolve), so the model-visible reason caps each
+// entry. Display-only: the ActionRecord (and so the audit trail) keeps the full text, and the
+// verdict never changes. 512 matches REASON_NAME_CAP in src/policy/gate/decide-tool-call.ts by
+// value; the kernel is import-isolated (kernel-purity-check, G15), so it is duplicated, not shared.
+const UNRESOLVED_FRAGMENT_CAP = 512;
+function boundedFragment(text: string): string {
+  return text.length <= UNRESOLVED_FRAGMENT_CAP
+    ? text
+    : `${text.slice(0, UNRESOLVED_FRAGMENT_CAP)}[truncated, ${text.length} characters in all]`;
+}
+
 /**
  * POL-05, evaluated inside the kernel (ADR-0021): a mutating action whose source is "opaque", or
  * which carries any unresolved field, is denied — unconditionally. This is the one hard-coded,
@@ -104,7 +116,7 @@ export function pol05Rule(action: ActionRecord): Verdict | null {
   if (action.unresolved.length > 0) {
     return {
       outcome: "deny",
-      reason: `POL-05: mutating action has unresolved field(s) [${action.unresolved.join(", ")}] — fail-closed on ambiguity`,
+      reason: `POL-05: mutating action has unresolved field(s) [${action.unresolved.map((entry) => boundedFragment(entry)).join(", ")}] — fail-closed on ambiguity`,
       ruleId: "POL-05",
     };
   }

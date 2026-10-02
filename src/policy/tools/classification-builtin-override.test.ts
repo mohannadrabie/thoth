@@ -178,7 +178,9 @@ function relayVisibleWindow(): { prefix: string; maxDetail: number } {
   const relay = readFileSync(join(REPO_ROOT, "hooks", "userpromptsubmit-halt-relay.mjs"), "utf8");
   const start = readFileSync(join(REPO_ROOT, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
   const max = /const MAX_DETAIL_LENGTH = (\d+);/.exec(relay);
-  const prefix = /`(internal exception during tool enumeration: )\$\{err\?\.message/.exec(start);
+  // Issue #361: the hook reads the catch variable through a JSDoc cast, `/** @type {Error} */ (err)?.message`;
+  // the cast is optional in this pattern so the scrape finds the same template either way.
+  const prefix = /`(internal exception during tool enumeration: )\$\{(?:\/\*\* @type \{Error\} \*\/ \()?err\)?\?\.message/.exec(start);
   assert.ok(max?.[1] !== undefined && prefix?.[1] !== undefined, "the relay cap and the SessionStart detail prefix are found in the hook sources");
   return { prefix: prefix[1], maxDetail: Number(max[1]) };
 }

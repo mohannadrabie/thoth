@@ -266,3 +266,40 @@ test("decide (POL-08 end-to-end, three-layer-conflict fixture): the merged proje
   assert.equal(v.outcome, "deny", "project layer's deny must win the three-layer conflict");
   assert.equal(v.ruleId, CONFLICTING_RULE_ID);
 });
+
+// --- pol05Rule: reflected-text cap (Issue #326) --------------------------
+
+const REFLECT_CAP = 512;
+const withUnresolved = (unresolved: string[]): ActionRecord => ({ ...mutatingUnresolvedAction, unresolved });
+
+test("AC-326-6: pol05Rule with unresolved entries under the cap yields the byte-identical reason as before", () => {
+  const v = pol05Rule(withUnresolved(['command verb "frob"', "command flag --context"]));
+  assert.equal(
+    v?.reason,
+    'POL-05: mutating action has unresolved field(s) [command verb "frob", command flag --context] — fail-closed on ambiguity',
+  );
+  const atCap = "x".repeat(REFLECT_CAP);
+  assert.ok(pol05Rule(withUnresolved([atCap]))?.reason.includes(`[${atCap}]`), "an entry of exactly the cap is not truncated");
+});
+
+test("AC-326-4: pol05Rule caps each oversize entry at 512 chars with a marker carrying the true length", () => {
+  const big = "y".repeat(50_000);
+  const small = "command flag --context";
+  const v = pol05Rule(withUnresolved([big, small, big + "z"]));
+  assert.equal(v?.outcome, "deny");
+  assert.equal(v?.ruleId, "POL-05");
+  const reason = v?.reason ?? "";
+  assert.ok(reason.includes(`${"y".repeat(REFLECT_CAP)}[truncated, 50000 characters in all]`), "first entry capped with its true length");
+  assert.ok(reason.includes(`${"y".repeat(REFLECT_CAP)}[truncated, 50001 characters in all]`), "each entry carries its own true length");
+  assert.ok(reason.includes(`, ${small},`), "a short entry between them is untouched");
+  assert.ok(reason.length < 3 * (REFLECT_CAP + 60) + 200, `reason length ${reason.length} must not grow with input`);
+});
+
+test("AC-326-5: pol05Rule with a huge entry stays a non-blank deny; the ActionRecord keeps the full text", () => {
+  const big = "q".repeat(100_000);
+  const action = withUnresolved([big]);
+  const v = pol05Rule(action);
+  assert.equal(v?.outcome, "deny");
+  assert.ok((v?.reason ?? "").startsWith("POL-05: mutating action has unresolved field(s) ["));
+  assert.equal(action.unresolved[0]?.length, 100_000, "the audit-side record is not truncated");
+});

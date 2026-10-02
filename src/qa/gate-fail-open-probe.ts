@@ -53,6 +53,8 @@ export interface RecordedDecision {
   id: string;
   /** What the probe must observe. */
   expect: FaultOutcome;
+  /** Extra outcomes accepted for a fault whose result depends on the runtime version; `expect` stays the primary decision. */
+  alsoAccepts?: readonly FaultOutcome[];
   /** False when the path is recorded but not probed here. */
   probed: boolean;
   /** Set when the fault only exists on one platform (the probe skips it elsewhere). */
@@ -62,12 +64,17 @@ export interface RecordedDecision {
   note: string;
 }
 
+/** True when the observed outcome is the row's recorded decision or one of its extra accepted outcomes. */
+export function outcomeAccepted(row: { expect: FaultOutcome; alsoAccepts?: readonly FaultOutcome[] }, observed: FaultOutcome): boolean {
+  return observed === row.expect || (row.alsoAccepts ?? []).includes(observed);
+}
+
 export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "node-without-ts-type-stripping", expect: "BLOCKS", probed: true, note: "old or unflagged Node: the project modules fail to load inside the hook's try/catch, exit 2 (Issue #303, fixed in the hook)" },
   { id: "import-target-missing", expect: "BLOCKS", probed: true, note: "a project module is missing or renamed: the load fails inside the hook's try/catch, exit 2 (Issue #303, fixed in the hook)" },
   { id: "interpreter-not-on-path", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (the future settings entry's command form, Issue #308): the command cannot start, shell exit 127 or 1, non-blocking; no code inside the hook can catch a process that never starts" },
   { id: "node-options-bad-flag", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): NODE_OPTIONS with an unknown flag makes Node exit 9 before any hook code runs, non-blocking (app-security finding 1; reach of a settings env block to the hook is unproven, U-9)" },
-  { id: "systemroot-nonexistent", expect: "PROCEEDS", probed: true, platform: "win32", ap: "AP-13", note: "residual, owned by the launcher (Issue #308): SYSTEMROOT pointing at a nonexistent directory aborts Node at start-up on Windows (exit 134), non-blocking (app-security finding 1)" },
+  { id: "systemroot-nonexistent", expect: "PROCEEDS", probed: true, alsoAccepts: ["BLOCKS"], platform: "win32", ap: "AP-13", note: "residual, owned by the launcher (Issue #308): SYSTEMROOT pointing at a nonexistent directory aborts Node at start-up on Windows (exit 134), non-blocking (app-security finding 1). The result depends on the Node version: Node 22.18 starts and the hook denies (BLOCKS, fail closed, strictly safer); Node 24.15 aborts (PROCEEDS); either is accepted (human ruling 2026-09-30, #320)" },
   { id: "memory-exhaustion", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): an allocation failure inside the hook aborts the process (V8 heap limit, observed exit 134 on Windows with --max-old-space-size=40 and a 2 MB redirect-dense command; the same heap cap decides a small command normally), non-blocking. Not fixable in-script: no size cap leaves outputs unchanged for inputs that completed before. A launcher form that maps every exit other than 0 and 2 to 2 closes this row and the other AP-13 rows. The abort also writes a heap report to stderr, a runtime channel the hook's fixed-line rule does not cover (LOW)" },
   { id: "hook-script-unparseable", expect: "PROCEEDS", probed: true, ap: "AP-13", note: "residual, owned by the launcher (Issue #308): a hook script that does not parse (corruption, a bad merge, tampering) makes Node print a SyntaxError and exit 1 before any hook code runs, non-blocking. Before merge CI catches it (the hook tests execute the script); after merge it is the launcher form plus the manifest and command-path checks, and the S7 self-protection milestone (cross-domain finding 2)" },
   { id: "stdout-closed-before-write", expect: "BLOCKS", probed: true, platform: "win32", note: "a destroyed or closed stdout: the write callback error or the stdout error event exits 2 instead of dropping a decided deny (red-team attack 3). Asserted in-process only: the parent destroys the child's stdout pipe before the child starts (reproduced on Windows, 5 of 5 runs exited 0 before the fix; Linux unmeasured, so the row is probed on Windows only, and the injected-write-failure tests in hooks/pretooluse-kernel-gate-launch.test.ts cover the code path on every platform). Reach in a real Claude Code session stays UNPROVEN (LOW)" },

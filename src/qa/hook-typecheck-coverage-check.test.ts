@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkHookTypecheckCoverage, listProductionHooks, PINNED_BASELINES } from "./hook-typecheck-coverage-check.ts";
+import { checkHookTypecheckCoverage, JSDOC_ANY_ALLOWLIST, listProductionHooks, PINNED_BASELINES } from "./hook-typecheck-coverage-check.ts";
 
 const repoRoot = process.cwd();
 
@@ -37,27 +37,36 @@ test("listProductionHooks: excludes hooks/*.test.ts and hooks/test-support/** �
 
 // --- checkHookTypecheckCoverage against the REAL project (AC-10/AC-11) ----------------------
 
-test("checkHookTypecheckCoverage: all 3 real hooks resolve inside tsconfig.hooks-coverage.json's file list (AC-10), and the 2 excepted hooks stay within their pinned Issue #361 baseline (AC-11)", () => {
+test("checkHookTypecheckCoverage: all 3 real hooks resolve inside tsconfig.hooks-coverage.json's file list (AC-10), and the 2 formerly-excepted hooks are now fully clean against an empty pinned baseline (AC-11, Issue #361 closed)", () => {
   const result = checkHookTypecheckCoverage(repoRoot);
   assert.equal(result.ok, true, result.details.join("\n"));
   const details = result.details.join("\n");
   assert.match(details, /hooks\/pretooluse-kernel-gate\.mjs: 0 diagnostic\(s\), fully covered/);
-  assert.match(details, /hooks\/sessionstart-tool-enum\.mjs: \d+ diagnostic\(s\) \(pinned Issue #361 baseline: 30/);
-  assert.match(details, /hooks\/userpromptsubmit-halt-relay\.mjs: \d+ diagnostic\(s\) \(pinned Issue #361 baseline: 22/);
+  assert.match(details, /hooks\/sessionstart-tool-enum\.mjs: 0 diagnostic\(s\), fully covered/);
+  assert.match(details, /hooks\/userpromptsubmit-halt-relay\.mjs: 0 diagnostic\(s\), fully covered/);
 });
 
-test("checkHookTypecheckCoverage: a hook missing from the exception list must be fully clean (0 diagnostics) — pretooluse-kernel-gate.mjs, the one hook the real build gate already covers", () => {
+test("checkHookTypecheckCoverage: a hook with no pinned baseline must be fully clean (0 diagnostics) — pretooluse-kernel-gate.mjs, the one hook the real build gate already covers", () => {
   const result = checkHookTypecheckCoverage(repoRoot, ["hooks/pretooluse-kernel-gate.mjs"]);
   assert.equal(result.ok, true, result.details.join("\n"));
 });
 
-test("checkHookTypecheckCoverage: a hook not on the exception list and NOT fully clean fails, naming the diagnostic count", () => {
-  // Neither excepted hook is expected to be zero-diagnostic today (30 and 22, measured); asserting
-  // that WITHOUT the exception-list entry for one of them turns the pass into a fail proves the
-  // "must be fully clean" branch is live, not dead code.
-  const result = checkHookTypecheckCoverage(repoRoot, ["hooks/sessionstart-tool-enum.mjs"], {});
-  assert.equal(result.ok, false);
-  assert.match(result.details.join("\n"), /hooks\/sessionstart-tool-enum\.mjs: \d+ diagnostic\(s\) found, expected 0/);
+test("checkHookTypecheckCoverage: a hook with no pinned baseline and NOT fully clean fails, naming the diagnostic count", () => {
+  // The real hooks are all clean now (Issue #361), so a self-contained fixture with one implicit-any
+  // diagnostic proves the "must be fully clean" branch is live, not dead code.
+  const tmpDir = join(repoRoot, `.qa-tmp-notclean-${process.pid}-${Date.now()}`);
+  try {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, "hook.mjs"), "function f(a) { return a; }\n", "utf8");
+    const configPath = join(tmpDir, "tsconfig.json");
+    writeFileSync(configPath, JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { allowJs: true, checkJs: true, noEmit: true }, include: ["hook.mjs"] }, null, 2), "utf8");
+    const tmpRel = `${tmpDir.slice(repoRoot.length + 1).split("\\").join("/")}/hook.mjs`;
+    const result = checkHookTypecheckCoverage(repoRoot, [tmpRel], {}, configPath);
+    assert.equal(result.ok, false);
+    assert.match(result.details.join("\n"), /1 diagnostic\(s\) found, expected 0/);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test("checkHookTypecheckCoverage: a hook absent from the tsconfig project's file list at all fails, naming the gap", () => {
@@ -77,7 +86,7 @@ test("checkHookTypecheckCoverage: a hook absent from the tsconfig project's file
 // the REAL file's CURRENT content (never a hand-copied snapshot), so this pin cannot silently go
 // stale if the real file's surrounding code changes; a precondition assertion fails loudly first if
 // the exact call-site text this drill targets ever stops existing.
-test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionstart-tool-enum.mjs is caught by the new instrument, exceeding its pinned Issue #361 baseline, even though npm run build (real build gate) does not cover this file at all", () => {
+test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionstart-tool-enum.mjs is caught by the new instrument, a NEW diagnostic against its (empty) pinned baseline; tsconfig.hooks.json, the real build gate, also covers this file", () => {
   const real = readFileSync(join(repoRoot, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
   const target = "evaluateToolInventory(merged, sessionTools)";
   assert.ok(real.includes(target), `precondition: the exact call-site text "${target}" must exist in the real file for this drill to be meaningful`);
@@ -112,9 +121,9 @@ test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionst
 
     const realBaseline = PINNED_BASELINES["hooks/sessionstart-tool-enum.mjs"];
     assert.ok(realBaseline !== undefined, "precondition: the real hook must have a pinned baseline to compare against");
-    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath);
-    assert.equal(after.ok, false, "the mutated file must exceed the pinned baseline (a NEW TS2554 arity diagnostic), even though it is a currently-excepted hook");
-    assert.match(after.details.join("\n"), /exceed the pinned Issue #361 baseline/);
+    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath, JSDOC_ANY_ALLOWLIST.map((e) => (e.hook === "hooks/sessionstart-tool-enum.mjs" ? { ...e, hook: tmpRel } : e)));
+    assert.equal(after.ok, false, "the mutated file must exceed the pinned baseline (a NEW TS2554 arity diagnostic), as it does for any hook");
+    assert.match(after.details.join("\n"), /exceed the pinned baseline/);
     assert.match(after.details.join("\n"), /2554:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named, not just a count delta");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -123,40 +132,38 @@ test("AC-13: dropping evaluateToolInventory's second argument in hooks/sessionst
 
 // Red-team round-3 finding R4, drill C2 (demonstrated): a raw COUNT comparison is gameable by
 // OFFSET — pay down one pre-existing diagnostic while introducing one real new bug elsewhere, and
-// the total count stays exactly at baseline. Both edits are derived by literal string-replace
-// against the REAL file's CURRENT content (same AC-13 convention: never a hand-copied snapshot),
-// so this pin cannot silently go stale either.
+// the total count stays exactly at baseline. Issue #361 (2026-09-30) emptied the real baseline, so
+// the drill now runs against a self-contained fixture that carries two known implicit-any debts
+// pinned by identity; the mutation is a literal string-replace against that fixture (never a
+// hand-copied snapshot), guarded by precondition assertions.
 test("R4 regression (drill C2): paying down one pre-existing diagnostic while introducing one real new bug elsewhere must still fail — a raw count comparison would see no change at all", () => {
-  const real = readFileSync(join(repoRoot, "hooks", "sessionstart-tool-enum.mjs"), "utf8");
-  const paydownTarget = "function isValidSessionId(id) {";
-  const arityTarget = "} else if (wasReasonActive(initialHaltState, reasonKey)) {";
-  assert.ok(real.includes(paydownTarget), `precondition: the exact paydown target "${paydownTarget}" must exist in the real file`);
-  assert.ok(real.includes(arityTarget), `precondition: the exact arity-drop target "${arityTarget}" must exist in the real file`);
-  const mutated = real
-    // Same-line inline JSDoc param annotation (not a new line above) so no OTHER diagnostic's own
-    // line number shifts — isolates this drill to exactly one diagnostic removed, one added.
-    .replace(paydownTarget, "function isValidSessionId(/** @type {string} */ id) {") // -1 diagnostic: kills one TS7006
-    .replace(arityTarget, "} else if (wasReasonActive(initialHaltState)) {"); // +1 diagnostic: drops a required argument
+  const fixture = ["function paid(id) { return id; }", "function other(x) { return x; }", "/** @param {number} n */", "function need(n) { return n; }", ""].join("\n");
+  const paydownTarget = "function paid(id) { return id; }";
+  assert.ok(fixture.includes(paydownTarget), `precondition: the paydown target "${paydownTarget}" must exist in the fixture`);
+  const pinned = ["7006|function paid(id) { return id; }", "7006|function other(x) { return x; }"];
+  const mutated = fixture
+    .replace(paydownTarget, "function paid(/** @type {string} */ id) { return id; }") // -1 diagnostic: kills one TS7006
+    .concat("need();\n"); // +1 diagnostic: drops a required argument (TS2554)
 
   const tmpDir = join(repoRoot, `.qa-tmp-c2-${process.pid}-${Date.now()}`);
-  const tmpHookRel = "sessionstart-tool-enum.mjs";
+  const tmpHookRel = "hook.mjs";
   const tmpConfigPath = join(tmpDir, "tsconfig.json");
+  const cfg = JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { allowJs: true, checkJs: true, noEmit: true }, include: [tmpHookRel] }, null, 2);
   try {
     mkdirSync(tmpDir, { recursive: true });
-    writeFileSync(join(tmpDir, tmpHookRel), mutated, "utf8");
-    writeFileSync(
-      tmpConfigPath,
-      JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { allowJs: true, checkJs: true, noEmit: true }, include: [tmpHookRel] }, null, 2),
-      "utf8",
-    );
+    writeFileSync(tmpConfigPath, cfg, "utf8");
     const tmpRel = `${tmpDir.slice(repoRoot.length + 1).split("\\").join("/")}/${tmpHookRel}`;
-    const realBaseline = PINNED_BASELINES["hooks/sessionstart-tool-enum.mjs"];
-    assert.ok(realBaseline !== undefined, "precondition: the real hook must have a pinned baseline to compare against");
-    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: realBaseline }, tmpConfigPath);
+
+    writeFileSync(join(tmpDir, tmpHookRel), fixture, "utf8");
+    const control = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: pinned }, tmpConfigPath);
+    assert.equal(control.ok, true, `sanity: the unmutated fixture must sit exactly on its pinned baseline: ${control.details.join("\n")}`);
+
+    writeFileSync(join(tmpDir, tmpHookRel), mutated, "utf8");
+    const after = checkHookTypecheckCoverage(repoRoot, [tmpRel], { [tmpRel]: pinned }, tmpConfigPath);
     assert.equal(after.ok, false, "an offsetting paydown-plus-new-bug edit must still fail, even though the total diagnostic count is unchanged");
     const afterDetails = after.details.join("\n");
-    assert.match(afterDetails, /30 diagnostic\(s\) found/, "the total count must be UNCHANGED from the pinned baseline (30) — proving this is a genuine offset, not merely a net increase a raw count would also catch");
-    assert.match(afterDetails, /\d+:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named even though one other identity vanished in the same run");
+    assert.match(afterDetails, /2 diagnostic\(s\) found/, "the total count must be UNCHANGED from the pinned baseline (2) — proving this is a genuine offset, not merely a net increase a raw count would also catch");
+    assert.match(afterDetails, /2554:\d+ \(new, x1\)/, "the new diagnostic's own identity must be named even though one other identity vanished in the same run");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
