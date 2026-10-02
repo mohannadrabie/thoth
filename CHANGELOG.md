@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - Issue #308 story C (tool inventory re-vendored from the live init event, 23 built-ins classified, connector labels, AP-12 tripwire replaced)
+
+STANDARD tier. No hook, settings or loader change; nothing is wired, so no live enforcement decision changes. Refs #308.
+
+- `src/qa/vendor-tool-inventory.ts` (new instrument, `npm run qa:vendor-tool-inventory`, not in CI): re-vendors `docs/qa/tool-inventory.json` from the `system`/`init` event of `claude -p`, run from a scratch folder outside the repo. Evidence tier `measured` (Claude Code 2.1.267, win32, permissionMode default). Merge is a union with provenance: `measuredTools` (33), `carriedForward` (9, earlier `derived`). `--from` replays a saved event. Counts printed by the script: 23 new, 9 carried forward, 10 in both.
+- `src/qa/fixtures/claude-init-2.1.267.json`: the scrubbed capture the committed inventory is derived from (kept: version, mode, platform, date, non-`mcp__` names; removed: cwd, session id, uuid, apiKeySource, mcp_servers, paths, commands, agents, skills, plugins, model, every `mcp__` name). CI checks the committed inventory against it.
+- `src/policy/tools/builtin-tool-inventory.ts`: 23 new `CLASSIFICATION` entries (higher bucket where ambiguous) and a read-only `CLASSIFICATION_NAMES` export; new reverse test (no dead entry).
+- `docs/qa/s5-central-classification.json`: 8 `remote-mutating` entries for the `knownConnectors`, each noted INERT under grammar v1 (name must match `[A-Za-z0-9-]+`; connectors arrive as `claude_ai_<Name>`), accepted by the human 2026-10-02; widening is Issue #381.
+- `src/policy/tools/connector-labels.test.ts`, `src/policy/tools/shared-inventory-agreement.test.ts` (new): labels derived from the fixture at run time; SessionStart and the gate assemble deep-equal catalogs, and the real SessionStart hook reports no unclassified built-in.
+- `src/qa/arbitrary-exec-classification.test.ts`: the absent-and-throws AP-12 tripwire is replaced by presence plus non-read-only for PowerShell, Skill, Workflow, CronCreate, RemoteTrigger, with a seeded mutant per name (a strengthening, recorded under SE ADR-0005).
+
 ### Added - Issue #308 story G (policy-load recovery runbook, AP-6 row, read-only pre-flight; docs only)
 
 STANDARD tier. No code, hook or settings change. Refs #308.
