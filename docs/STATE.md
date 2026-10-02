@@ -5,7 +5,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 ## Resume point — 2026-10-02 (newest): S7 close-out PR #380 open, CI green; merge is human-only; #308 rulings given
 
-- **Branch:** `s7/closeout`, cut from `origin/master` at `f703ed3` (PR #373's merge). Not pushed.
+- **Branch:** `s7/closeout`, cut from `origin/master` at `f703ed3` (PR #373's merge). Pushed; PR #380.
 - **SHIPPABLE stories on the branch (all reviews clean, 0 REWORK rounds, council not fired):**
 
 | Story | Tier | Reviews (final verdicts) | Issues the PR closes |
