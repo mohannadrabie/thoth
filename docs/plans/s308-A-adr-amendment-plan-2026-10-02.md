@@ -217,3 +217,21 @@ RECEIPT: verdict=BLOCKED criteria="12 mapped/12 total" checks="0/0/0" adr=HIT(37
 - Open item for the human at acceptance: confirm or reject the Manager recommendation narrowing the 2026-09-19 ruling (an entry or label that places a tool in a gate-allowed class, or otherwise lowers a gate outcome, needs a fresh dated report in docs/reviews/; other entry-only changes keep the exemption). Written into the ADR Decision, Rules and residual row.
 - Open item for the human: accept or decline THOTH-ADR-0003; stories E, F, J and the settings entry wait for that.
 - Open item for the human, after acceptance: whether CLAUDE.md's "Policy delivery / config surface" bullet gets a pointer to 0003.
+
+## 13. Review round 1 rework (Issues #390 to #395)
+
+Docs only, same branch. Review reports: `docs/reviews/s308-A-adr-{red-team,architecture,cross-domain}-2026-10-02.md`.
+
+| Finding | Resolution in THOTH-ADR-0003 / ADR-0001 pointer |
+|---|---|
+| #395 red-team A1 HIGH | Every-write-path protection rule (gate deny rules for Bash and mcp__; permissions.deny Edit(...) for file tools, ships with story K); Decision sentence corrected; same-session tampering residual row |
+| #390 architecture 1 | Precedence constraint and Rules bullet name the displaced ADR-0001 rule-2 sentence and the Inert row |
+| #391 architecture 2 | Pointer names rules 1, 2, 4, 5 and the Inert row; decline path stated |
+| #394 red-team A2 / cross-domain S3 | Trigger by effect: every addition; removals exempt; every addition is allow-granting under rules [] plus fallback allow; CLAUDE.md note |
+| #392 red-team A3 / cross-domain S1 | "for this allowlist" restored; "narrowed" wording dropped; per-site triage table, 0 violations |
+| #393 cross-domain S2 | INT-07 sentence; name-spoofability residual row |
+| red-team A4 / cross-domain S4 | Story F names the fixture explicitly; mutant test F3-mutant-drop-fixture-deny required |
+| red-team A5 | Hold on E, F, J, K as a catalog-served constraint and rule |
+| LOW | G18 citation; decline path; "amends in part" vocabulary |
+
+Open items for the human at acceptance are unchanged (section 12), plus: confirm the by-effect trigger (every addition needs a fresh report) and the `permissions.deny` `Edit(...)` requirement shipping with story K.

@@ -12,6 +12,7 @@ CRITICAL tier (policy delivery). Docs only; no code or test changed. Refs #308.
 - Manager recommendation, pending the human's confirmation: an entry or label that places a tool in a gate-allowed class (or otherwise lowers an outcome) needs a fresh dated review report.
 - `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md`: one sentence appended to the Status bullet pointing at THOTH-ADR-0003. No rule changed.
 - Not a submodule change: ADR-0001 is project tier.
+- Review round 1 rework (Issues #390 to #395): the fixture must be protected on every session write path (the gate's deny rules for Bash and `mcp__`, plus a `permissions.deny` `Edit(...)` entry for the built-in file tools, shipping with story K); precedence, the hold on stories E, F, J, K, and story F's explicit-fixture mutant test are catalog-served rules; the fresh-report trigger is by effect (every addition); rule 4 keeps "for this allowlist" with a per-site triage (0 violations); INT-07 and same-session tampering residual rows; the ADR-0001 pointer names rules 1, 2, 4, 5 and the Inert row and states the decline path.
 
 ### Changed - Issue #308 story H (X-11: gate failures name their real unlock)
 
