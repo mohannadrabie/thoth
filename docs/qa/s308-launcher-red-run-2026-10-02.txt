@@ -27,3 +27,14 @@ ERR_MODULE_NOT_FOUND: src/qa/gate-launcher-pin-check.ts (module absent, file fai
 ### node --test src/qa/gate-command-path-check.test.ts
 SyntaxError: ./gate-command-path-check.ts does not provide an export named 'extractScriptPaths' (file fails to load)
 (3 header-only tests pass red because the disclosure lives in the test header; they guard the disclosure, not the shim.)
+RED RUN 2: probe test edited (D3 recorded act) before src/qa/gate-fail-open-probe.ts changed. 2026-10-02.
+ℹ fail 6
+ℹ pass 9
+ℹ tests 15
+✖ A20 systemroot-row-blocks-on-every-node-version: the win32 systemroot row is BLOCKS through the launcher on any Node
+✖ D3-ambient-wording: the NODE_OPTIONS row says ambient env (inherited from the parent environment) and does not claim
+✖ D3-rows-block-through-launcher: the five launcher-owned rows are recorded BLOCKS, probed, name no AP and name the la
+✖ G9: SUR-10 by script: every probed fault's observed outcome equals its recorded decision; every PROCEEDS carries an 
+✖ failing tests:
+✖ hook-script-unparseable-blocks-through-launcher: a hook script that does not parse exits 1 directly (non-blocking) a
+✖ memory-exhaustion-blocks-through-launcher: an allocation failure (exit 134) in the hook run through the launcher is 

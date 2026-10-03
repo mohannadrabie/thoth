@@ -57,9 +57,7 @@ test("G9: SUR-10 by script: every probed fault's observed outcome equals its rec
     if (r.expect === "BLOCKS") assert.equal(r.ap, undefined, `${r.id}: a BLOCKS path closes no activation precondition, so it carries no AP`);
   }
   const proceeds = observed.filter((o) => o.outcome === "PROCEEDS").map((o) => o.id).sort();
-  const systemrootObserved = observed.find((o) => o.id === "systemroot-nonexistent");
-  const expectedProceeds = ["interpreter-not-on-path", "node-options-bad-flag", "memory-exhaustion", "hook-script-unparseable", ...(systemrootObserved?.outcome === "PROCEEDS" ? ["systemroot-nonexistent"] : [])].sort();
-  assert.deepEqual(proceeds, expectedProceeds, "only the launcher-owned faults (AP-13: three that kill the process before the hook runs, the hook script that does not parse, and memory exhaustion) remain probed fail-open paths");
+  assert.deepEqual(proceeds, [], "no probed fault remains fail-open: the five launcher-owned rows (interpreter off PATH, ambient bad NODE_OPTIONS, SYSTEMROOT nonexistent, memory exhaustion, unparseable script) BLOCK through hooks/launch-gate.sh (#308 story D, AP-13; recorded act under SE ADR-0005)");
 });
 
 test("A4 module-load-rows-block: node-without-ts-type-stripping and import-target-missing are probed, expect BLOCKS and name no AP", () => {
@@ -71,16 +69,34 @@ test("A4 module-load-rows-block: node-without-ts-type-stripping and import-targe
   }
 });
 
-test("A5 residual-launch-faults-stay-proceeds-and-say-so: the launcher-owned rows stay probed PROCEEDS under AP-13 and their notes say residual and name the launcher as the owner", () => {
-  for (const id of ["interpreter-not-on-path", "node-options-bad-flag", "systemroot-nonexistent", "memory-exhaustion", "hook-script-unparseable"]) {
+const LAUNCHER_ROWS = ["interpreter-not-on-path", "node-options-bad-flag", "systemroot-nonexistent", "memory-exhaustion", "hook-script-unparseable"];
+
+test("D3-rows-block-through-launcher: the five launcher-owned rows are recorded BLOCKS, probed, name no AP and name the launcher; observed BLOCKS through hooks/launch-gate.sh while the same fault run directly (no launcher) is not a block, so the BLOCKS is the launcher's", async () => {
+  const observed = [...runProbe(REPO_ROOT), ...(await runAsyncProbe(REPO_ROOT))];
+  for (const id of LAUNCHER_ROWS) {
     if (id === "systemroot-nonexistent" && process.platform !== "win32") continue;
     const r = row(id);
-    assert.equal(r.expect, "PROCEEDS", `${id} stays PROCEEDS`);
+    assert.equal(r.expect, "BLOCKS", `${id} is recorded BLOCKS (recorded act, SE ADR-0005, #308 story D)`);
     assert.equal(r.probed, true, `${id} stays probed`);
-    assert.equal(r.ap, "AP-13", `${id} stays under AP-13 (narrowed)`);
-    assert.match(r.note, /residual/i, `${id}: the note must use the word residual`);
-    assert.match(r.note, /launcher/i, `${id}: the note must name the launcher as the owner`);
+    assert.equal(r.ap, undefined, `${id} closes no activation precondition any more (AP-13 is closed by the launcher)`);
+    assert.equal(r.alsoAccepts, undefined, `${id} accepts one outcome`);
+    assert.match(r.note, /launcher/i, `${id}: the note names the launcher`);
+    assert.match(r.note, /launch-gate\.sh/, `${id}: the note names the shim`);
+    const o = observed.find((x) => x.id === id);
+    assert.ok(o !== undefined, `${id} was probed`);
+    assert.equal(o.outcome, "BLOCKS", o.detail);
+    assert.match(o.detail, /^exit=(2|0) /, o.detail);
+    // D3b control: the same fault with no launcher. Only the Windows systemroot row may differ by Node version (Node 22.18 decides).
+    if (id === "systemroot-nonexistent") assert.match(o.detail, /direct=(PROCEEDS|BLOCKS)/, o.detail);
+    else assert.match(o.detail, /direct=PROCEEDS/, `${id}: the control (same fault, no launcher) must still not block: ${o.detail}`);
   }
+});
+
+test("D3-ambient-wording: the NODE_OPTIONS row says ambient env (inherited from the parent environment) and does not claim a settings env block is closed (#398 ruling)", () => {
+  const r = row("node-options-bad-flag");
+  assert.match(r.note, /ambient/i);
+  assert.match(r.note, /settings protection|stories F and K/i, "a settings env block is routed to settings protection, not the launcher");
+  assert.doesNotMatch(r.note, /settings env block (closes|is closed|blocks)/i);
 });
 
 test("A9 stdout-closed-row-is-probed-and-blocks: stdout-closed-before-write is probed, expects BLOCKS, names no AP, and its note keeps the in-process-only and unproven-in-a-real-session wording", () => {
@@ -136,32 +152,34 @@ test("input-size-fail-open-is-recorded-per-shape: the input-size class is split 
   for (const shape of ["newline-dense", "crlf", "mixed"]) assert.match(observed.detail, new RegExp(`${shape}: exit=(0|2)`), `the probe covers the ${shape} shape: ${observed.detail}`);
 });
 
-test("memory-exhaustion-is-a-recorded-fail-open: an allocation failure inside the hook (exit 134) is a recorded, probed PROCEEDS row owned by the launcher (AP-13, Issue #308) whose control run with the same heap cap decides normally", () => {
+test("memory-exhaustion-blocks-through-launcher: an allocation failure (exit 134) in the hook run through the launcher is exit 2; the evidence is a wrapper variant (the heap cap is an argv flag of a wrapper, since the launcher scrubs env) plus the stub exit-134 test D2-exit-map, not direct env injection; the control run with the same cap decides normally", () => {
   const r = row("memory-exhaustion");
-  assert.equal(r.expect, "PROCEEDS");
+  assert.equal(r.expect, "BLOCKS");
   assert.equal(r.probed, true);
-  assert.equal(r.ap, "AP-13");
+  assert.equal(r.ap, undefined);
   assert.match(r.note, /launcher/i);
   assert.match(r.note, /#308/, "the row is routed to Issue #308");
   assert.match(r.note, /134/, "the row records the observed exit code");
-  assert.match(r.note, /residual/i);
+  assert.match(r.note, /wrapper/i, "the row says the evidence is the wrapper variant, not direct env injection");
   const observed = runProbe(REPO_ROOT).find((o) => o.id === "memory-exhaustion");
   assert.ok(observed !== undefined, "runProbe must probe the memory-exhaustion row");
-  assert.equal(observed.outcome, "PROCEEDS", observed.detail);
-  assert.match(observed.detail, /control=ok/, `the control run (same heap cap, small command) must decide normally, else the abort is not input-driven: ${observed.detail}`);
+  assert.equal(observed.outcome, "BLOCKS", observed.detail);
+  assert.match(observed.detail, /^exit=2 /, observed.detail);
+  assert.match(observed.detail, /control=ok/, `the control run (same heap cap, small command, through the launcher) must decide normally, else the abort is not input-driven: ${observed.detail}`);
+  assert.match(observed.detail, /direct=PROCEEDS \(exit=134\)/, `without the launcher the same fault is exit 134: ${observed.detail}`);
 });
 
-test("hook-script-unparseable-is-a-recorded-fail-open: a hook script that does not parse exits 1 before any hook code runs: recorded PROCEEDS under AP-13, launcher-owned (cross-domain finding 2)", () => {
+test("hook-script-unparseable-blocks-through-launcher: a hook script that does not parse exits 1 directly (non-blocking) and exit 2 through the launcher", () => {
   const r = row("hook-script-unparseable");
-  assert.equal(r.expect, "PROCEEDS");
+  assert.equal(r.expect, "BLOCKS");
   assert.equal(r.probed, true);
-  assert.equal(r.ap, "AP-13");
+  assert.equal(r.ap, undefined);
   assert.match(r.note, /launcher/i);
-  assert.match(r.note, /residual/i);
   const observed = runProbe(REPO_ROOT).find((o) => o.id === "hook-script-unparseable");
   assert.ok(observed !== undefined, "runProbe must probe the unparseable-script row");
-  assert.equal(observed.outcome, "PROCEEDS", observed.detail);
-  assert.match(observed.detail, /^exit=1 /, `Node exits 1 on a syntax error; ${observed.detail}`);
+  assert.equal(observed.outcome, "BLOCKS", observed.detail);
+  assert.match(observed.detail, /^exit=2 /, observed.detail);
+  assert.match(observed.detail, /direct=PROCEEDS \(exit=1\)/, `Node exits 1 on a syntax error without the launcher: ${observed.detail}`);
 });
 
 test("no-launcher-level-only-overclaim: the hook header and the probe header do not say the residual set is launcher-level only, and both name the memory-exhaustion and unparseable-script residuals (red-team attack 2, cross-domain finding 2)", () => {
@@ -182,17 +200,15 @@ test("A11 no-stale-not-fixed-claims: neither the hook header nor the probe heade
   }
 });
 
-test("A20 systemroot-row-accepts-either-launch-outcome: the win32 systemroot row keeps expect PROCEEDS (AP-13, probed) and also accepts BLOCKS, and its note says why (#320)", () => {
+test("A20 systemroot-row-blocks-on-every-node-version: the win32 systemroot row is BLOCKS through the launcher on any Node version (Node 24 aborts directly with exit 134, Node 22.18 decides), so it no longer accepts either outcome (#320 closed by the launcher)", () => {
   const r = row("systemroot-nonexistent");
-  assert.equal(r.expect, "PROCEEDS");
-  assert.deepEqual(r.alsoAccepts, ["BLOCKS"]);
+  assert.equal(r.expect, "BLOCKS");
+  assert.equal(r.alsoAccepts, undefined, "the launcher makes the outcome the same on every Node version");
   assert.equal(r.probed, true, "no skip: the row is still probed");
-  assert.equal(r.ap, "AP-13");
-  assert.match(r.note, /BLOCKS/);
+  assert.equal(r.ap, undefined);
   assert.match(r.note, /22\.18/);
-  assert.match(r.note, /residual/i);
   assert.match(r.note, /launcher/i);
-  for (const other of RECORDED_DECISIONS) if (other.id !== "systemroot-nonexistent") assert.equal(other.alsoAccepts, undefined, `${other.id}: only the systemroot row is version-dependent`);
+  for (const other of RECORDED_DECISIONS) assert.equal(other.alsoAccepts, undefined, `${other.id}: no row is version-dependent any more`);
 });
 
 test("A21 outcome-accepted-predicate: accepts expect and alsoAccepts, and rejects anything else", () => {
