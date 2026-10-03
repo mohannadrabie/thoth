@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { RECORDED_DECISIONS, classifyOutcome, outcomeAccepted, runProbe } from "./gate-fail-open-probe.ts";
+import { RECORDED_DECISIONS, classifyOutcome, controlDecided, outcomeAccepted, runProbe } from "./gate-fail-open-probe.ts";
 import * as probeModule from "./gate-fail-open-probe.ts";
 
 const runAsyncProbe = (repoRoot: string) => probeModule.runAsyncProbe(repoRoot);
@@ -167,6 +167,19 @@ test("memory-exhaustion-blocks-through-launcher: an allocation failure (exit 134
   assert.match(observed.detail, /^exit=2 /, observed.detail);
   assert.match(observed.detail, /control=ok/, `the control run (same heap cap, small command, through the launcher) must decide normally, else the abort is not input-driven: ${observed.detail}`);
   assert.match(observed.detail, /direct=PROCEEDS \((exit=134|exit=null signal=SIGABRT)\)/, `without the launcher the same fault is exit 134 (Windows) or a SIGABRT signal with no status (Linux): ${observed.detail}`);
+});
+
+test("memory-exhaustion-control-decides-normally: the control run (same heap cap, small denied payload, through the launcher) must exit 0 with a deny JSON, so an abort mapped to exit 2 cannot pass for a decision (a 1 MB heap cap mutant fails here)", () => {
+  const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "r" } });
+  assert.equal(controlDecided(0, deny), true);
+  assert.equal(controlDecided(2, ""), false, "exit 2 is an abort mapped by the launcher, not a decision");
+  assert.equal(controlDecided(2, deny), false);
+  assert.equal(controlDecided(134, ""), false);
+  assert.equal(controlDecided(null, ""), false);
+  assert.equal(controlDecided(0, ""), false);
+  const observed = runProbe(REPO_ROOT).find((o) => o.id === "memory-exhaustion");
+  assert.ok(observed !== undefined);
+  assert.match(observed.detail, /control=ok \(small denied payload, same heap cap, through the launcher: exit=0\)/, observed.detail);
 });
 
 test("hook-script-unparseable-blocks-through-launcher: a hook script that does not parse exits 1 directly (non-blocking) and exit 2 through the launcher", () => {

@@ -205,7 +205,7 @@ test("D2-shim-truncation-sweep: for every byte-length cut of the launcher (every
   const full = readFileSync(SHIM);
   const failing = stub("one.mjs", "process.exit(1);\n");
   const bad: string[] = [];
-  const pool = 12;
+  const pool = 4; // small on purpose: the full suite runs files in parallel and timing-bound tests share the CPU
   let next = 1;
   const worker = async (): Promise<void> => {
     for (;;) {

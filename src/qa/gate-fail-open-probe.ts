@@ -98,6 +98,12 @@ export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "lock-timeout", expect: "BLOCKS", probed: false, note: "not applicable: no lock exists in this hook or the loader (the audit-log lock is S8)" },
 ];
 
+/** True only when the gate itself DECIDED: exit 0 with a deny JSON on stdout. Exit 2 is not enough: a process that aborts under a
+ * too-small heap cap is mapped to 2 by the launcher, which would make a control run look healthy (red-team round 2, finding 2). */
+export function controlDecided(status: number | null, stdout: string): boolean {
+  return status === 0 && classifyOutcome(status, stdout) === "BLOCKS";
+}
+
 /** Claude Code's contract: exit 2 blocks; exit 0 with a deny JSON blocks; everything else proceeds. */
 export function classifyOutcome(status: number | null, stdout: string): FaultOutcome {
   if (status === 2) return "BLOCKS";
@@ -217,7 +223,7 @@ export function runProbe(repoRoot: string): FaultResult[] {
     const bigPayload = payload("Bash", { command: buildRedirectShape("glued", 2 * 1024 * 1024) });
     const capped = ["--max-old-space-size=40", hook];
     const control = viaLauncher(wrapper, denied);
-    const controlOk = classifyOutcome(control.status, control.stdout) === "BLOCKS";
+    const controlOk = controlDecided(control.status, control.stdout);
     launched("memory-exhaustion", viaLauncher(wrapper, bigPayload), run(process.execPath, capped, bigPayload, good, false), ` control=${controlOk ? "ok" : "FAILED"} (small denied payload, same heap cap, through the launcher: exit=${String(control.status)})`);
 
     // A hook script that does not parse: one stray closing brace appended to a copy of the hook, in the same tree.
