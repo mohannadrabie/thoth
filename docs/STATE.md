@@ -1,9 +1,28 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-02 (#308 remainder: stories G, C, H SHIPPABLE on `s308/activation`, not pushed; A, B, D, E, F, J next; K held for the human)
+**Last updated:** 2026-10-03 (#308: stories A, B, D SHIPPABLE on `s308/activation-2`, draft PR #400; THOTH-ADR-0003 awaits the human's acceptance; E, F, J, K held behind it)
 
-## Resume point — 2026-10-02 (newest): #308 stories G, C, H SHIPPABLE on `s308/activation`, not pushed
+## Resume point — 2026-10-03 (newest): #308 stories A, B, D SHIPPABLE on `s308/activation-2`, PR #400
+
+- **Branch:** `s308/activation-2`, cut from `origin/master` at `35f49e9` (PR #389's merge). Pushed; PR #400 (merge is human-only). CI green on `02f46de`: 1868 pass, 0 fail, 3 skipped (the 3 Windows-only launcher tests).
+
+| Story | Tier | Final verdicts | Issues |
+|---|---|---|---|
+| A: THOTH-ADR-0003 (status **proposed**) amends THOTH-ADR-0001 in part; the fixture becomes a gate input | CRITICAL | round 1: red-team no-go (#395), architecture and cross-domain APPROVE-WITH-CONDITIONS; round 2: red-team go, architecture APPROVE, cross-domain APPROVE | #390–#395 fixed in text |
+| B: live `claude -p` spikes (28 calls, USD 0.68), evidence in `docs/qa/s308-live-spikes/` | STANDARD | code-reviewer SHIP; cross-domain APPROVE-WITH-CONDITIONS, fixed | #396 fixed; #397 ruled |
+| D: launcher `hooks/launch-gate.sh`; five probe rows flip to BLOCKS (recorded act) | CRITICAL | design challenge go; round 1: red-team no-go (#402 CI red, #403), app-security APPROVE, cross-domain APPROVE-WITH-CONDITIONS (#401); round 2: red-team go, app-security APPROVE, cross-domain APPROVE-WITH-CONDITIONS | #398, #399, #402, #403 fixed; #397 closed on the Git Bash path; #401 carried to K5 |
+
+- **Waiting on the human:** (1) **Accept or decline THOTH-ADR-0003**, including the Manager's narrowing of the 2026-09-19 ruling (every fixture entry ADDITION needs a fresh dated review report). Stories E, F, J and K MUST NOT ship before acceptance (catalog-served hold). After acceptance, the CLAUDE.md "Policy delivery" exemption sentence needs your edit. (2) **File the B4b Issue** (the classifier refused the agent's `gh issue create`): "S7 gate hook fails open when a settings env block sets NODE_OPTIONS to an unknown flag (exit 9, call runs)", labels `bug`, `severity:high`, `sur`, Milestone S7, body linking `docs/qa/s308-live-spikes/B4.txt`. (3) Merge PR #400.
+- **Rulings this session (Manager, under the human's pre-approval):** #398: a settings env block is a settings write, so it is closed by settings protection (F's deny rules plus K's `permissions.deny` `Edit(...)` on project, local and user settings), not by the launcher; the launcher covers ambient or accidental faults. #397: settings files are the trust root for env blocks; the launcher stops forwarding SYSTEMROOT. #399: single compound command plus pinned SHA-256. INT-07 wording sided with cross-domain over architecture. All in `docs/decisions.md`, rows dated 2026-10-02.
+- **Carried forward into the Phase 0 plan** (`docs/plans/s308-activation-phase0-2026-10-02.md`): E6 (fixture-derived rule-4 script), F1a/F1b (fixture, launcher, pin file, and all three settings paths named explicitly), F3a and F5 (Edit-deny on every protected path), J5 (live Edit-deny probe incl. bypass mode), J6/J6a (re-time the allow path and the launcher form), J8 (which env keys the runtime forwards), J9 (exec-form `args` vs shell form), K3 (a check reads `permissions.deny`), K5 (#401: the wired command equals the launcher string, five mutants).
+- **Backlog filed:** #404 (outcome-diff check for fixture entries), #405 (windows-latest CI job for the launcher's Windows-only tests).
+- **Verify (Manager, quiet tree):** build, typecheck and lint rc=0; every `qa:*` gate rc=0 (five are disclosed vacuous passes); QA-14 diff mode 0 failed. Full suite locally 1868/1871: R4 EBUSY (#231) and two timing tests (A15, `gate-path-scaling-sweep`) that pass 48/48 alone. These are the known Windows parallel-load flake; story D's process-heavy tests may make it more frequent. Linux CI has none of them.
+- **Still human-only / held:** `rmdir C:playground	hoth-as4 C:playground	hoth-as5`. The decisions archive sweep (5 rows) is still deferred, for the same secret-scan reason as last session.
+
+**Single next action:** accept or decline THOTH-ADR-0003 (in PR #400), then merge PR #400 once CI is green.
+
+## Prior entry (superseded above): #308 stories G, C, H SHIPPABLE on `s308/activation`, not pushed
 
 - **Branch:** `s308/activation`, cut from `origin/master` at `9d2e412` (PR #380's merge). Pushed; PR #389 (merge is human-only).
 - **Breakdown:** `docs/plans/s308-activation-phase0-2026-10-02.md` (stories A to K). Order: G, C, H done; then A (ADR-0001 amendment draft) and B (live `claude -p` tests) in parallel; then D, E, F, J. K (`.claude/settings.json` wiring) needs its own human approval.
