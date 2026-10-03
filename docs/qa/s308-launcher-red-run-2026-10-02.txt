@@ -1,0 +1,29 @@
+RED RUN, 2026-10-02, before hooks/launch-gate.sh, gate-launcher-pin-check.ts and extractScriptPaths exist.
+### node --test src/qa/gate-launcher.test.ts
+✖ D2-exit-map: every child status other than 0 and 2 maps to 2 with a stderr line; 0 and 2 pass through 
+✖ D2-exit-2-keeps-stderr-and-stdout: a child exit 2 keeps its stderr reason and stdout untouched 
+✖ D2-stdin-passthrough: stdin bytes reach the child unchanged and the child's stdout and exit 0 come back un
+✖ D2-missing-target: no argument, a missing file and a directory each give status 2 
+✖ D2-no-node: node absent from PATH gives status 2 (the shell is started by absolute path, only node is miss
+✖ D2-env-scrub: the child sees only the allow-list (PATH, SYSTEMROOT, WINDIR, CLAUDE_PROJECT_DIR) plus the W
+✖ D2-env-preserved: CLAUDE_PROJECT_DIR and PATH reach the child with the same values; on win32 SystemRoot an
+✖ D2-systemroot-bad: a SYSTEMROOT that names no Windows directory gives status 2 before the child runs (mark
+✖ D2-lf-only: the launcher has no carriage return byte (a CRLF shim breaks sh on Linux; behavior tests on Wi
+✖ D2-shape: the whole body is one compound command opened on line 1 and closed on the last line (the propert
+✖ D2-shim-truncation-sweep: for every byte-length cut of the launcher (every cut except the 0-byte file) run
+✖ D2-env-shell-levers-block: (a) the levers the shim itself closes still give status 2 for a child that exit
+✖ D2-env-shell-levers-block: ambient NODE_OPTIONS (a bad flag) is scrubbed by the shim: the child runs and e
+✖ D2-env-shell-levers-block: through the runtime-shaped outer shell (win32, Git Bash -c 'sh shim stub') an a
+✔ D2-env-shell-levers-disclosure: (b) the levers the shim cannot close are named in this file's header 
+✖ D2-disclosed-limit-256: a child exit of 256 or 512 is reported by the shell as 0, so the shim returns 0 (a
+✔ D5-header-names-launcher: the header discloses X-8 and that an empty or truncated launcher exits 0, and na
+✔ D6-claim-boundary: the header limits env-block claims to B4 (project settings, Claude Code 2.1.267, the tw
+✖ D2-shim-diagnostic-output-is-fixed: the shim contains no printf of the child's output and never uses echo 
+ℹ tests 19
+ℹ pass 3
+ℹ fail 16
+### node --test src/qa/gate-launcher-pin-check.test.ts
+ERR_MODULE_NOT_FOUND: src/qa/gate-launcher-pin-check.ts (module absent, file fails to load)
+### node --test src/qa/gate-command-path-check.test.ts
+SyntaxError: ./gate-command-path-check.ts does not provide an export named 'extractScriptPaths' (file fails to load)
+(3 header-only tests pass red because the disclosure lives in the test header; they guard the disclosure, not the shim.)

@@ -1,0 +1,96 @@
+Date: 2026-10-02. v24.15.0. GNU bash, version 5.3.9(1)-release (x86_64-pc-cygwin). Windows 11.
+Paths replaced by <REPO>, <HOME>, <SCRATCH>.
+
+### S1 NODE_OPTIONS ordering and any ignore switch
+C:\Program Files\nodejs\node.exe: --bogus is not allowed in NODE_OPTIONS
+bare: exit=9
+C:\Program Files\nodejs\node.exe: --bogus is not allowed in NODE_OPTIONS
+with argv flag: exit=9
+help lines matching ignore-env / node-options switch:
+(none)
+
+### S2 SYSTEMROOT nonexistent, Node 24, direct (D1)
+
+  #  C:\Program Files\Git\bin\..\usr\bin\bash.exe[4324]: std::shared_ptr<InitializationResultImpl> __cdecl node::InitializeOncePerProcessInt
+  #  Assertion failed: ncrypto::CSPRNG(nullptr, 0)
+exit=134
+
+### S3 sh with bad / missing SYSTEMROOT
+sh-started-ok
+bad: exit=0
+reinjected SYSTEMROOT=[C:\WINDOWS]
+
+### S4 draft shim, five D3 faults, Git Bash then PowerShell
+gate denies (decided deny, exit 0 + deny JSON):
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"PO
+exit=0
+NODE_OPTIONS=--bogus (ambient):
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"PO
+exit=0
+SYSTEMROOT nonexistent:
+launcher: SYSTEMROOT does not name a Windows directory
+exit=2
+node not on PATH:
+env: 'sh': No such file or directory
+exit=127
+unparseable gate copy:
+<SCRATCH>/broken.mjs
+}
+^
+exit=2
+from PowerShell (NODE_OPTIONS bad):
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"PO
+
+### S5 exit-status table through the draft shim
+child 0 -> shim 0
+child 1 -> shim 2
+child 2 -> shim 2
+child 3 -> shim 2
+child 9 -> shim 2
+child 127 -> shim 2
+child 134 -> shim 2
+child 255 -> shim 2
+child 256 -> shim 0
+child 257 -> shim 2
+child 258 -> shim 2
+child 512 -> shim 0
+child SIGKILL -> shim 2
+child abort -> shim 2
+
+### S6 allow-list sufficiency: real gate, direct vs shim, byte compare
+payload 1: identical (exit 0, stdout 182 bytes)
+payload 2: identical (exit 0, stdout 0 bytes)
+payload 3: identical (exit 0, stdout 256 bytes)
+payload 4: identical (exit 0, stdout 197 bytes)
+payload 5: identical (exit 0, stdout 258 bytes)
+
+### S7 memory exhaustion through the shim (wrapper variant)
+control, small denied payload under heap cap:
+node:internal/modules/cjs/loader:1479
+  throw err;
+(see D2 stub exit 134 row in S5 for the mapping; the probe flip uses a wrapper file, built at implementation)
+
+### S8 overhead, 20 runs each, denied payload (ms)
+direct node: median=181 max=201
+sh shim:    median=270 max=308
+### S4b node not on PATH (corrected: sh started by absolute path)
+/usr/bin/env: 'node': No such file or directory
+launcher: child exit 127 mapped to 2
+exit=2
+
+### S4c PowerShell, SYSTEMROOT nonexistent
+launcher: SYSTEMROOT does not name a Windows directory
+exit=2
+
+### S7 memory exhaustion: wrapper runs the gate under --max-old-space-size=40 (argv, not env), launched through the shim
+control (small denied payload, same cap, through shim):
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionR
+exit=0
+2 MB redirect-dense command, same cap, direct (the recorded fault):
+exit=134
+same, through shim:
+launcher: child exit 134 mapped to 2
+exit=2
+
+### S9 (live runtime shell and settings-env forwarding): NOT RUN. Deferred to story J by Manager ruling.
+Note S8: the design challenge measured +32 ms median for the shim (194 vs 162 ms); this run measured +89 ms (270 vs 181 ms). The two disagree by machine load; both are far under the 2000 ms ceiling of qa:gate-latency-budget. No budget claim is made.
