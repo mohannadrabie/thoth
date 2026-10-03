@@ -1,0 +1,119 @@
+B2 (X-2): stdout closed before write, in a real session
+Date: 2026-10-02. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11.
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder), <HOME>. Ids are replaced by stable placeholders.
+close = a launcher destroys the child's stdout read end before the hook writes. The runtime never closed the pipe itself.
+
+
+### profile b2-baseline.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<REPO>/hooks/pretooluse-kernel-gate.mjs\"",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "node \"<SPIKES>/harness/log-hook.mjs\" b2-baseline"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+### profile b2-close.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<SPIKES>/harness/tee-hook.mjs\" --mode=close-stdout --label=b2-close -- node <REPO>/hooks/pretooluse-kernel-gate.mjs",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+
+### profile b2-control.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<SPIKES>/harness/tee-hook.mjs\" --mode=swallow --label=b2-control -- node <REPO>/hooks/pretooluse-kernel-gate.mjs",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+
+### run b2-baseline
+profile=b2-baseline exit=0 wall_ms=4668 cost_usd=0.015788800000000002
+prompt: Call the Bash tool exactly once with the command: echo spike-b2-ran . Do not call any other tool. After the result (or an error) reply with the single word DONE.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Bash","--max-budget-usd","0.25","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Bash","input":{"command":"echo spike-b2-ran","description":"Echo spike-b2-ran"}}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":0,"outcome":"success","stdout":"","stderr":""}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":0,"outcome":"success","stdout":"{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"POL-05: mutating action has unresolved field(s) [command verb \\\"spike-b2-ran\\\", command resource \\\"\\\", command flag --context] — fail-closed on ambiguity\"}}","stderr":""}
+tool_result {"is_error":true,"length":149,"content":"POL-05: mutating action has unresolved field(s) [command verb \"spike-b2-ran\", command resource \"\", command flag --context] — fail-closed on ambiguity"}
+assistant_text "DONE"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.015788800000000002,"is_error":false}
+stream arrival ms (from first line): hook_started=[1766,1766] hook_response=[1873,1970]
+
+### run b2-close
+profile=b2-close exit=0 wall_ms=4749 cost_usd=0.0158069
+prompt: Call the Bash tool exactly once with the command: echo spike-b2-ran . Do not call any other tool. After the result (or an error) reply with the single word DONE.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Bash","--max-budget-usd","0.25","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Bash","input":{"command":"echo spike-b2-ran","description":"Echo the text spike-b2-ran"}}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":2,"outcome":"error","stdout":"","stderr":"pretooluse-kernel-gate.mjs: decision could not be written to stdout, fail-closed (exit 2). Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout). Error type: Error\n"}
+tool_result {"is_error":true,"length":513,"content":"PreToolUse:Bash hook error: [node \"<SPIKES>/harness/tee-hook.mjs\" --mode=close-stdout --label=b2-close -- node <REPO>/hooks/pretooluse-kernel-gate.mjs]: pretooluse-kernel-gate.mjs: decision could not be written to stdout, fail-closed (exit 2). Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout). Error type: Error\n"}
+assistant_text "DONE"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.0158069,"is_error":false}
+stream arrival ms (from first line): hook_started=[1557] hook_response=[1812]
+
+### run b2-control
+profile=b2-control exit=0 wall_ms=4558 cost_usd=0.0152748
+prompt: Call the Bash tool exactly once with the command: echo spike-b2-ran . Do not call any other tool. After the result (or an error) reply with the single word DONE.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Bash","--max-budget-usd","0.25","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Bash","input":{"command":"echo spike-b2-ran","description":"Echo the string spike-b2-ran"}}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":0,"outcome":"success","stdout":"","stderr":""}
+tool_result {"is_error":false,"length":12,"content":"spike-b2-ran"}
+assistant_text "DONE"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.0152748,"is_error":false}
+stream arrival ms (from first line): hook_started=[1664] hook_response=[1937]
+
+### log b2-baseline.jsonl
+{"label":"b2-baseline","t_epoch_ms":1790985350225,"t_iso":"2026-10-02T23:55:50.225Z","event":"PreToolUse","tool_name":"Bash","tool_use_id":"<TOOLU-8>","command":"echo spike-b2-ran","stdin_bytes":893,"node_version":"v24.15.0","cwd":"<SPIKES>","env_probe":{"keyCount":95,"has":{"CLAUDE_PROJECT_DIR":true,"NODE_OPTIONS":false,"SYSTEMROOT":true,"windir":true},"values":{"CLAUDE_PROJECT_DIR":"<SPIKES>"},"namesCLAUDE_SPIKE":["CLAUDECODE","CLAUDE_AGENT_SDK_VERSION","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_EMIT_STARTUP_TIMING","CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING","CLAUDE_CODE_ENABLE_TASKS","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_EXECPATH","CLAUDE_CODE_GIT_BASH_PATH","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_CODE_SESSION_ID","CLAUDE_EFFORT","CLAUDE_PID","CLAUDE_PROJECT_DIR"]}}
+
+### log b2-close.jsonl
+{"label":"b2-close","mode":"close-stdout","t_iso":"2026-10-02T23:55:55.085Z","tool_name":"Bash","command":"echo spike-b2-ran","wrapper_start_offset_ms":24.3746,"child_wall_ms":147.0162,"child_exit":2,"child_signal":null,"child_stdout_bytes":0,"child_stdout":"","child_stderr":"pretooluse-kernel-gate.mjs: decision could not be written to stdout, fail-closed (exit 2). Unlock: retry the call; if it fails again a human must repair the gate hook (it needs Node 22.18 or newer and an intact checkout). Error type: Error\n","child_stdout_error":null}
+
+### log b2-control.jsonl
+{"label":"b2-control","mode":"swallow","t_iso":"2026-10-02T23:55:59.896Z","tool_name":"Bash","command":"echo spike-b2-ran","wrapper_start_offset_ms":23.7266,"child_wall_ms":148.8778,"child_exit":0,"child_signal":null,"child_stdout_bytes":266,"child_stdout":"{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"POL-05: mutating action has unresolved field(s) [command verb \\\"spike-b2-ran\\\", command resource \\\"\\\", command flag --context] — fail-closed on ambiguity\"}}","child_stderr":"","child_stdout_error":null}

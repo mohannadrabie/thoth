@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story D (AP-13: launcher `hooks/launch-gate.sh`)
+
+CRITICAL tier (session gate). Nothing is wired into `.claude/settings.json` (story J). Refs #308, #397, #398, #399, #401, #402, #403.
+
+- `hooks/launch-gate.sh` (new), run as `sh "<launcher>" "<gate>"`: maps every child status other than 0 and 2 to 2, runs the gate under `env -i` with only PATH and CLAUDE_PROJECT_DIR, refuses a SYSTEMROOT, SystemRoot, WINDIR or windir whose System32 does not exist, and is one compound command so any non-empty truncation exits 2. `src/qa/gate-launcher-pin-check.ts` pins its SHA-256 (the 0-byte file).
+- Probe rows `interpreter-not-on-path`, `node-options-bad-flag`, `systemroot-nonexistent`, `memory-exhaustion` and `hook-script-unparseable` flip PROCEEDS to BLOCKS as a recorded act (SE ADR-0005, decisions rows); each also runs directly as a control. The memory row's control must exit 0 with a deny JSON (`memory-exhaustion-control-decides-normally`).
+- Scope: ambient and accidental launch faults. NODE_OPTIONS means an ambient inherited value; a settings env block is a settings write, closed by settings protection (stories F and K), not by the launcher.
+- #397 closed on the Git Bash launcher path: the Windows root variables are not forwarded, the MSYS runtime supplies the real value (test `D2-systemroot-from-runtime`).
+- `src/qa/gate-command-path-check.ts` now checks every `.sh` and `.mjs` path a command names. Plan rows F1b, J6a, J8, J9 and K5 carry the open items (Issue #401).
+- Disclosed limits, by name (header of `src/qa/gate-launcher.test.ts`): a tampered in-graph module that exits 0 (X-8), an empty launcher (pin only), SHELLOPTS=noexec and the outer-shell levers (BASH_ENV, MSYS, BASH_FUNC_sh%%, CLAUDE_CODE_SHELL_PREFIX, CLAUDE_CODE_GIT_BASH_PATH), a PATH-planted node, hangs (story J), exit-status truncation at 256, `sh` not on PATH.
+- Review rework: Issues #398 and #399 (design challenge), #402 (memory row on Linux: SIGABRT), #403 (`D2-systemroot-bad` made non-vacuous).
+
+### Added - Issue #308 story B (live `claude -p` spikes)
+
+STANDARD tier (evidence only; no repo behavior change). Refs #308, #396, #397.
+
+- Live `claude -p` spikes B1 to B6 in a scratch folder; scrubbed evidence and the harness in `docs/qa/s308-live-spikes/` (28 calls, USD 0.68).
+- B4 finding: a project settings `env` block reaches hook processes, and NODE_OPTIONS set to an unknown flag made the real gate exit 9 while the runtime ran the Bash call (a fail-open). The Issue is to be filed by the human; the launcher in story D and settings protection in F and K answer it.
+- Other findings: B1 (deny-path timing, `qa:gate-latency-budget` compared), B2 (a closed stdout was not produced by the runtime), B3 (tool-name sanitization table), B5 (long deny reasons, rungs 441, 512 and 668 characters; the larger rungs were unreachable), B6 (matcher `mcp__.*` match).
+- Bash had no allow path during the spikes (POL-05 denied every command), so B1 timed the deny path only.
+
+### Added - Issue #308 story A (AP-7: THOTH-ADR-0003, proposed)
+
+CRITICAL tier (policy delivery). Docs only; no code or test changed. Refs #308.
+
+- `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md` (new, status `proposed`, awaiting the human's acceptance): amends THOTH-ADR-0001 in part. The classification fixture is a PreToolUse gate input; rule 5 (halt-state path) binds SessionStart only; tests derive entry names at run time; the no-hardcode rule is narrowed, not dropped; `knownConnectors` stays SessionStart-only until #381.
+- Manager recommendation, pending the human's confirmation: an entry or label that places a tool in a gate-allowed class (or otherwise lowers an outcome) needs a fresh dated review report.
+- `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md`: one sentence appended to the Status bullet pointing at THOTH-ADR-0003. No rule changed.
+- Not a submodule change: ADR-0001 is project tier.
+- Review round 1 rework (Issues #390 to #395): the fixture must be protected on every session write path (the gate's deny rules for Bash and `mcp__`, plus a `permissions.deny` `Edit(...)` entry for the built-in file tools, shipping with story K); precedence, the hold on stories E, F, J, K, and story F's explicit-fixture mutant test are catalog-served rules; the fresh-report trigger is by effect (every addition); rule 4 keeps "for this allowlist" with a per-site triage (0 violations); INT-07 and same-session tampering residual rows; the ADR-0001 pointer names rules 1, 2, 4, 5 and the Inert row and states the decline path.
+
 ### Changed - Issue #308 story H (X-11: gate failures name their real unlock)
 
 CRITICAL tier (session gate, `hooks/pretooluse-kernel-gate.mjs` and `src/policy/gate/*`). Wording only; nothing is wired, exit codes and stdout polarity are unchanged. Refs #308.
