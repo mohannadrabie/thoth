@@ -107,6 +107,8 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 | E3 | Everything not matched follows the default outcome (see section 5, third item) | NEW: test asserting the resolved `defaultOutcome` and its `source` with the shipped rules loaded |
 | E4 | Allow list ratified by the Manager before commit | Decisions row |
 | E5 | #306 and #329 cited, still closed | Doc check |
+| E6 | Added after story A round 2 (THOTH-ADR-0003, `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md`; `docs/reviews/s308-A-adr-architecture-round2-2026-10-02.md`, LOW 2): the rule-4 hardcoded-name triage is a fixture-derived script (names read from the fixture at run time, every quoted literal under `hooks/` and `src/` listed with a verdict), not the hand-stated "6 files" | NEW: script output pasted in the story E PR; each hit marked violation or not |
+| E7 | ADR gate: E ships only after the human accepts THOTH-ADR-0003 (catalog-served hold) | Decisions row records acceptance |
 
 ### F. Deny rules (AP-10)
 
@@ -116,6 +118,11 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 | F2 | The protected-path list is generated from the hook import graph, not typed | `activation-preconditions` derives the list by AST over the hook's imports (same scan as `hook-import-pins.test.ts`) |
 | F3 | Test fails when any path in the graph is unmatched | Seeded mutant: remove one deny rule or add one import; the test fails |
 | F4 | A deny rule cannot be bypassed by the path forms Windows allows (case, `\` vs `/`, `..`) | NEW: normalizer-level cases against each protected path |
+| F1a | Added (THOTH-ADR-0003; `docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md`; Manager ruling #397): F1 names the protected paths explicitly, not only by derivation: the classification fixture (read by `readFileSync`, not imported, so the import graph cannot produce it), the launcher shim from story D (hooks launch-gate.sh, not yet created), and every settings file that can carry an `env` block: project `.claude/settings.json`, the project local settings file (settings.local.json beside it), and the user settings file (local-scope env reach measured in B4.txt; user scope unproven, treated as reachable) | NEW: `activation-preconditions` asserts each named path is matched by a deny rule |
+| F3a | Added (THOTH-ADR-0003): mutant removes the fixture's deny rule | The test fails (`F3-mutant-drop-fixture-deny`) |
+| F5 | Added (`docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md`, S2): every AP-10 path also has a `permissions.deny` `Edit(...)` entry in `.claude/settings.json`, because the gate refuses every tool name other than `Bash` and `mcp__*` and so cannot protect the built-in file tools | NEW: `F5-ap10-paths-edit-deny`: asserts each AP-10 path has an `Edit(...)` deny entry (in the proposed settings text; K ships it); a seeded mutant drops one entry and the test fails |
+| F6 | Added (`docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md`, S3, LOW; no further criterion): the gate cannot path-match an `mcp__` write (its target is `mcp:server/tool`); MCP protection is per server and class, not per path | Note only |
+| F7 | ADR gate: F ships only after the human accepts THOTH-ADR-0003 | Decisions row records acceptance |
 
 ### G. Docs and decisions
 
@@ -144,6 +151,9 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 | J2 | Four qa checks green against the proposed entry in a scratch copy of the settings | `qa:gate-command-path`, `qa:gate-matcher-drift`, `qa:gate-manifest`, `qa:gate-latency-budget` |
 | J3 | U-8: a Bash call and an MCP call through the real runtime in a scratch session, allow and deny both exercised | Recorded transcript |
 | J4 | Full regression | `npm test` real counts (skipped is not passed), `qa:*` set, fresh `docs/reviews/` reports |
+| J5 | Added (`docs/reviews/s308-A-adr-cross-domain-round2-2026-10-02.md`, MED): live probe in a scratch `claude -p` session that the proposed `permissions.deny` `Edit(...)` entries refuse `Edit` and `Write` on a scratch copy of the fixture, including under `bypassPermissions` | Recorded transcript; the real fixture is not edited |
+| J6 | Added: re-time the allow path once E ships (story B's B1 timed the deny path only) | Recorded measurement against `qa:gate-latency-budget` |
+| J7 | ADR gate: J ships only after the human accepts THOTH-ADR-0003 | Decisions row records acceptance |
 
 ### K. Held
 
@@ -151,6 +161,8 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 |---|---|---|
 | K1 | Explicit human approval recorded in `docs/decisions.md` | Row exists, Human = Y |
 | K2 | After merge, `qa:gate-*` four checks green on the real file | Run |
+| K3 | Added (`docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md`, S1): `K3-edit-deny-covers-fixture`. No qa check reads `permissions.deny` today; K adds one, and a dropped `Edit(...)` line for the fixture (or any AP-10 path) must fail it | NEW check, with a seeded mutant that removes the line |
+| K4 | ADR gate: the settings entry and the `permissions.deny` entries ship with K under the human's approval, after acceptance of THOTH-ADR-0003 | Decisions row |
 
 ## 4. Reviewer sets and human touchpoints
 
