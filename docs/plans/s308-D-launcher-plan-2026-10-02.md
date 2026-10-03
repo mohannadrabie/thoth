@@ -54,7 +54,7 @@ What the shim does, in order, using shell builtins only until `env` runs:
 - Exit-status truncation. Measured today under Git Bash: a node child that exits 256 or 512 is reported by the shell as 0, 257 as 1, 258 as 2. So "every exit other than 0 and 2 maps to 2" is true of the status the shell reports, not of the 32-bit Windows exit code. A natural fault with a low byte of 0 is not known (NTSTATUS crashes seen map to 5, 9, 58, 66), but "not known" is not "none". The test records this as a disclosed limit with a case for exit 256.
 - A hang is not closed (runtime timeout, AP-5, row `hook-timeout-runtime-property`, unchanged). Optional: a `timeout` wrapper inside the shim shorter than the declared 60 s would turn a hang into exit 2. Out of scope for D unless the Manager rules otherwise (Q5).
 - PATH hijack (an attacker-controlled PATH putting a fake `node` first) passes through the allow-list by design. Same class as the interpreter; it needs the settings or local settings write path closed (story F deny rules).
-- Protection of the shim itself: the shim file, `.claude/settings.json`, `.claude/settings.local.json` and the gate script must be in story F's deny rules. D hands F one requirement: the F generated-list test must include `hooks/launch-gate.sh`. D does not edit F's artifacts.
+- Protection of the shim itself: the shim file, `.claude/settings.json`, the local settings file and the gate script must be in story F's deny rules. D hands F one requirement: the F generated-list test must include `hooks/launch-gate.sh`. D does not edit F's artifacts.
 
 ### D6 claim boundary
 

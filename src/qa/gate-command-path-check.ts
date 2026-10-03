@@ -2,7 +2,7 @@
 // revision (v2) ratified on item 2(b)" row; design-challenger's S5 round-1 report, HIGH #2): a
 // structural, build-time check that `.claude/settings.json`'s `hooks` object never names a
 // `type: "command"` script that does not actually exist on disk. Had this check existed before S1,
-// it would have caught `hooks/report-subject-gate.mjs`'s own defect (wired into `hooks.PreToolUse`
+// it would have caught the retired report-subject-gate hook script's own defect (wired into `hooks.PreToolUse`
 // since `master`'s orphan Initial commit, referencing a file that has never existed on this branch)
 // the moment it was introduced, instead of four full CRITICAL-tier review cycles later.
 //
