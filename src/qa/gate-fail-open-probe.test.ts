@@ -166,7 +166,7 @@ test("memory-exhaustion-blocks-through-launcher: an allocation failure (exit 134
   assert.equal(observed.outcome, "BLOCKS", observed.detail);
   assert.match(observed.detail, /^exit=2 /, observed.detail);
   assert.match(observed.detail, /control=ok/, `the control run (same heap cap, small command, through the launcher) must decide normally, else the abort is not input-driven: ${observed.detail}`);
-  assert.match(observed.detail, /direct=PROCEEDS \(exit=134\)/, `without the launcher the same fault is exit 134: ${observed.detail}`);
+  assert.match(observed.detail, /direct=PROCEEDS \((exit=134|exit=null signal=SIGABRT)\)/, `without the launcher the same fault is exit 134 (Windows) or a SIGABRT signal with no status (Linux): ${observed.detail}`);
 });
 
 test("hook-script-unparseable-blocks-through-launcher: a hook script that does not parse exits 1 directly (non-blocking) and exit 2 through the launcher", () => {

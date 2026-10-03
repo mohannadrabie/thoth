@@ -9,9 +9,9 @@
 // DISCLOSED LIMITS, by name (D5; pinned by D5-header-names-launcher and D2-env-shell-levers-disclosure below):
 //   - X-8: a tampered module in the gate's import graph that exits 0 with no deny output is not closed. The launcher
 //     sees only an exit status.
-//   - An empty (0-byte) or truncated launcher exits 0. Truncation inside the file is a syntax error and exits 2 (the whole
-//     body is one compound command opened on line 1; D2-shim-truncation-sweep); the 0-byte file is caught only by the
-//     pinned content hash (D4b-shim-hash-pinned, run in CI by this repo's test suite).
+//   - An empty (0-byte) launcher exits 0 (caught by the pin); any non-empty truncation exits 2: the whole body is one
+//     compound command opened on line 1 (D2-shim-truncation-sweep), and the 0-byte file is caught only by the pinned
+//     content hash (D4b-shim-hash-pinned, run in CI by this repo's test suite).
 //   - Shell-level levers that act before or outside the shim, which it cannot close: SHELLOPTS=noexec (the shell reads
 //     the file and runs nothing), BASH_ENV (read by the runtime's outer bash), MSYS (for example noglob breaks the outer
 //     command line), BASH_FUNC_sh%% (a function named sh in the outer bash), CLAUDE_CODE_SHELL_PREFIX (wraps the hook
@@ -26,9 +26,12 @@
 //   - The runtime's shell-level behavior is unmeasured live (S9, story J).
 // D6 (claim boundary): the only env-block behavior measured is B4 (docs/qa/s308-live-spikes/B4.txt): on Claude Code
 // 2.1.267, with project settings loaded, an ordinary env-block variable and a NODE_OPTIONS value both reached a node hook
-// process, and the hook saw CLAUDE_PROJECT_DIR, SYSTEMROOT and windir. Nothing else is claimed: not user-level or local
-// settings, not whether an env block can override SYSTEMROOT or PATH, not later versions, not non-Windows. SystemRoot
-// steering (a populated decoy System32 holding a planted reg.exe) is Issue #397 and is unmeasured.
+// process, and the hook saw CLAUDE_PROJECT_DIR, SYSTEMROOT and windir. B4 measured project settings and local settings
+// (b4-local); user scope was not run. Nothing else is claimed: not user-level settings, not whether an env block can
+// override SYSTEMROOT or PATH, not later versions, not non-Windows. SystemRoot steering (Issue #397): the launcher does not
+// forward SYSTEMROOT, SystemRoot, WINDIR or windir to the child; on Windows the Git Bash (MSYS) runtime supplies the
+// real value to the native child (D2-systemroot-from-runtime). That relies on MSYS runtime behavior, which the Git Bash
+// precondition already accepts; the System32 existence check on the parent value stays as a backstop.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -119,28 +122,59 @@ test("D2-env-scrub: the child sees only the allow-list (PATH, SYSTEMROOT, WINDIR
   assert.ok(seen.includes("CLAUDE_PROJECT_DIR"));
 });
 
-test("D2-env-preserved: CLAUDE_PROJECT_DIR and PATH reach the child with the same values; on win32 SystemRoot and windir keep their values", () => {
-  const dump = stub("dump.mjs", "const e = process.env; process.stdout.write(JSON.stringify({ p: e.CLAUDE_PROJECT_DIR, path: e.PATH, sr: e.SystemRoot, wd: e.windir }));\n");
+test("D2-env-preserved: CLAUDE_PROJECT_DIR and PATH reach the child with the same values", () => {
+  const dump = stub("dump.mjs", "const e = process.env; process.stdout.write(JSON.stringify({ p: e.CLAUDE_PROJECT_DIR, path: e.PATH }));\n");
   const projectDir = join(work, "project");
   const r = launch(dump, "", envWith({ CLAUDE_PROJECT_DIR: projectDir }));
   assert.equal(r.status, 0, r.stderr);
-  const got = JSON.parse(r.stdout) as { p: string; path: string; sr?: string; wd?: string };
+  const got = JSON.parse(r.stdout) as { p: string; path: string };
   assert.equal(got.p, projectDir);
   assert.ok(got.path.length > 0);
-  if (process.platform === "win32") {
-    const wantSr = process.env.SystemRoot ?? process.env.SYSTEMROOT;
-    assert.ok(wantSr !== undefined);
-    assert.equal((got.sr ?? "").toLowerCase().replace(/\\/g, "/"), wantSr.toLowerCase().replace(/\\/g, "/"), "SystemRoot value preserved");
+});
+
+const norm = (p: string | undefined): string => (p ?? "").toLowerCase().replace(/\\/g, "/");
+
+test("D2-systemroot-from-runtime: on win32 a decoy parent SYSTEMROOT (an existing directory with an empty System32) does not reach the child; the child sees the real Windows directory, and SystemRoot or windir is present for central-source (AC-3j-4). Relies on the Git Bash (MSYS) runtime supplying it", { skip: process.platform !== "win32" }, () => {
+  const decoy = join(work, "decoy-root");
+  mkdirSync(join(decoy, "System32"), { recursive: true });
+  const dump = stub("sr.mjs", "const e = process.env; process.stdout.write(JSON.stringify({ sr: e.SystemRoot ?? e.SYSTEMROOT, wd: e.windir ?? e.WINDIR }));\n");
+  const real = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  assert.ok(real !== undefined && norm(real) !== norm(decoy), "the test process has a real SystemRoot");
+  const r = launch(dump, "", envWith({ SYSTEMROOT: decoy, SystemRoot: decoy, WINDIR: decoy, windir: decoy }, ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]));
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout) as { sr?: string; wd?: string };
+  assert.equal(norm(got.sr), norm(real), "the child's SystemRoot is the real value, not the decoy");
+  assert.equal(norm(got.wd), norm(real), "the child's windir is the real value, not the decoy");
+});
+
+test("D2-systemroot-bad: a SYSTEMROOT that names no Windows directory gives status 2 with the launcher's own stderr line and the child does not run; the same stub runs and writes its marker on the good path (so the marker proves something)", () => {
+  const marker = join(work, "systemroot-marker");
+  const child = stub("mark.mjs", `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran");\n`);
+  const good = launch(child);
+  assert.equal(good.status, 0, `control: the stub runs on the good path; stderr=${good.stderr}`);
+  assert.equal(existsSync(marker), true, "control: the marker is written when the child runs");
+  rmSync(marker);
+  for (const name of ["SYSTEMROOT", "SystemRoot", "WINDIR", "windir"]) {
+    const r = launch(child, "", envWith({ [name]: join(work, "no-such-systemroot") }, [name]));
+    assert.equal(r.status, 2, `${name}: ${r.stderr}`);
+    assert.equal(existsSync(marker), false, `${name}: the child must not have run`);
+    // On Windows the sh environment folds the four names to one, so any of the four fixed launcher lines counts there.
+    const line = process.platform === "win32" ? /^launcher: (SYSTEMROOT|SystemRoot|WINDIR|windir) does not name a Windows directory$/m : new RegExp(`^launcher: ${name} does not name a Windows directory$`, "m");
+    assert.match(r.stderr, line, `${name}: the launcher's own stderr line, got: ${r.stderr}`);
   }
 });
 
-test("D2-systemroot-bad: a SYSTEMROOT that names no Windows directory gives status 2 before the child runs (marker file proves it)", () => {
-  const marker = join(work, "systemroot-marker");
-  const child = stub("mark.mjs", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");\n`);
-  const r = launch(child, "", envWith({ SYSTEMROOT: join(work, "no-such-systemroot") }, ["SystemRoot"]));
-  assert.equal(r.status, 2, r.stderr);
-  assert.equal(existsSync(marker), false, "the child must not have run");
-  assert.match(r.stderr, /SYSTEMROOT/i);
+test("D2-dash-target: a target whose name begins with a dash is a file, not a node option (node -- \"$target\")", () => {
+  stub("-dash-target.mjs", "process.exit(0);\n");
+  const r = spawnSync(SH, [SHIM, "-dash-target.mjs"], { cwd: work, encoding: "utf8", env: process.env, windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test("D2-env-absolute-path: the shim calls env by absolute path, with -i, and ends node's options with --, so a PATH-planted env or an option-shaped target cannot change the launch (static pin; mutant M15)", () => {
+  const src = readFileSync(SHIM, "utf8");
+  assert.ok(src.includes("/usr/bin/env -i "), "must call /usr/bin/env -i by absolute path");
+  assert.equal(/(^|[\s;{(])env -i/m.test(src.replace("/usr/bin/env -i", "")), false, "no other bare env -i");
+  assert.ok(src.includes('node -- "$target"'), "node options end before the target");
 });
 
 test("D2-lf-only: the launcher has no carriage return byte (a CRLF shim breaks sh on Linux; behavior tests on Windows would not notice)", () => {
@@ -246,7 +280,7 @@ test("D5-header-names-launcher: the header discloses X-8 and that an empty or tr
   const header = SELF.slice(0, SELF.indexOf("import { test }"));
   assert.match(header, /X-8/);
   assert.match(header, /tampered module in the gate's import graph that exits 0/);
-  assert.match(header, /empty \(0-byte\) or truncated launcher exits 0/);
+  assert.match(header, /empty \(0-byte\) launcher exits 0 \(caught by the pin\); any non-empty truncation exits 2/);
   assert.match(header, /hooks\/launch-gate\.sh/);
 });
 
@@ -255,6 +289,7 @@ test("D6-claim-boundary: the header limits env-block claims to B4 (project setti
   assert.match(header, /B4/);
   assert.match(header, /2\.1\.267/);
   assert.match(header, /project settings/);
+  assert.match(header, /local settings/);
   assert.match(header, /#397/);
   assert.match(header, /Nothing else is claimed/);
   assert.doesNotMatch(header, /settings env block (closes|blocks|is closed)/i);

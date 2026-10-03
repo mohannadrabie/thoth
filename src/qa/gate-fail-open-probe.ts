@@ -83,7 +83,7 @@ export const RECORDED_DECISIONS: readonly RecordedDecision[] = [
   { id: "interpreter-not-on-path", expect: "BLOCKS", probed: true, note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13): node cannot be found, the launcher's env -i child exits 127 and the launcher maps it to 2 (the shell that runs the launcher is started by absolute path in this probe; disclosed: if the runtime's own shell cannot find sh the call still proceeds, Git Bash is a Windows precondition checked by the pre-flight)" },
   { id: "node-options-bad-flag", expect: "BLOCKS", probed: true, note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13) for an AMBIENT NODE_OPTIONS (inherited from the parent environment) with an unknown flag, which kills a bare Node with exit 9 before any hook code runs: the launcher scrubs the child env to an allow-list, so the gate runs and denies. A settings env block is a settings write, closed by settings protection (stories F and K), not by the launcher" },
   { id: "systemroot-nonexistent", expect: "BLOCKS", probed: true, platform: "win32", note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13): SYSTEMROOT pointing at a nonexistent directory aborts a bare Node 24 at start-up on Windows (exit 134, Issue #320) while Node 22.18 starts and the hook denies; the launcher refuses (exit 2) any SYSTEMROOT, SystemRoot, WINDIR or windir whose System32 directory does not exist, so the outcome is BLOCKS on every Node version. Disclosed: it checks that the directory exists, not which directory it is (a populated decoy is unmeasured, Issue #397)" },
-  { id: "memory-exhaustion", expect: "BLOCKS", probed: true, note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13) as far as the exit status goes: an allocation failure inside the hook aborts the process (V8 heap limit, observed exit 134 on Windows with --max-old-space-size=40 and a 2 MB redirect-dense command; the same cap decides a small command normally) and the launcher maps the 134 to 2. Evidence is a wrapper variant that applies the cap by argv (the launcher scrubs env) plus the stub exit-134 test, not direct env injection" },
+  { id: "memory-exhaustion", expect: "BLOCKS", probed: true, note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13) as far as the exit status goes: an allocation failure inside the hook aborts the process (V8 heap limit, observed exit 134 on Windows with --max-old-space-size=40 and a 2 MB redirect-dense command; on Linux the V8 abort is a signal (SIGABRT, no exit status) and the wrapper turns it into exit 1; the same cap decides a small command normally) and the launcher maps the 134 (Windows) or the 1 (Linux wrapper) to 2. Evidence is a wrapper variant that applies the cap by argv (the launcher scrubs env) plus the stub exit-134 test, not direct env injection" },
   { id: "hook-script-unparseable", expect: "BLOCKS", probed: true, note: "closed by the launcher (hooks/launch-gate.sh, #308 story D, AP-13): a hook script that does not parse (corruption, a bad merge, tampering) makes Node print a SyntaxError and exit 1 before any hook code runs; the launcher maps the 1 to 2. Disclosed: a launcher that is itself empty exits 0 (caught by the pinned hash, not at runtime), and a tampered module in the gate's import graph that exits 0 is not closed (X-8)" },
   { id: "stdout-closed-before-write", expect: "BLOCKS", probed: true, platform: "win32", note: "a destroyed or closed stdout: the write callback error or the stdout error event exits 2 instead of dropping a decided deny (red-team attack 3). Asserted in-process only: the parent destroys the child's stdout pipe before the child starts (reproduced on Windows, 5 of 5 runs exited 0 before the fix; Linux unmeasured, so the row is probed on Windows only, and the injected-write-failure tests in hooks/pretooluse-kernel-gate-launch.test.ts cover the code path on every platform). Reach in a real Claude Code session stays UNPROVEN (LOW)" },
   { id: "empty-stdin", expect: "BLOCKS", probed: true, note: "exit 2 with stderr" },
@@ -131,12 +131,13 @@ function payload(toolName: unknown, toolInput: unknown = {}): string {
 
 interface Spawned {
   status: number | null;
+  signal: string | null;
   stdout: string;
   stderr: string;
 }
 function run(command: string, args: string[], input: string, cwd: string, shell: boolean, env?: NodeJS.ProcessEnv): Spawned {
   const r = spawnSync(command, args, { input, encoding: "utf8", cwd, shell, timeout: 30_000, windowsHide: true, ...(env === undefined ? {} : { env }) });
-  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  return { status: r.status, signal: r.signal, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 /** A copy of the current environment with `overrides` applied; keys matching `removeCase` (case-insensitively, Windows
@@ -175,7 +176,7 @@ export function runProbe(repoRoot: string): FaultResult[] {
       results.push({
         id,
         outcome: classifyOutcome(l.status, l.stdout),
-        detail: `exit=${String(l.status)} stdout=${JSON.stringify(l.stdout.slice(0, 80))} stderr=${JSON.stringify(l.stderr.slice(0, 80))} direct=${classifyOutcome(d.status, d.stdout)} (exit=${String(d.status)})${extra}`,
+        detail: `exit=${String(l.status)} stdout=${JSON.stringify(l.stdout.slice(0, 80))} stderr=${JSON.stringify(l.stderr.slice(0, 80))} direct=${classifyOutcome(d.status, d.stdout)} (exit=${String(d.status)}${d.signal === null ? "" : ` signal=${d.signal}`})${extra}`,
       });
     };
     const denied = payload("mcp__nosuchserver__x");
@@ -256,7 +257,7 @@ function runWithDestroyedStdout(command: string, args: string[], input: string, 
     });
     child.on("close", (status) => {
       clearTimeout(timer);
-      resolvePromise({ status, stdout: "", stderr });
+      resolvePromise({ status, signal: null, stdout: "", stderr });
     });
     child.stdin.end(input);
   });

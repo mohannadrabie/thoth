@@ -10,7 +10,7 @@ import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
 
 export const LAUNCHER_PATH = "hooks/launch-gate.sh";
-export const PINNED_SHA256 = "f68dce483c6634dbf0ea54cb64a740f41cfd87516d3d0675281c3f408bf11729";
+export const PINNED_SHA256 = "6c7525336c7ed11f2ce92840d5d81304bd4fc5fc554d8f4f0ec365744b01b5d5";
 
 export function sha256Hex(content: Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");

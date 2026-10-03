@@ -94,3 +94,9 @@ exit=2
 
 ### S9 (live runtime shell and settings-env forwarding): NOT RUN. Deferred to story J by Manager ruling.
 Note S8: the design challenge measured +32 ms median for the shim (194 vs 162 ms); this run measured +89 ms (270 vs 181 ms). The two disagree by machine load; both are far under the 2000 ms ceiling of qa:gate-latency-budget. No budget claim is made.
+
+### S10 (review round 1) decoy and nonexistent parent SYSTEMROOT through the no-passthrough launcher, win32
+nonexistent parent SYSTEMROOT: launcher: SYSTEMROOT does not name a Windows directory, exit=2 (backstop)
+decoy parent SYSTEMROOT (existing dir, empty System32): exit=0, child sees {"sr":"C:\WINDOWS","wd":"C:\WINDOWS"} (the real value, from the MSYS runtime)
+Node 22 not installed here; the child no longer receives the parent value, so this does not depend on the Node version.
+Mutants (separate worktree, gate-launcher.test.ts): M17 (delete the four checks) and M4 (drop the SYSTEMROOT check) each fail D2-systemroot-bad; M15 (bare env) fails D2-env-absolute-path; dropping -- fails D2-dash-target and D2-env-absolute-path; baseline 0 failures.
