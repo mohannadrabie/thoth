@@ -1,0 +1,95 @@
+B4 (X-8): does a settings env block reach hooks
+Date: 2026-10-02. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11.
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder), <HOME>. Ids are replaced by stable placeholders.
+b4: ordinary variable. b4b: NODE_OPTIONS set to an unknown flag (the logger is a node process too, so it also died: no b4b log file).
+
+
+### profile b4.json
+{
+  "env": {
+    "SPIKE_ENV_PROBE": "from-settings-env"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<SPIKES>/harness/log-hook.mjs\" b4"
+          },
+          {
+            "type": "command",
+            "command": "node \"<REPO>/hooks/pretooluse-kernel-gate.mjs\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+
+### profile b4b.json
+{
+  "env": {
+    "NODE_OPTIONS": "--spike-unknown-flag"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<SPIKES>/harness/log-hook.mjs\" b4b"
+          },
+          {
+            "type": "command",
+            "command": "node \"<REPO>/hooks/pretooluse-kernel-gate.mjs\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
+
+### run b4
+profile=b4 exit=0 wall_ms=4977 cost_usd=0.015638500000000003
+prompt: Call the Bash tool exactly once with the command: echo spike-b4 . Do not call any other tool. After the result (or an error) reply with the single word DONE.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Bash","--max-budget-usd","0.25","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Bash","input":{"command":"echo spike-b4 .","description":"Echo the text spike-b4 followed by a period"}}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":0,"outcome":"success","stdout":"","stderr":""}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":0,"outcome":"success","stdout":"{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"POL-05: mutating action has unresolved field(s) [command verb \\\"spike-b4\\\", command resource \\\"\\\", command flag --context] — fail-closed on ambiguity\"}}","stderr":""}
+tool_result {"is_error":true,"length":145,"content":"POL-05: mutating action has unresolved field(s) [command verb \"spike-b4\", command resource \"\", command flag --context] — fail-closed on ambiguity"}
+assistant_text "DONE"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.015638500000000003,"is_error":false}
+stream arrival ms (from first line): hook_started=[1545,1546] hook_response=[1703,1841]
+
+### run b4b
+profile=b4b exit=0 wall_ms=4883 cost_usd=0.015008700000000002
+prompt: Call the Bash tool exactly once with the command: echo spike-b4b . Do not call any other tool. After the result (or an error) reply with the single word DONE.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Bash","--max-budget-usd","0.25","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Bash","input":{"command":"echo spike-b4b","description":"Echo the text spike-b4b"}}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_started {"hook_name":"PreToolUse:Bash"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":9,"outcome":"error","stdout":"","stderr":"C:\\Program Files\\nodejs\\node.exe: --spike-unknown-flag is not allowed in NODE_OPTIONS\r\n"}
+hook_response {"hook_name":"PreToolUse:Bash","exit_code":9,"outcome":"error","stdout":"","stderr":"C:\\Program Files\\nodejs\\node.exe: --spike-unknown-flag is not allowed in NODE_OPTIONS\r\n"}
+tool_result {"is_error":false,"length":9,"content":"spike-b4b"}
+assistant_text "DONE"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.015008700000000002,"is_error":false}
+stream arrival ms (from first line): hook_started=[1958,1958] hook_response=[2035,2035]
+
+### log b4.jsonl
+{"label":"b4","t_epoch_ms":1790985371271,"t_iso":"2026-10-02T23:56:11.271Z","event":"PreToolUse","tool_name":"Bash","tool_use_id":"<TOOLU-14>","command":"echo spike-b4 .","stdin_bytes":917,"node_version":"v24.15.0","cwd":"<SPIKES>","env_probe":{"keyCount":96,"has":{"CLAUDE_PROJECT_DIR":true,"NODE_OPTIONS":false,"SYSTEMROOT":true,"windir":true},"values":{"SPIKE_ENV_PROBE":"from-settings-env","CLAUDE_PROJECT_DIR":"<SPIKES>"},"namesCLAUDE_SPIKE":["CLAUDECODE","CLAUDE_AGENT_SDK_VERSION","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_EMIT_STARTUP_TIMING","CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING","CLAUDE_CODE_ENABLE_TASKS","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_EXECPATH","CLAUDE_CODE_GIT_BASH_PATH","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_CODE_SESSION_ATTENDED","CLAUDE_CODE_SESSION_ID","CLAUDE_EFFORT","CLAUDE_PID","CLAUDE_PROJECT_DIR","SPIKE_ENV_PROBE"]}}
+
+### log b4b.jsonl
+(no file: the logger never ran or never wrote)

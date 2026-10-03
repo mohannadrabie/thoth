@@ -1,0 +1,29 @@
+live calls: 27
+total cost USD: 0.6616
+s0-smoke	smoke	exit=0	wall_ms=5934	cost_usd=0.0927353
+b1-direct-1	b1-direct	exit=0	wall_ms=6315	cost_usd=0.1047192
+b1-direct-2	b1-direct	exit=0	wall_ms=6358	cost_usd=0.027311299999999997
+b1-direct-3	b1-direct	exit=0	wall_ms=6221	cost_usd=0.0269729
+b1-tee-1	b1-tee	exit=0	wall_ms=8340	cost_usd=0.027467500000000002
+b1-tee-2	b1-tee	exit=0	wall_ms=7122	cost_usd=0.027169
+b1-tee-3	b1-tee	exit=0	wall_ms=6690	cost_usd=0.027049800000000002
+b1r-direct-4	b1-direct	exit=0	wall_ms=5406	cost_usd=0.0161109
+b1r-direct-5	b1-direct	exit=0	wall_ms=5523	cost_usd=0.0157797
+b1r-direct-6	b1-direct	exit=0	wall_ms=4871	cost_usd=0.0158938
+b2-baseline	b2-baseline	exit=0	wall_ms=4668	cost_usd=0.015788800000000002
+b2-close	b2-close	exit=0	wall_ms=4749	cost_usd=0.0158069
+b2-control	b2-control	exit=0	wall_ms=4558	cost_usd=0.0152748
+b4	b4	exit=0	wall_ms=4977	cost_usd=0.015638500000000003
+b4b	b4b	exit=0	wall_ms=4883	cost_usd=0.015008700000000002
+b3-init	b3	exit=0	wall_ms=2777	cost_usd=0.009963
+b3-dot	b3	exit=0	wall_ms=9816	cost_usd=0.0184573
+b3-unicode	b3	exit=0	wall_ms=6115	cost_usd=0.0165019
+b3-dunder	b3	exit=0	wall_ms=5996	cost_usd=0.0217898
+b3-tooldot	b3	exit=0	wall_ms=4742	cost_usd=0.0157016
+b3-toollong	b3	exit=0	wall_ms=7117	cost_usd=0.0183884
+b6	b6	exit=0	wall_ms=5502	cost_usd=0.015812
+b5-300	b5	exit=0	wall_ms=12835	cost_usd=0.014727
+b5-374	b5	exit=0	wall_ms=7759	cost_usd=0.012633
+b5-600	b5	exit=0	wall_ms=9023	cost_usd=0.0198586
+b5r-300	b5	exit=0	wall_ms=8983	cost_usd=0.0187282
+b5r-374	b5	exit=0	wall_ms=10700	cost_usd=0.0203348
