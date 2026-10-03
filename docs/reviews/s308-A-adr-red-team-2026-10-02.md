@@ -2,7 +2,7 @@
 
 [red-team] Red Team (Sutekh), CRITICAL tier, attacking the s308-A ADR amendment with failure scenarios.
 
-- **Scope:** `git diff 35f49e9..07e88f3` (commits 1ba378a, 07e88f3). Files: `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md` (new, proposed), the pointer sentence on `docs/adr/thoth-0001-...md:24`, a `docs/decisions.md` row, a CHANGELOG entry, `docs/plans/s308-A-adr-amendment-plan-2026-10-02.md`.
+- **Scope:** `git diff 35f49e9..07e88f3` (commits 1ba378a, 07e88f3). Files: `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md` (new, proposed), the pointer sentence on `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md:24`, a `docs/decisions.md` row, a CHANGELOG entry, `docs/plans/s308-A-adr-amendment-plan-2026-10-02.md`.
 - **HEAD reviewed:** 07e88f3. Experiments ran in a detached scratch worktree at 07e88f3, removed afterwards. The shared working tree was not modified, except for this report and the REVIEW_LOG row.
 - **ADR cache:** `📊 ADR cache HIT: reused 38 ADR(s) [adr/devops:12, adr/software-engineering:23, docs/adr:3] from catalog — ≈18800 tokens saved this pass (fp d37bef7) [CACHE=HIT]`. Read: THOTH-ADR-0001, THOTH-ADR-0003 (catalog entries), SE ADR-0001, SE ADR-0021 (INT-07, POL-05), and the security and state tags touching the gate.
 - **Verdict:** **no-go.** There is one HIGH (security, demonstrated): the fixture's protection precondition cannot cover the built-in file-edit tools. The unlock is a wording change to one rule and one Decision sentence, plus one named story-F test.
@@ -133,7 +133,7 @@ node --test src/policy/tools/central-classification.test.ts hooks/sessionstart-t
 
 - Lines 33 and 98 cite "the AC-3h / AC-3 member-write allow-list" in "the gate structure tests" as the write-free evidence. AC-3h is a JS member-write pin in `src/policy/config/sanitize.test.ts:414-416,606`. The filesystem-write guard is G18 in `src/policy/gate/gate-structure.test.ts:62-69`.
 - Compliance line 99 says test-code hardcodes are "checked by review". G19 already derives names from the fixture for `STORY_TEST_FILES`; cite it.
-- ADR-0001 pointer (`thoth-0001...md:24`): "rules 1, 4 and 5 are narrowed or scoped". Rule 1 is widened, and rule 2 is also changed (#391).
+- ADR-0001 pointer (`docs/adr/thoth-0001-central-classification-fixture-standing-exception.md:24`): "rules 1, 4 and 5 are narrowed or scoped". Rule 1 is widened, and rule 2 is also changed (#391).
 - Rule 4's "synthetic name" carve-out is not a carve-out: a synthetic name is not an entry of the real lists.
 
 ## Scariest unproven assumption, decision, next action

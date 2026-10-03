@@ -2,7 +2,7 @@
 
 [red-team] Red Team (Sutekh), CRITICAL tier, re-attacking the s308-A fix round.
 
-- **Scope:** `git diff 07e88f3..af9285f`, ADR text only: `docs/adr/thoth-0003-...md` and the pointer on `docs/adr/thoth-0001-...md:24`. Story B files in the same commit are out of scope. Round 1: `docs/reviews/s308-A-adr-red-team-2026-10-02.md` (committed f1edacc).
+- **Scope:** `git diff 07e88f3..af9285f`, ADR text only: `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md` and the pointer on `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md:24`. Story B files in the same commit are out of scope. Round 1: `docs/reviews/s308-A-adr-red-team-2026-10-02.md` (committed f1edacc).
 - **HEAD reviewed:** af9285f. One experiment ran in a detached scratch worktree at af9285f, removed afterwards (`git worktree list` shows the main checkout only). The shared tree was not modified except for this report and the REVIEW_LOG row.
 - **ADR cache:** `📊 ADR cache HIT: reused 38 ADR(s) [adr/devops:12, adr/software-engineering:23, docs/adr:3] from catalog — ≈18800 tokens saved this pass (fp 702b16a) [CACHE=HIT]`.
 - **Verdict:** **go.** All five asks (a)-(e) are met in the ADR text, and the new code claims check out. Three suspicions remain, owned by stories F and K, not by this ADR. None blocks A.
@@ -64,7 +64,7 @@ status proposed rules 9
 
 ### C6. [CLEAN][code-traced] The precedence constraint quotes real sentences
 
-- The displaced sentence exists verbatim in two places: the security constraint at `thoth-0001...md:13` and Rules for agents at `:53` ("MUST NOT be held for a fresh dated review report").
+- The displaced sentence exists verbatim in two places: the security constraint at `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md:13` and Rules for agents at `:53` ("MUST NOT be held for a fresh dated review report").
 - The "Inert classification" row exists at `:71`.
 - #390 and #391 are resolved in text.
 
