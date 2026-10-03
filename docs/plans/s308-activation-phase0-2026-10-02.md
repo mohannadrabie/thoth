@@ -68,7 +68,7 @@ Check names beginning `NEW:` are tests to be written failing first; the rest exi
 |---|---|---|
 | B1 | AP-5: wall clock of the real hook at `timeout` 60 on the real runtime | Recorded measurement, compared with `qa:gate-latency-budget` p99 |
 | B2 | X-2: stdout-closed-before-write reach in a real session | Recorded transcript; probe row `stdout-closed-before-write` unchanged |
-| B3 | X-3: which characters the runtime sanitizes in tool names | Recorded server/tool names tried and the `tool_name` the hook received; N13 (`tool-class.test.ts:270`) re-read against it |
+| B3 | X-3: which characters the runtime sanitizes in tool names | Recorded server/tool names tried and the `tool_name` the hook received; N13 (`tool-class.test.ts:289`) re-read against it |
 | B4 | X-8: whether a settings `env` block reaches hooks | Recorded run; result gates the form of D |
 | B5 | X-9: reader buffer behavior for a deny reason near the 512-char cap | Recorded run |
 | B6 | U-5: matcher regex `mcp__.*` matches an MCP call | Recorded run with a stdio MCP server |

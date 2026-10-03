@@ -1,5 +1,5 @@
-live calls: 27
-total cost USD: 0.6616
+live calls: 28
+total cost USD: 0.6773
 s0-smoke	smoke	exit=0	wall_ms=5934	cost_usd=0.0927353
 b1-direct-1	b1-direct	exit=0	wall_ms=6315	cost_usd=0.1047192
 b1-direct-2	b1-direct	exit=0	wall_ms=6358	cost_usd=0.027311299999999997
@@ -27,3 +27,4 @@ b5-374	b5	exit=0	wall_ms=7759	cost_usd=0.012633
 b5-600	b5	exit=0	wall_ms=9023	cost_usd=0.0198586
 b5r-300	b5	exit=0	wall_ms=8983	cost_usd=0.0187282
 b5r-374	b5	exit=0	wall_ms=10700	cost_usd=0.0203348
+b4-local	b4	exit=0	wall_ms=5298	cost_usd=0.0157028

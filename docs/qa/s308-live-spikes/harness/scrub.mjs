@@ -24,8 +24,11 @@ function scrub(text) {
   const tail = `${SEP}AppData${SEP}Local${SEP}Temp${SEP}claude${SEP}[^"\\s]*?${SEP}scratchpad${SEP}[^"\\s\\\\/]+`;
   t = t.replace(new RegExp(`C:${SEP}Users${SEP}${user}${tail}`, "gi"), "<SPIKES>");
   t = t.replace(new RegExp(`${SEP}c${SEP}Users${SEP}${user}${tail}`, "gi"), "<SPIKES>");
-  t = t.replace(new RegExp(`C:${SEP}playground${SEP}thoth`, "gi"), "<REPO>");
-  t = t.replace(new RegExp(`${SEP}c${SEP}playground${SEP}thoth`, "gi"), "<REPO>");
+  // Repo root (THOTH_REPO, required): its path segments may be separated by / or backslashes in raw output.
+  const repoParts = (process.env.THOTH_REPO ?? "").replaceAll("\\", "/").split("/").filter(Boolean).map(esc);
+  if (repoParts.length > 0) {
+    t = t.replace(new RegExp(`(?:[A-Za-z]:|${SEP}[a-z])${SEP}${repoParts.slice(1).join(SEP)}`, "gi"), "<REPO>");
+  }
   t = t.replace(new RegExp(`C:${SEP}Users${SEP}${user}`, "gi"), "<HOME>");
   t = t.replace(new RegExp(`${SEP}c${SEP}Users${SEP}${user}`, "gi"), "<HOME>");
   const email = process.env.SPIKE_SCRUB_EMAIL;
@@ -82,14 +85,24 @@ const spec = {
   B1: { title: "B1 (AP-5): wall clock of the real hook at timeout 60", note: "Every Bash call is denied by POL-05 today, so this times the DENY path, not the silent-allow path.", runs: ["s0-smoke", "b1-direct-1", "b1-direct-2", "b1-direct-3", "b1r-direct-4", "b1r-direct-5", "b1r-direct-6", "b1-tee-1", "b1-tee-2", "b1-tee-3"], logs: ["smoke", "b1-direct", "b1-tee"], profiles: ["smoke", "b1-direct", "b1-tee"] },
   B2: { title: "B2 (X-2): stdout closed before write, in a real session", note: "close = a launcher destroys the child's stdout read end before the hook writes. The runtime never closed the pipe itself.", runs: ["b2-baseline", "b2-close", "b2-control"], logs: ["b2-baseline", "b2-close", "b2-control"], profiles: ["b2-baseline", "b2-close", "b2-control"] },
   B3: { title: "B3 (X-3): which characters the runtime sanitizes in MCP names", note: "One combined session lists every case; five calls show the tool_name the hook received.", runs: ["b3-init", "b3-dot", "b3-unicode", "b3-dunder", "b3-tooldot", "b3-toollong"], logs: ["b3"], profiles: ["b3"], mcp: "combined" },
-  B4: { title: "B4 (X-8): does a settings env block reach hooks", note: "b4: ordinary variable. b4b: NODE_OPTIONS set to an unknown flag (the logger is a node process too, so it also died: no b4b log file).", runs: ["b4", "b4b"], logs: ["b4", "b4b"], profiles: ["b4", "b4b"] },
+  B4: { title: "B4 (X-8): does a settings env block reach hooks", note: "b4-local: the same profile as b4, loaded as .claude/settings.local.json with --setting-sources local (the log file b4.jsonl has a second line from this run). User scope was NOT run (it would edit the real user settings file): UNPROVEN, treated as reachable. b4: ordinary variable. b4b: NODE_OPTIONS set to an unknown flag (the logger is a node process too, so it also died: no b4b log file).", runs: ["b4", "b4b", "b4-local"], logs: ["b4", "b4b"], profiles: ["b4", "b4b"] },
   B5: { title: "B5 (X-9): deny reason near the 512-character cap", note: "Rung runs b5-300/b5-374 were refused by the model and rerun as b5r-*; the model retyped 300 as 303 characters (logged command below).", runs: ["b5-300", "b5r-300", "b5-374", "b5r-374", "b5-600"], logs: ["b5"], profiles: ["b5"] },
   B6: { title: "B6 (U-5): matcher mcp__.* matches an MCP call", note: "Matcher mcp__.* only. One Bash call (expected: hook does not fire) and one MCP call (expected: fires).", runs: ["b6"], logs: ["b6"], profiles: ["b6"] },
+};
+const FOOT = {
+  B1: () => `### method notes and the CI budget line
+Three timing methods, not interchangeable: (1) "stream arrival": the runner timestamps each stream line as it arrives; hook_started to the last hook_response is the slower of the two parallel hooks (the real gate and a logger), runs b1r-direct-4/5/6 only; line-arrival granularity; stream events carry no timestamps of their own. (2) "tee child wall clock": the tee wrapper times the real hook child from spawn to exit with hrtime, runs b1-tee-1..3, and excludes the wrapper's own start (wrapper_start_offset_ms, 25 to 32 ms). (3) The CI budget instrument, run the same session on 2026-10-03T00:13:45Z, raw lines below. The CI p99 varies run to run (this build session saw 386.00 ms earlier; the reviewer saw 448.88 ms; this run 476.72 ms), so p99 is a band, not a point.
+${read(join(ROOT, "qa-latency.txt")).trim()}
+All Bash calls were denied by POL-05, so every timing is the deny path.`,
+  B3: () => `### claims limited to the cases tried; N13 re-read
+Observed at init only (the runtime's tool list, no call made): server names with a space, a colon, a plus and a slash; tool names with a space, a colon, a slash and a non-ASCII letter. Observed in a hook payload (tool_name received, with a call): the dot server (odd_srv), the non-ASCII server (caf___), the double-underscore server (a__b), the dot tool (do_it) and the 65-character tool.
+N13 re-read (src/policy/normalizer/tool-class.test.ts:289): N13 asserts that the normalizer admits only [A-Za-z0-9_-] in the TOOL segment. Every tool name delivered by the runtime in this session (init list or hook payload) consists of [A-Za-z0-9_-] only, so for the cases tried the premise N13 rests on holds and no change to N13 follows from these runs. Characters not tried (for example NUL, line feed, zero-width, astral-plane characters) remain unmeasured.`,
 };
 for (const [k, s] of Object.entries(spec)) {
   const parts = [header(s.title, s.note), ...s.profiles.map(profile)];
   if (s.mcp) parts.push(`### mcp config ${s.mcp}.json (paths scrubbed)\n${read(join(ROOT, "mcp", `${s.mcp}.json`)).trim()}`);
   parts.push(...s.runs.map(renderRun), ...s.logs.map(renderLog));
+  if (FOOT[k]) parts.push(FOOT[k]());
   writeFileSync(join(OUT, `${k}.txt`), scrub(parts.join("\n\n")) + "\n");
 }
 const ledger = jl(join(ROOT, "ledger.jsonl"));

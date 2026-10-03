@@ -1,6 +1,16 @@
 // S-pre (offline, no live calls): feed synthetic payloads to the REAL hook, report verdict and reason length.
-import { spawnSync } from "node:child_process";
-const HOOK = "C:/playground/thoth/hooks/pretooluse-kernel-gate.mjs";
+import { spawnSync, execFileSync } from "node:child_process";
+// Repo root: THOTH_REPO if set, else the git top-level of the current directory (run from inside the repo).
+function repoRoot() {
+  if (process.env.THOTH_REPO) return process.env.THOTH_REPO.replaceAll("\\", "/");
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  } catch {
+    throw new Error("set THOTH_REPO to the repository root (the current directory is not inside it)");
+  }
+}
+const REPO = repoRoot();
+const HOOK = `${REPO}/hooks/pretooluse-kernel-gate.mjs`;
 function run(payload) {
   const t = process.hrtime.bigint();
   const r = spawnSync("node", [HOOK], { input: JSON.stringify(payload), encoding: "utf8" });

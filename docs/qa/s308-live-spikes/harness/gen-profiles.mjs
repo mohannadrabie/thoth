@@ -1,11 +1,22 @@
 // Generates profiles/*.json and mcp/*.json for the spikes (absolute paths derived from this file's location).
+import { execFileSync } from "node:child_process";
+// Repo root: THOTH_REPO if set, else the git top-level of the current directory (run from inside the repo).
+function repoRoot() {
+  if (process.env.THOTH_REPO) return process.env.THOTH_REPO.replaceAll("\\", "/");
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  } catch {
+    throw new Error("set THOTH_REPO to the repository root (the current directory is not inside it)");
+  }
+}
+const REPO = repoRoot();
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replaceAll("\\", "/");
-const REAL = 'node "C:/playground/thoth/hooks/pretooluse-kernel-gate.mjs"';
+const REAL = `node "${REPO}/hooks/pretooluse-kernel-gate.mjs"`;
 const LOG = (label) => `node "${ROOT}/harness/log-hook.mjs" ${label}`;
-const TEE = (mode, label) => `node "${ROOT}/harness/tee-hook.mjs" --mode=${mode} --label=${label} -- node C:/playground/thoth/hooks/pretooluse-kernel-gate.mjs`;
+const TEE = (mode, label) => `node "${ROOT}/harness/tee-hook.mjs" --mode=${mode} --label=${label} -- node ${REPO}/hooks/pretooluse-kernel-gate.mjs`;
 const h = (command, timeout) => ({ type: "command", command, ...(timeout ? { timeout } : {}) });
 const pre = (matcher, ...hooks) => ({ hooks: { PreToolUse: [{ matcher, hooks }] } });
 const withPost = (p, label) => ({ hooks: { ...p.hooks, PostToolUse: [{ matcher: ".*", hooks: [h(LOG(label))] }] } });

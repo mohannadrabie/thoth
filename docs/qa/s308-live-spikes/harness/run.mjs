@@ -1,14 +1,20 @@
 // Runner: node run.mjs <id> --profile <p> --prompt "<text>" [--mcp <case>] [--tools "<allowed>"]
 // Caps: refuses at 40 calls or USD 3.00 (ledger.jsonl), 0.25 USD per call, 120 s kill.
 import { spawn } from "node:child_process";
-import { copyFileSync, readFileSync, appendFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, readFileSync, appendFileSync, existsSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const [id, ...rest] = process.argv.slice(2);
 const o = {};
 for (let i = 0; i < rest.length; i += 2) o[rest[i].replace(/^--/, "")] = rest[i + 1];
-const LEDGER = join(ROOT, "ledger.jsonl");
+// The spend cap reads this ledger. Default: <scratch>/ledger.jsonl; override with SPIKE_LEDGER. A missing ledger refuses to run
+// unless SPIKE_NEW_LEDGER=1, so a fresh folder cannot silently reset the cap.
+const LEDGER = process.env.SPIKE_LEDGER ?? join(ROOT, "ledger.jsonl");
+if (!existsSync(LEDGER) && process.env.SPIKE_NEW_LEDGER !== "1") {
+  console.error(`REFUSED: no ledger at ${LEDGER}; set SPIKE_NEW_LEDGER=1 to start a new one`);
+  process.exit(3);
+}
 const rows = existsSync(LEDGER)
   ? readFileSync(LEDGER, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
   : [];
@@ -18,10 +24,16 @@ if (rows.length >= 40 || spent >= 3.0) {
   process.exit(3);
 }
 mkdirSync(join(ROOT, ".claude"), { recursive: true });
-copyFileSync(join(ROOT, "profiles", `${o.profile}.json`), join(ROOT, ".claude", "settings.json"));
+// --source project (default): profile becomes .claude/settings.json. --source local: profile becomes .claude/settings.local.json
+// (the project file is emptied) and only the local scope is loaded. User scope is never used (it is the real ~/.claude).
+const source = o.source ?? "project";
+const target = source === "local" ? "settings.local.json" : "settings.json";
+writeFileSync(join(ROOT, ".claude", "settings.json"), "{}");
+rmSync(join(ROOT, ".claude", "settings.local.json"), { force: true });
+copyFileSync(join(ROOT, "profiles", `${o.profile}.json`), join(ROOT, ".claude", target));
 const args = [
   "-p", o.prompt, "--model", process.env.SPIKE_MODEL ?? "haiku", "--output-format", "stream-json", "--verbose",
-  "--include-hook-events", "--setting-sources", "project", "--disable-slash-commands", "--no-session-persistence",
+  "--include-hook-events", "--setting-sources", source, "--disable-slash-commands", "--no-session-persistence",
   "--allowedTools", o.tools ?? "Bash", "--max-budget-usd", "0.25",
 ];
 args.push("--strict-mcp-config", "--mcp-config", join(ROOT, "mcp", `${o.mcp ?? "none"}.json`));
@@ -54,7 +66,7 @@ c.on("close", (code) => {
     } catch {}
   }
   const meta = {
-    id, profile: o.profile, args: args.filter((a) => a !== o.prompt), prompt: o.prompt,
+    id, profile: o.profile, source, args: args.filter((a) => a !== o.prompt), prompt: o.prompt,
     exit: code, wall_ms: Date.now() - t0, cost_usd: cost,
   };
   writeFileSync(join(ROOT, "raw", `${id}.meta.json`), JSON.stringify(meta, null, 1));
