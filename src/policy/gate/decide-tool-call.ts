@@ -7,7 +7,8 @@
 // There is no second decision path here. The kernel (kernel.ts decide) is the only thing that
 // returns an allow or a deny for a normalized action. The three PRE-KERNEL REFUSALS below carry no
 // policy logic; each is an enumerated SUR-10 row and is flagged as the F7 reading for an architect
-// ruling (plan section 17 item 2; precedent: the shipped hook's own tool_name refusal):
+// ruling (plan section 17 item 2; precedent: the shipped hook's own tool_name refusal). A fourth, `binary-trust` (Issue
+// #428), runs AFTER the kernel and only on a kernel ALLOW: it can turn an allow into a deny and never a deny into an allow:
 //   - malformed-input     : the payload, tool_name, or the Bash command is not the expected type
 //   - unroutable-tool     : a tool_name outside the routing table (today's behaviour, plan R-B)
 //   - policy-load-failure : the loader could not produce a policy (deny, layer and kind only, never
@@ -41,9 +42,14 @@ export type GatePolicyResult = LoadedGatePolicy | GatePolicyFailure;
 export interface GatePorts {
   loadPolicy(): GatePolicyResult;
   loadCatalog(): MergedToolClassificationSet;
+  /** Issue #428: for a call the kernel ALLOWED, the bare command names it would run (leading binary and each wrapper layer).
+   * Returns `{ ok: true }` only when every name resolves to a system-installed file with no shadow in an untrusted PATH
+   * directory; otherwise a deny reason. `cwd` is the session's working directory from the payload (a relative PATH entry means
+   * it). REQUIRED: a gate wired without it denies every allowed call that names a binary. */
+  checkBareBinaries: (names: readonly string[], cwd: string | undefined) => { ok: true } | { ok: false; reason: string };
 }
 
-export type RefusalCategory = "malformed-input" | "unroutable-tool" | "policy-load-failure";
+export type RefusalCategory = "malformed-input" | "unroutable-tool" | "policy-load-failure" | "binary-trust";
 
 export interface GateVerdict {
   outcome: VerdictOutcome;
@@ -94,5 +100,32 @@ export function decideToolCall(input: unknown, ports: GatePorts): GateResult {
   }
   const record = normalize(route.toolType, built.raw);
   const verdict = decide({ rules: policy.ruleSet, defaultOutcome: policy.defaultOutcome }, record);
+  if (verdict.outcome === "allow") {
+    const untrusted = binaryTrustRefusal(route.invokedBinaries(built.raw), ports, typeof payload.cwd === "string" ? payload.cwd : undefined);
+    if (untrusted !== undefined) return untrusted;
+  }
   return { kind: "verdict", verdict, record };
+}
+
+const TRUST_FAULT = "the binary-trust check could not complete; fail-closed. Retry; if it fails again a human must repair the gate.";
+
+/** Issue #428: a refusal for an allowed call whose bare binaries are not provably the system-installed ones, else undefined.
+ * Fail closed on every odd shape: names not determinable, no port, a port that throws, an answer that is not exactly
+ * `{ok:true}` or `{ok:false, reason:<non-empty string>}`. The raw fault text never reaches the reason. */
+function binaryTrustRefusal(names: readonly string[] | undefined, ports: GatePorts, cwd: string | undefined): GateResult | undefined {
+  if (names === undefined) return refuse("binary-trust", "which binaries the command runs could not be determined; fail-closed.");
+  if (names.length === 0) return undefined;
+  const check = (ports as unknown as { checkBareBinaries?: unknown }).checkBareBinaries;
+  if (typeof check !== "function") return refuse("binary-trust", "no binary-trust check is wired, so a bare command name cannot be trusted; fail-closed.");
+  let answer: unknown;
+  try {
+    answer = (check as (n: readonly string[], c: string | undefined) => unknown)(names, cwd);
+  } catch {
+    return refuse("binary-trust", TRUST_FAULT);
+  }
+  if (typeof answer !== "object" || answer === null) return refuse("binary-trust", TRUST_FAULT);
+  const a = answer as Record<string, unknown>;
+  if (a.ok === true) return undefined;
+  if (a.ok === false && typeof a.reason === "string" && a.reason.length > 0) return refuse("binary-trust", bounded(a.reason));
+  return refuse("binary-trust", TRUST_FAULT);
 }

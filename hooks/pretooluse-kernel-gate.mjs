@@ -173,6 +173,11 @@ async function main() {
 
     unlockFor = gate.hookFailureUnlock;
 
+    // Issue #428: the binary-trust port's real file-system adapter. Loaded AFTER the Promise.all, not inside it, on purpose: the
+    // sanitizer wiring guard (src/policy/config/sanitize.test.ts, AC-7) pins that array's exact shape, and a load failure here
+    // lands in the same catch below (exit 2) either way.
+    const pathTrust = await import("../src/policy/config/path-trust-check.ts");
+
     if (raw.trim() === "") {
       throw new Error("empty stdin: no hook payload received at all");
     }
@@ -202,6 +207,9 @@ async function main() {
       loadCatalog() {
         return catalog.assembleCatalog(catalog.moduleRelativeFixtureLocation()).merged;
       },
+      // Issue #428: for a call the kernel allowed, prove each bare command name it runs resolves to a system-installed file
+      // (no shadow in a session-writable PATH directory). Read-only; the live PATH is read on every call.
+      checkBareBinaries: pathTrust.createRealBinaryCheck(),
     };
 
     const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);

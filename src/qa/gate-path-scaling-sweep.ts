@@ -52,6 +52,8 @@ export const SWEEP_ADAPTERS: Readonly<Record<string, SweepAdapter>> = {
   "shell-scanner.tokenize": (t) => scanner.tokenize(t),
   "shell-scanner.normalizeToolToken": (t) => scanner.normalizeToolToken(t),
   "shell.normalizeShellCall": (t) => shell.normalizeShellCall({ command: t, environment: "sweep-env", identity: "sweep-id" }),
+  // Issue #428: the same recursion with a name collector, so it scales the same way (the sweep measures it rather than assuming it).
+  "shell.invokedBareBinaries": (t) => shell.invokedBareBinaries(t),
 };
 
 export interface SweepCoverage {

@@ -261,6 +261,7 @@ function resolveWrapperMatch(
   raw: ShellCall,
   wrapper: WrapperMatch | "unresolved-shaped" | undefined,
   depth: number,
+  invoked: string[] | undefined,
 ): ActionRecord | undefined {
   if (wrapper === undefined) return undefined;
 
@@ -280,7 +281,7 @@ function resolveWrapperMatch(
     return unresolvedRecord(raw, [`nested command exceeds depth cap (${DEPTH_CAP})`], true);
   }
 
-  const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);
+  const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);
   return { ...inner, deferred: true };
 }
 
@@ -510,12 +511,15 @@ function resolveReadOnly(
  * Stage-3 review, Finding 2 / Issue #77: a public, externally-callable depth parameter is a
  * structural way to bypass the depth cap, even with 0 live call sites doing so today). Only this
  * file's own recursive self-call, below, ever passes a non-default `depth`. */
-function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
+function normalizeAtDepth(raw: ShellCall, depth: number, invoked?: string[]): ActionRecord {
   const { liveText, bodies } = stripHeredocBodies(raw.command);
   const syntaxUnresolved = collectSyntaxUnresolved(liveText);
 
   const offsetTokens = tokenizeWithOffsets(liveText);
   const tokens = offsetTokens.map((t) => t.value);
+  // Issue #428: the bare command name this layer would run, collected by the SAME recursion that resolves the command (not a
+  // second parser), so the gate's binary-trust check sees exactly the names the normalizer consumed.
+  if (invoked !== undefined && tokens[0] !== undefined) invoked.push(tokens[0]);
   // Position-based, not value-based (Issue #80) — a token counts as a redirect operator only when
   // it BEGINS at the same character offset as a live `>`/`>>` match (findLiveRedirectOperatorPositions
   // and extractRedirectTargets share the exact same live-operator scan), never by comparing the
@@ -540,7 +544,7 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
   if (wrapper !== undefined && (tokens[0] ?? "") !== toolToken) {
     return unresolvedRecord(raw, [WRAPPER_BINARY_NOT_BARE_UNRESOLVED], raw.deferred ?? false);
   }
-  const wrapperResult = resolveWrapperMatch(raw, wrapper, depth);
+  const wrapperResult = resolveWrapperMatch(raw, wrapper, depth, invoked);
   if (wrapperResult) return wrapperResult;
 
   // E0 (Issue #408, ruling 2): only at depth 0 and only when no wrapper matched, so a wrapper's inner command is never
@@ -557,6 +561,21 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
  * comment for why depth is not, and must never become, a parameter of this exported function. */
 export function normalizeShellCall(raw: ShellCall): ActionRecord {
   return normalizeAtDepth(raw, 0);
+}
+
+/** Issue #428: the first token of the command at every layer the normalizer descended (the leading binary, then each unwrapped
+ * wrapper's inner command), in order, exactly as written. The gate hands these to its binary-trust check, because a bare
+ * name does not say which file runs. Collected by the same `normalizeAtDepth` recursion that resolves the command, so the
+ * two cannot drift. A command that does not resolve yields whatever layers were walked; POL-05 denies it anyway.
+ * `undefined` only if the walk itself throws (the gate then denies). */
+export function invokedBareBinaries(command: string): readonly string[] | undefined {
+  try {
+    const invoked: string[] = [];
+    normalizeAtDepth({ command, environment: "unknown", identity: "unknown", deferred: false }, 0, invoked);
+    return invoked;
+  } catch {
+    return undefined;
+  }
 }
 
 registerNormalizer({
