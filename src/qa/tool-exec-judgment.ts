@@ -1,6 +1,6 @@
 // #429 / #424 (S7): the per-tool exec judgment (docs/qa/tool-exec-judgment.json), its validator, and the values derived
 // from it (the K matcher, the residual list). Pure helpers: tests run mutants on in-memory copies.
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -85,7 +85,7 @@ const NESTED_NAMES: ReadonlySet<string> = new Set(["skills", "commands", "agents
 export function findNestedSkillDirs(root: string): string[] {
   const out: string[] = [];
   const walk = (rel: string): void => {
-    let entries: import("node:fs").Dirent[];
+    let entries: Dirent[];
     try {
       entries = readdirSync(join(root, rel), { withFileTypes: true });
     } catch {
