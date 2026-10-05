@@ -101,7 +101,7 @@ Policy unchanged from the old plan: E0 claims only a whole simple command. Nothi
 
 ## 5. Tests, written failing first (named checks per criterion)
 
-New: `src/policy/normalizer/readonly-catalog.test.ts` (unit, table-driven; examples derived from the table at run time), `src/policy/normalizer/readonly-bypass-corpus.test.ts`, `hooks/pretooluse-kernel-gate-readonly.test.ts` (real hook, real shipped defaults, same harness style as `pretooluse-kernel-gate-f-round3-probes.test.ts`), `src/policy/fixtures/readonly-corpus.ts` (shared corpus rows for unit and hook). RED recorded in the first commit message before `readonly-catalog.ts` or the call site exist.
+New: `src/policy/normalizer/readonly-catalog.test.ts` (unit, table-driven; examples derived from the table at run time), `src/policy/normalizer/readonly-fixture-snapshot.test.ts`, `hooks/pretooluse-kernel-gate-readonly.test.ts` (real hook, real shipped defaults, same harness style as `pretooluse-kernel-gate-f-round3-probes.test.ts`), `src/policy/fixtures/readonly-corpus.ts` (shared corpus rows for unit and hook). RED recorded in the first commit message before `readonly-catalog.ts` or the call site exist.
 
 ### 5.1 Day-1 failing proof-tests from the design challenge (names as in the challenge)
 
@@ -144,7 +144,7 @@ Locked tests: none expected to flip (every existing `cat`-shaped fixture carries
 
 ## 7. Files to touch
 
-New: `src/policy/normalizer/readonly-catalog.ts` (typed data table plus pure matcher, no I/O, no env), `src/policy/normalizer/readonly-catalog.test.ts`, `src/policy/normalizer/readonly-bypass-corpus.test.ts`, `hooks/pretooluse-kernel-gate-readonly.test.ts`, `src/policy/fixtures/readonly-corpus.ts`, the pre-change redirect-fixture snapshot (script plus committed JSON).
+New: `src/policy/normalizer/readonly-catalog.ts` (typed data table plus pure matcher, no I/O, no env), `src/policy/normalizer/readonly-catalog.test.ts`, `src/policy/normalizer/readonly-fixture-snapshot.test.ts`, `hooks/pretooluse-kernel-gate-readonly.test.ts`, `src/policy/fixtures/readonly-corpus.ts`, the pre-change redirect-fixture snapshot (script plus committed JSON).
 Edited: `src/policy/normalizer/shell.ts` (one import, one guarded call site, header-comment entry; the multi-target cap applied to E0's result through the existing `multiTargetMessage`), `src/policy/normalizer/shell-scanner.ts` (additive: export each token's raw `end`; existing scanner tests unmodified), `CHANGELOG.md`; Manager: `docs/STATE.md`, `docs/decisions.md` row.
 Zero diff: `kernel.ts`, `registry.ts`, `action-catalog.ts`, `target-format.ts`, `hooks/pretooluse-kernel-gate.mjs`, `src/policy/config/shipped-defaults.json`, `wrapper-catalog.ts`, `RESOLVABLE_BINARIES`. `package.json`: none.
 Sensitive areas touched (named reviewer reports needed): `src/policy/normalizer/*` is guard-lane code under `src/policy/*`; `hooks/pretooluse-kernel-gate.mjs` is NOT edited but is exercised end to end by the new hook test, so its zero-diff is a recorded check. Not touched: evidence trail, secret scanning/CI, policy delivery, halt-state.
@@ -172,3 +172,13 @@ No question blocks the build. Confirmations the Manager can answer in one line (
 Manager confirms (or accepts the recommended answers to) section 9 and ratifies CRITICAL; Ptah starts Phase 2 with the RED commit (table, corpus, accept tests, pins; redirect snapshot generated on the unmodified tree first).
 
 RECEIPT: verdict=BLOCKED criteria="15 mapped/15 total" checks="0/0/0 (plan only; one read-only git lever probe in the scratchpad)" adr=HIT(38) pr=n/a
+
+## 12. Deviations recorded at build (Phase 2, 2026-10-05)
+
+- The separate bypass-corpus test file was folded into `readonly-catalog.test.ts` (corpus rows live in `src/policy/fixtures/readonly-corpus.ts`); the pre-change snapshot test is `readonly-fixture-snapshot.test.ts` and covers all shell fixtures, not only the redirect ones.
+- `shell-scanner.ts` is NOT edited: raw token spans are derived in `shell.ts` from `tokenizeWithOffsets` (a new scanner export failed the old-versus-current differential and the path sweep instruments).
+- `src/policy/config/shipped-defaults.json` and `docs/plans/s308-K-proposed-settings-2026-10-04.json` changed after all, by generation (`node src/qa/protected-path-list.ts --write`): `readonly-catalog.ts` joins the hook's import graph, so `qa:protected-path-list` requires a generated mandatory deny rule for it. Criterion 12's zero-diff list is otherwise held.
+- Criterion 15's shipped-rules check runs in-process (`normalize` plus `decide` over the real shipped rules) inside `hooks/pretooluse-kernel-gate-readonly.test.ts`; the hook sandbox itself uses empty rules.
+- Mutants are in `src/qa/shell-detector-mutants.ts` (8 added; 68 of 68 killed). Two plan mutants are equivalent by defense in depth and were not added: skipping the redirect check (a redirect token already fails the bare-path rule) and swapping in the path-stripping binary check (the table lookup still fails).
+- Corpus: a single-quoted backtick or dollar in a grep pattern is inert, so a pattern containing one moved from deny to accept.
+- `RO-git-config-exec-unresolved` (a planted-config companion) was not built as a separate test: the hook never executes the command, so it would add nothing beyond `RO-e2e-git-status-still-deny`. The #409 comment names it; read it as pointing at that test.
