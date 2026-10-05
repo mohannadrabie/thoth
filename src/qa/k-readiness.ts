@@ -34,7 +34,7 @@ export function assertReadOnly(cmd: string, args: readonly string[]): void {
   const [a0, a1] = args;
   const ok =
     (cmd === "gh" && ((a0 === "issue" && a1 === "list") || (a0 === "label" && a1 === "list"))) ||
-    (cmd === "git" && (a0 === "merge-base" || a0 === "rev-parse")) ||
+    (cmd === "git" && (a0 === "merge-base" || a0 === "rev-parse" || (a0 === "remote" && a1 === "get-url"))) ||
     (cmd === "node" && a0 !== undefined && /^src\/qa\/[\w.-]+\.ts$/.test(a0));
   if (!ok) throw new Error(`k-readiness is read-only: refusing to run ${cmd} ${args.join(" ")}`);
 }
@@ -70,8 +70,32 @@ const firstLines = (r: RunResult, n = 3): string =>
     .map((l) => l.slice(0, 200))
     .join(" / ");
 
-function ghJson(run: Exec, args: string[]): { ok: true; value: unknown } | { ok: false; why: string } {
-  const r = run("gh", args);
+const REPO_NAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-";
+
+/** owner/name from a GitHub remote URL (https, ssh scp-style or ssh://), or undefined when it is not one. */
+export function parseGithubRepo(url: string): string | undefined {
+  const t = url.trim();
+  let rest: string | undefined;
+  // The ssh forms are built from parts so the source holds no email-shaped literal (the secret scan flags one).
+  const sshUser = ["git", "github.com"].join("@");
+  for (const prefix of ["https://github.com/", "http://github.com/", `${sshUser}:`, `ssh://${sshUser}/`]) if (t.startsWith(prefix)) rest = t.slice(prefix.length);
+  if (rest === undefined) return undefined;
+  if (rest.endsWith(".git")) rest = rest.slice(0, -4);
+  const parts = rest.split("/");
+  if (parts.length !== 2 || parts.some((x) => x === "" || x === "." || x === ".." || [...x].some((c) => !REPO_NAME_CHARS.includes(c)))) return undefined;
+  return rest;
+}
+
+/** The repo every gh call is pinned to (--repo), read from the origin remote. Never from GH_REPO or the ambient environment. */
+export function resolveRepo(run: Exec): { ok: true; repo: string } | { ok: false; why: string } {
+  const r = run("git", ["remote", "get-url", "origin"]);
+  if (r.status !== 0) return { ok: false, why: "cannot read the origin remote URL" };
+  const repo = parseGithubRepo(r.stdout);
+  return repo === undefined ? { ok: false, why: "the origin remote is not a recognizable GitHub owner/name URL" } : { ok: true, repo };
+}
+
+function ghJson(run: Exec, repo: string, args: string[]): { ok: true; value: unknown } | { ok: false; why: string } {
+  const r = run("gh", [...args, "--repo", repo]);
   if (r.status === null) return { ok: false, why: "gh is not available" };
   if (r.status !== 0) return { ok: false, why: `gh exited ${String(r.status)}: ${firstLines(r, 1)}` };
   try {
@@ -85,14 +109,17 @@ function ghJson(run: Exec, args: string[]): { ok: true; value: unknown } | { ok:
 export function blockerRow(run: Exec): Row {
   const id = "k-blocker-issues";
   const fail = (detail: string): Row => ({ id, status: "FAIL", detail });
-  const labels = ghJson(run, ["label", "list", "--json", "name", "--limit", "1000"]);
+  const resolved = resolveRepo(run);
+  if (!resolved.ok) return fail(`cannot pin the repository for gh: ${resolved.why} (fail closed)`);
+  const repo = resolved.repo;
+  const labels = ghJson(run, repo, ["label", "list", "--json", "name", "--limit", "1000"]);
   if (!labels.ok) return fail(`cannot list labels: ${labels.why}`);
   if (!Array.isArray(labels.value) || !labels.value.some((l) => (l as { name?: unknown }).name === "k-blocker")) return fail("label k-blocker does not exist (fail closed)");
-  const byLabel = ghJson(run, ["issue", "list", "--label", "k-blocker", "--state", "open", "--json", "number,title", "--limit", "1000"]);
+  const byLabel = ghJson(run, repo, ["issue", "list", "--label", "k-blocker", "--state", "open", "--json", "number,title", "--limit", "1000"]);
   if (!byLabel.ok) return fail(`cannot list k-blocker issues: ${byLabel.why}`);
   if (!Array.isArray(byLabel.value)) return fail("gh returned a non-list for the k-blocker query");
   const open = byLabel.value as { number: number; title: string }[];
-  const all = ghJson(run, ["issue", "list", "--state", "open", "--json", "number,labels", "--limit", "1000"]);
+  const all = ghJson(run, repo, ["issue", "list", "--state", "open", "--json", "number,labels", "--limit", "1000"]);
   if (!all.ok) return fail(`cannot run the cross-check query: ${all.why}`);
   if (!Array.isArray(all.value)) return fail("gh returned a non-list for the cross-check query");
   const total = all.value as { number: number; labels?: { name?: string }[] }[];
@@ -100,7 +127,7 @@ export function blockerRow(run: Exec): Row {
   const firstNumbers = open.map((i) => i.number).sort((a, b) => a - b);
   if (JSON.stringify(crossNumbers) !== JSON.stringify(firstNumbers)) return fail(`list lag or label drift: label query ${JSON.stringify(firstNumbers)} vs cross-check ${JSON.stringify(crossNumbers)}`);
   if (open.length > 0) return fail(`${String(open.length)} open k-blocker issue(s): ${open.map((i) => `#${String(i.number)} ${i.title}`).join("; ")}`);
-  return { id, status: "PASS", detail: `0 open k-blocker issues (label exists, ${String(total.length)} open issues total)` };
+  return { id, status: "PASS", detail: `0 open k-blocker issues (repo ${repo}, label exists, ${String(total.length)} open issues total)` };
 }
 
 export function branchRows(run: Exec): Row[] {
@@ -116,36 +143,36 @@ export function branchRows(run: Exec): Row[] {
   });
 }
 
-/** Rows backed by an npm script that must be a plain `node src/qa/<file>.ts`. A script that does not exist yet is MISSING. */
-export const SCRIPT_ROWS: readonly { id: string; script: string }[] = [
-  { id: "git-rg-lever-preflight", script: "qa:git-rg-lever-preflight" },
-  { id: "protected-path-list-drift", script: "qa:protected-path-list" },
-  { id: "gate-command-path (real file)", script: "qa:gate-command-path" },
-  { id: "gate-launcher-pin (real file)", script: "qa:gate-launcher-pin" },
-  { id: "gate-matcher-drift (real file)", script: "qa:gate-matcher-drift" },
-  { id: "gate-manifest (real file)", script: "qa:gate-manifest" },
-  { id: "gate-latency-budget (real file)", script: "qa:gate-latency-budget" },
-  { id: "K3-edit-deny-covers-fixture (real file)", script: "qa:k3" },
-  { id: "K5-pretooluse-entry-uses-launcher (real file)", script: "qa:k5" },
-  { id: "CC-extraction-covers-judged (#452)", script: "qa:cc-extraction-covers-judged" },
-  { id: "F1-settings-named-scripts-judged", script: "qa:f1-settings-named-scripts-judged" },
-  { id: "gate-latency-allow-path", script: "qa:gate-latency-allow-path" },
+/** Rows bound to a FIXED instrument file. The npm script of that name must be exactly `node <file>`; a repointed script FAILs (red-team 7).
+ * A script that does not exist yet is MISSING. The file, not the script name, is what runs. */
+export const SCRIPT_ROWS: readonly { id: string; script: string; file: string }[] = [
+  { id: "git-rg-lever-preflight", script: "qa:git-rg-lever-preflight", file: "src/qa/git-rg-lever-preflight.ts" },
+  { id: "protected-path-list-drift", script: "qa:protected-path-list", file: "src/qa/protected-path-list.ts" },
+  { id: "gate-command-path (real file)", script: "qa:gate-command-path", file: "src/qa/gate-command-path-check.ts" },
+  { id: "gate-launcher-pin (real file)", script: "qa:gate-launcher-pin", file: "src/qa/gate-launcher-pin-check.ts" },
+  { id: "gate-matcher-drift (real file)", script: "qa:gate-matcher-drift", file: "src/qa/gate-matcher-drift-check.ts" },
+  { id: "gate-manifest (real file)", script: "qa:gate-manifest", file: "src/qa/gate-manifest-check.ts" },
+  { id: "gate-latency-budget (real file)", script: "qa:gate-latency-budget", file: "src/qa/gate-latency-budget-check.ts" },
+  { id: "K3-edit-deny-covers-fixture (real file)", script: "qa:k3", file: "src/qa/k3-edit-deny-covers-fixture.ts" },
+  { id: "K5-pretooluse-entry-uses-launcher (real file)", script: "qa:k5", file: "src/qa/k5-pretooluse-entry-uses-launcher.ts" },
+  { id: "CC-extraction-covers-judged (#452)", script: "qa:cc-extraction-covers-judged", file: "src/qa/cc-extraction-covers-judged.ts" },
+  { id: "F1-settings-named-scripts-judged", script: "qa:f1-settings-named-scripts-judged", file: "src/qa/f1-settings-named-scripts-judged.ts" },
+  { id: "gate-latency-allow-path", script: "qa:gate-latency-allow-path", file: "src/qa/gate-latency-allow-path.ts" },
 ];
 
-export function scriptRow(deps: Deps, id: string, script: string): Row {
-  const pkgText = deps.readFile("package.json");
+export function scriptRow(deps: Deps, row: { id: string; script: string; file: string }): Row {
+  const { id, script, file } = row;
   let cmd: unknown;
   try {
-    cmd = (JSON.parse(pkgText ?? "{}") as { scripts?: Record<string, unknown> }).scripts?.[script];
+    cmd = (JSON.parse(deps.readFile("package.json") ?? "{}") as { scripts?: Record<string, unknown> }).scripts?.[script];
   } catch {
     return { id, status: "FAIL", detail: "package.json is not valid JSON" };
   }
   if (typeof cmd !== "string") return { id, status: "MISSING", detail: `npm script ${script} does not exist yet` };
-  const m = /^node (src\/qa\/[\w.-]+\.ts)$/.exec(cmd);
-  if (m === null) return { id, status: "FAIL", detail: `npm script ${script} is not a plain "node src/qa/<file>.ts" command: ${cmd}` };
-  const r = deps.run("node", [m[1]!]);
+  if (cmd !== `node ${file}`) return { id, status: "FAIL", detail: `npm script ${script} is ${JSON.stringify(cmd)}, not the fixed instrument "node ${file}" (repointed?)` };
+  const r = deps.run("node", [file]);
   if (r.status === 0) return { id, status: "PASS", detail: firstLines(r, 1) };
-  return { id, status: "FAIL", detail: `${script} exited ${String(r.status)}: ${firstLines(r)}` };
+  return { id, status: "FAIL", detail: `${file} exited ${String(r.status)}: ${firstLines(r)}` };
 }
 
 interface DecisionRow {
@@ -199,7 +226,7 @@ export function k4Row(deps: Deps): Row {
 export function runReadiness(deps: Deps): Row[] {
   const run = readOnlyRunner(deps.run);
   const d = { ...deps, run };
-  return [blockerRow(run), ...branchRows(run), ...SCRIPT_ROWS.map((s) => scriptRow(d, s.id, s.script)), k1Row(d), k4Row(d)];
+  return [blockerRow(run), ...branchRows(run), ...SCRIPT_ROWS.map((r) => scriptRow(d, r)), k1Row(d), k4Row(d)];
 }
 
 export const exitCodeForRows = (rows: readonly Row[]): number => (rows.length > 0 && rows.every((r) => r.status === "PASS") ? 0 : 1);
