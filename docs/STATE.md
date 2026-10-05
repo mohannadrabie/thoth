@@ -1,9 +1,17 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-03 (#308: stories A, B, D SHIPPABLE on `s308/activation-2`, draft PR #400; THOTH-ADR-0003 awaits the human's acceptance; E, F, J, K held behind it)
+**Last updated:** 2026-10-04 (#308 stories A, B, D merged via PR #400 as `a265954`; THOTH-ADR-0003 still `proposed`, the human deferred the decision; E, F, J, K held behind it)
 
-## Resume point — 2026-10-03 (newest): #308 stories A, B, D SHIPPABLE on `s308/activation-2`, PR #400
+## Resume point — 2026-10-04 (newest): PR #400 merged; THOTH-ADR-0003 decision deferred by the human
+
+- **Merged:** PR #400 (`s308/activation-2`) merged to `master` as `a265954` on 2026-10-05 UTC. Local branch deleted. CI on its head `4fb5ef8`: green.
+- **Human, 2026-10-04:** filed #406 (the NODE_OPTIONS fail-open, the B4b finding). **Deferred** the THOTH-ADR-0003 accept/decline ("lets not do this now"). It stays `proposed`.
+- **Effect of the deferral:** stories E, F, J and K MUST NOT ship (catalog-served hold, ADR rule 8). Work that does not depend on the ADR is open, for example #401 test design, #404, #405 and #406 triage. The CLAUDE.md "Policy delivery" sentence stays as is until acceptance.
+- **Empty folders `thoth-as4` and `thoth-as5`:** already gone (checked 2026-10-04). Nothing left to remove.
+- **Single next action:** the human decides on THOTH-ADR-0003 ("accept ADR-0003", "accept ADR-0003 but keep the 2026-09-19 exemption", or "decline ADR-0003"). Until then, a new session can take ADR-independent work.
+
+## Prior entry (superseded above): 2026-10-03: #308 stories A, B, D SHIPPABLE on `s308/activation-2`, PR #400
 
 - **Branch:** `s308/activation-2`, cut from `origin/master` at `35f49e9` (PR #389's merge). Pushed; PR #400 (merge is human-only). CI green on `02f46de`: 1868 pass, 0 fail, 3 skipped (the 3 Windows-only launcher tests).
 
@@ -18,7 +26,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Carried forward into the Phase 0 plan** (`docs/plans/s308-activation-phase0-2026-10-02.md`): E6 (fixture-derived rule-4 script), F1a/F1b (fixture, launcher, pin file, and all three settings paths named explicitly), F3a and F5 (Edit-deny on every protected path), J5 (live Edit-deny probe incl. bypass mode), J6/J6a (re-time the allow path and the launcher form), J8 (which env keys the runtime forwards), J9 (exec-form `args` vs shell form), K3 (a check reads `permissions.deny`), K5 (#401: the wired command equals the launcher string, five mutants).
 - **Backlog filed:** #404 (outcome-diff check for fixture entries), #405 (windows-latest CI job for the launcher's Windows-only tests).
 - **Verify (Manager, quiet tree):** build, typecheck and lint rc=0; every `qa:*` gate rc=0 (five are disclosed vacuous passes); QA-14 diff mode 0 failed. Full suite locally 1868/1871: R4 EBUSY (#231) and two timing tests (A15, `gate-path-scaling-sweep`) that pass 48/48 alone. These are the known Windows parallel-load flake; story D's process-heavy tests may make it more frequent. Linux CI has none of them.
-- **Still human-only / held:** `rmdir C:playground	hoth-as4 C:playground	hoth-as5`. The decisions archive sweep (5 rows) is still deferred, for the same secret-scan reason as last session.
+- **Still human-only / held:** `rmdir C:\playground\thoth-as4 C:\playground\thoth-as5` (done by 2026-10-04, see above). The decisions archive sweep (5 rows) is still deferred, for the same secret-scan reason as last session.
 
 **Single next action:** accept or decline THOTH-ADR-0003 (in PR #400), then merge PR #400 once CI is green.
 
