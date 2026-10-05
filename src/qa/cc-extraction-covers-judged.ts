@@ -6,9 +6,14 @@ import { checkExtraction, installedClaudeVersion } from "./claude-code-write-den
 
 export function runCli(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion): { code: number; line: string; details: string[] } {
   const r = checkExtraction(env, versionProvider);
-  const c = r.counts;
-  const counts = c === undefined ? "" : ` (extracted user ${String(c.extractedUser)}/${String(c.judgedUser)} judged, project ${String(c.extractedProject)}/${String(c.judgedProject)} judged, version ${c.version})`;
-  const detail = r.status === "PASS" ? `extraction equals judgment${counts}` : `${r.reasons.join("; ")}${counts}`;
+  const one = (b: (typeof r.binaries)[number]): string => {
+    const c = b.counts;
+    const counts = c === undefined ? "" : `, user ${String(c.extractedUser)}/${String(c.judgedUser)}, project ${String(c.extractedProject)}/${String(c.judgedProject)}`;
+    return `${b.path} (version ${b.version ?? "unknown"}${counts}) ${b.status}${b.override ? " [override]" : ""}`;
+  };
+  const checked = r.binaries.map(one).join("; ");
+  const suffix = checked === "" ? "" : ` | checked: ${checked}`;
+  const detail = r.status === "PASS" ? `every installed binary's extraction equals the judgment${suffix}` : `${r.reasons.join("; ")}${suffix}`;
   return { code: r.status === "PASS" ? 0 : r.status === "FAIL" ? 1 : 3, line: `CC-extraction-covers-judged: ${r.status} ${detail}`, details: r.reasons };
 }
 

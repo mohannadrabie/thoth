@@ -72,7 +72,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { checkExtraction, coverage, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
+import { mkdirSync } from "node:fs";
+import { checkExtraction, coverage, discoverClaudeBinaries, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
 import { runCli } from "./cc-extraction-covers-judged.ts";
 
 const names = (es: { name: string }[]): string[] => es.map((e) => e.name);
@@ -91,7 +92,7 @@ function fakeBinary(user: string[], project: string[], mcp: boolean): string {
 const isolatedHome = (): string => mkdtempSync(join(tmpdir(), "cc452-home-"));
 const envFor = (bin: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
   const home = isolatedHome();
-  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, ...extra };
+  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, PATH: "", ...extra };
 };
 
 test("CC-extraction-covers-judged/mutant-drops-4-of-31: an extraction missing 4 of the 31 judged user entries is reported, exactly those 4", () => {
@@ -191,7 +192,7 @@ test("CC-extraction-covers-judged/cli-exit-codes: exit 0 PASS / 1 FAIL / 3 SKIPP
   // the real script, spawned: no binary -> 3, required -> 1
   const run = (extra: NodeJS.ProcessEnv): { status: number | null; out: string } => {
     const home = isolatedHome();
-    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
+    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, PATH: "", THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
     return { status: r.status, out: r.stdout.trim().split(/\r?\n/).at(-1) ?? "" };
   };
   const s = run({});
@@ -200,4 +201,72 @@ test("CC-extraction-covers-judged/cli-exit-codes: exit 0 PASS / 1 FAIL / 3 SKIPP
   const q = run({ THOTH_REQUIRE_CLAUDE: "1" });
   assert.equal(q.status, 1);
   assert.match(q.out, /^CC-extraction-covers-judged: FAIL /);
+});
+
+// ---- #462: every installed binary is checked, not the first one found -----------------------------------------------------
+/** Put a fake binary at <home>/<rel>, readable by the real extractor. */
+function place(home: string, rel: string, user: string[], project: string[]): string {
+  const src = fakeBinary(user, project, true);
+  const dest = join(home, ...rel.split("/"));
+  mkdirSync(join(dest, ".."), { recursive: true });
+  writeFileSync(dest, readFileSync(src));
+  return dest;
+}
+const versionByPath = (map: Record<string, string>) => (bin: string): string => {
+  const v = map[bin];
+  if (v === undefined) throw new Error("unexpected binary " + bin);
+  return v + " (Claude Code)";
+};
+
+test("CC-extraction-covers-judged/every-installed-binary-checked: a stale ~/.local/bin binary at the judged version does not hide a different extension binary", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const ext = place(home, ".vscode/extensions/anthropic.claude-code-9.9.9-win32-x64/resources/native-binary/claude.exe", [...names(j.user), "extra-new-dir"], names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const r = checkExtraction(env, versionByPath({ [local]: j.claudeCodeVersion, [ext]: "9.9.9" }));
+  assert.equal(r.status, "FAIL");
+  const text = r.reasons.join("\n");
+  assert.ok(text.includes(ext), "names the failing extension binary");
+  assert.ok(text.includes("9.9.9") && text.includes("extra-new-dir"));
+  assert.deepEqual(r.binaries.map((b) => b.path).sort(), [local, ext].sort());
+  assert.deepEqual(r.binaries.map((b) => b.status).sort(), ["FAIL", "PASS"]);
+});
+
+test("CC-extraction-covers-judged/discovery-locations: local bin, newest versions entry, newest extension per editor, PATH, and the override in addition", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const mk = (rel: string): string => place(home, rel, names(j.user), names(j.project));
+  const local = mk(".local/bin/claude.exe");
+  mk(".local/share/claude/versions/2.1.9");
+  const newestVer = mk(".local/share/claude/versions/2.1.100");
+  mk(".vscode/extensions/anthropic.claude-code-2.1.9-win32-x64/resources/native-binary/claude.exe");
+  const vs = mk(".vscode/extensions/anthropic.claude-code-2.1.100-win32-x64/resources/native-binary/claude.exe");
+  const ins = mk(".vscode-insiders/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
+  const cur = mk(".cursor/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
+  const pathDir = join(home, "pathbin");
+  const onPath = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
+  const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
+  const found = discoverClaudeBinaries({ HOME: home, USERPROFILE: home, PATH: pathDir, THOTH_CLAUDE_BIN: override });
+  assert.deepEqual(found.map((b) => b.path).sort(), [local, newestVer, vs, ins, cur, onPath, override].sort());
+  assert.deepEqual(found.filter((b) => b.override).map((b) => b.path), [override]);
+  assert.deepEqual(discoverClaudeBinaries({ HOME: home, USERPROFILE: home, PATH: "" }).length, 5, "override absent: five found without PATH");
+  assert.deepEqual(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: "" }), []);
+});
+
+test("CC-extraction-covers-judged/final-line-names-binary: the final line names every binary path checked with its version, and marks the override", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: override };
+  const r = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: j.claudeCodeVersion }));
+  assert.equal(r.code, 0);
+  assert.ok(r.line.includes(local) && r.line.includes(override), r.line);
+  assert.ok(r.line.includes(j.claudeCodeVersion));
+  assert.match(r.line, /\[override\]/);
+  assert.equal((r.line.match(/\[override\]/g) ?? []).length, 1, "only the override is marked");
+  const bad = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: "9.9.9" }));
+  assert.equal(bad.code, 1);
+  assert.ok(bad.line.includes(local) && bad.line.includes(override) && bad.line.includes("9.9.9"), bad.line);
 });

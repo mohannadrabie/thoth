@@ -8,9 +8,9 @@
 // Reliability: this is an extraction from minified code, valid for the version recorded in the judgment file; a layout change
 // makes it return fewer entries or throw "anchor not found", and the test fails loudly rather than passing vacuously.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ANCHOR = '"shell-snapshots","session-env","plugins"';
@@ -30,6 +30,67 @@ export function locateClaudeBinary(env: NodeJS.ProcessEnv = process.env): string
   const home = env["USERPROFILE"] ?? env["HOME"] ?? homedir();
   const candidates = [env["THOTH_CLAUDE_BIN"], join(home, ".local", "bin", "claude.exe"), join(home, ".local", "bin", "claude")];
   return candidates.find((c): c is string => c !== undefined && c !== "" && existsSync(c));
+}
+
+export interface FoundBinary {
+  path: string;
+  /** Where it was found: override, local-bin, versions, vscode, vscode-insiders, cursor, PATH. */
+  source: string;
+  /** True only for THOTH_CLAUDE_BIN, which is checked in addition to the discovered ones, never instead. */
+  override: boolean;
+}
+
+const cmpVersion = (a: string, b: string): number => {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
+};
+const isFile = (p: string): boolean => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+const firstFile = (dir: string): string | undefined => [join(dir, "claude.exe"), join(dir, "claude")].find(isFile);
+
+/** #462: EVERY installed Claude Code binary, not the first one found. Order: override, local bin, newest versions/ entry, newest extension per editor, PATH (resolved without a shell). */
+export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): FoundBinary[] {
+  const home = env["USERPROFILE"] || env["HOME"] || homedir();
+  const out: FoundBinary[] = [];
+  const seen = new Set<string>();
+  const add = (path: string | undefined, source: string, override = false): void => {
+    if (path === undefined || path === "" || !isFile(path)) return;
+    const key = resolve(path).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ path, source, override });
+  };
+  add(env["THOTH_CLAUDE_BIN"], "override", true);
+  add(firstFile(join(home, ".local", "bin")), "local-bin");
+  try {
+    const dir = join(home, ".local", "share", "claude", "versions");
+    const newest = readdirSync(dir).filter((n) => /^\d+\.\d+\.\d+$/.test(n)).sort(cmpVersion).at(-1);
+    if (newest !== undefined) add(join(dir, newest), "versions");
+  } catch {
+    // no versions directory
+  }
+  for (const [root, source] of [[".vscode", "vscode"], [".vscode-insiders", "vscode-insiders"], [".cursor", "cursor"]] as const) {
+    try {
+      const dir = join(home, root, "extensions");
+      const cands = readdirSync(dir)
+        .map((n) => ({ n, v: /^anthropic\.claude-code-(\d+\.\d+\.\d+)/.exec(n)?.[1] }))
+        .filter((c): c is { n: string; v: string } => c.v !== undefined && firstFile(join(dir, c.n, "resources", "native-binary")) !== undefined)
+        .sort((a, b) => cmpVersion(a.v, b.v));
+      const best = cands.at(-1);
+      if (best !== undefined) add(firstFile(join(dir, best.n, "resources", "native-binary")), source);
+    } catch {
+      // no extensions directory
+    }
+  }
+  for (const d of (env["PATH"] ?? env["Path"] ?? "").split(delimiter)) if (d !== "") add(firstFile(d), "PATH");
+  return out;
 }
 
 /** Pure: extract from the binary's bytes. Throws when the anchor is absent (layout changed). */
@@ -109,21 +170,38 @@ export function installedClaudeVersion(binary: string): string {
 export interface CheckResult {
   status: "PASS" | "FAIL" | "SKIPPED";
   reasons: string[];
-  /** Generated counts for the final line; absent when nothing was extracted. */
-  counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number; version: string };
+  /** One entry per binary found and checked (empty when none was found). */
+  binaries: BinaryResult[];
+}
+
+export interface BinaryResult {
+  path: string;
+  source: string;
+  override: boolean;
+  version?: string;
+  status: "PASS" | "FAIL";
+  reasons: string[];
+  counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number };
 }
 
 const JUDGMENT = fileURLToPath(new URL("../../docs/qa/claude-code-write-deny-judgment.json", import.meta.url));
 
-/** Tri-state check of the installed Claude Code against the judgment file. Absent binary is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
+/** Tri-state check of EVERY installed Claude Code against the judgment file. Each binary found must pass on its own. None found is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
 export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion): CheckResult {
-  const binary = locateClaudeBinary(env);
-  if (binary === undefined) {
+  const found = discoverClaudeBinaries(env);
+  if (found.length === 0) {
     const reason = "no installed Claude Code binary";
-    return env["THOTH_REQUIRE_CLAUDE"] === "1" ? { status: "FAIL", reasons: [`${reason} (THOTH_REQUIRE_CLAUDE=1: absence is a failure)`] } : { status: "SKIPPED", reasons: [reason] };
+    return env["THOTH_REQUIRE_CLAUDE"] === "1" ? { status: "FAIL", reasons: [`${reason} (THOTH_REQUIRE_CLAUDE=1: absence is a failure)`], binaries: [] } : { status: "SKIPPED", reasons: [reason], binaries: [] };
   }
-  const reasons: string[] = [];
   const j = JSON.parse(readFileSync(JUDGMENT, "utf8")) as Judged;
+  const binaries = found.map((b) => checkOne(b, j, versionProvider));
+  const reasons = binaries.flatMap((b) => b.reasons.map((r) => `${b.path}: ${r}`));
+  return { status: binaries.every((b) => b.status === "PASS") ? "PASS" : "FAIL", reasons, binaries };
+}
+
+function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) => string): BinaryResult {
+  const binary = b.path;
+  const reasons: string[] = [];
   let version: string | undefined;
   try {
     version = parseClaudeVersion(versionProvider(binary));
@@ -132,17 +210,17 @@ export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionPro
   } catch (e) {
     reasons.push(`installed Claude Code version could not be read: ${e instanceof Error ? e.message : String(e)}`);
   }
-  let counts: CheckResult["counts"];
+  let counts: BinaryResult["counts"];
   try {
     const ex = extractWriteDeny(readFileSync(binary));
     const c = coverage(ex, j);
     for (const u of c.unjudged) reasons.push(`extracted but not judged: ${u}`);
     for (const m of c.judgedNotExtracted) reasons.push(`judged but not extracted: ${m}`);
-    counts = { extractedUser: ex.user.length, judgedUser: j.user.length, extractedProject: ex.project.length, judgedProject: j.project.length, version: version ?? "unknown" };
+    counts = { extractedUser: ex.user.length, judgedUser: j.user.length, extractedProject: ex.project.length, judgedProject: j.project.length };
   } catch (e) {
     reasons.push(e instanceof Error ? e.message : String(e));
   }
-  return { status: reasons.length === 0 ? "PASS" : "FAIL", reasons, ...(counts === undefined ? {} : { counts }) };
+  return { path: b.path, source: b.source, override: b.override, ...(version === undefined ? {} : { version }), status: reasons.length === 0 ? "PASS" : "FAIL", reasons, ...(counts === undefined ? {} : { counts }) };
 }
 
 if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
