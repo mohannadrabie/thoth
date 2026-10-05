@@ -216,3 +216,7 @@
 {"at":"2026-10-03T03:53:03.955Z","event":"story-shipped","scope":"s308-A","rounds":"1","reports":"6","findings":"24","adrTokensSaved":"169200","councilFired":"false"}
 {"at":"2026-10-03T03:53:04.012Z","event":"story-shipped","scope":"s308-B","rounds":"0","reports":"2","findings":"8","adrTokensSaved":"56400","councilFired":"false"}
 {"at":"2026-10-03T03:53:04.066Z","event":"story-shipped","scope":"s308-D","rounds":"1","reports":"7","findings":"21","adrTokensSaved":"150400","councilFired":"false"}
+{"at":"2026-10-05T03:09:31.034Z","event":"tier-ratified","scope":"s308-E","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"guard-content-self-protection"}
+{"at":"2026-10-05T03:09:31.118Z","event":"tier-ratified","scope":"s308-F","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"guard-content-self-protection"}
+{"at":"2026-10-05T03:09:31.184Z","event":"tier-ratified","scope":"s308-J","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"guard-content-self-protection"}
+{"at":"2026-10-05T04:17:11.433Z","event":"receipt-reopened","scope":"s308-F","agent":"red-team","trigger":"terse-line-reads-worse-than-severity","report":"docs/reviews/s308-F-deny-red-team-2026-10-05.md"}
