@@ -117,3 +117,21 @@ test("k-merge: fails closed on bad input", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("k-merge: an env block or disableAllHooks in the input is reported on stderr", () => {
+  const dir = mkdtempSync(join(tmpdir(), "k0-merge-"));
+  try {
+    const f = join(dir, "settings.json");
+    writeFileSync(f, JSON.stringify({ ...BASE, disableAllHooks: true, env: { NODE_OPTIONS: "--bogus" } }));
+    const r = cli([`--settings=${f}`]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.err, /disableAllHooks/);
+    assert.match(r.err, /env block/);
+    assert.ok(!r.out.includes("warning"), "stdout stays the settings text only");
+    const clean = join(dir, "clean.json");
+    writeFileSync(clean, JSON.stringify(BASE));
+    assert.equal(cli([`--settings=${clean}`]).err, "", "no warning for a clean input");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

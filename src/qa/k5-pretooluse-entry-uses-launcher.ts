@@ -4,13 +4,14 @@
 // path argument (default .claude/settings.json). Default CI runs it on the merge dry-run output and the seeded mutants; the real file
 // is checked only by qa:k-readiness.
 import { readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InstrumentResult } from "../lib/instrument.ts";
 import { exitCodeFor, printInstrumentResult } from "../lib/instrument.ts";
 import { loadBuiltinToolInventory } from "../policy/tools/builtin-tool-inventory.ts";
 import { computeMatcherDrift, extractMatcherToolNames } from "./gate-matcher-drift-check.ts";
-import { DEFAULT_PROPOSAL, GATE_SCRIPT, parseProposal, type GateProposal } from "./k-settings-merge.ts";
+import { DEFAULT_PROPOSAL, GATE_SCRIPT, buildGateEntry, parseProposal, type GateProposal } from "./k-settings-merge.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -27,28 +28,29 @@ export function checkK5(settingsText: string, proposal: GateProposal, vendored?:
   } catch {
     return fail("settings text is not valid JSON");
   }
-  const pre = typeof parsed === "object" && parsed !== null ? (parsed as { hooks?: { PreToolUse?: unknown } }).hooks?.PreToolUse : undefined;
+  const top = typeof parsed === "object" && parsed !== null ? (parsed as { disableAllHooks?: unknown; hooks?: { PreToolUse?: unknown } }) : undefined;
+  if (top === undefined) return fail("settings is not a JSON object");
+  // The vendor's own switch for turning every hook off: anything but an absent key or an explicit false disables or confuses the gate.
+  if ("disableAllHooks" in top && top.disableAllHooks !== false) return fail(`disableAllHooks is ${JSON.stringify(top.disableAllHooks)}: the gate would not run`);
+  const pre = top.hooks?.PreToolUse;
   if (!Array.isArray(pre)) return fail("settings has no hooks.PreToolUse array");
   const gateEntries = (pre as HookEntry[]).filter((e) => JSON.stringify(e).includes(GATE_SCRIPT));
   if (gateEntries.length === 0) return fail(`no hooks.PreToolUse entry names ${GATE_SCRIPT}`);
   if (gateEntries.length > 1) return fail(`${String(gateEntries.length)} hooks.PreToolUse entries name ${GATE_SCRIPT}; exactly one is required`);
+  // Fail closed on every other group: parallel hooks all run, and one that is not the gate is unreviewed (red-team #4).
+  if (pre.length !== 1) return fail(`${String(pre.length)} hooks.PreToolUse groups; exactly the gate entry is required`, [`${String(pre.length - 1)} group(s) other than the gate entry`]);
   const entry = gateEntries[0]!;
   const details: string[] = [];
-  if (entry.matcher !== proposal.proposedMatcher) details.push(`matcher is ${JSON.stringify(entry.matcher)}, proposal has ${JSON.stringify(proposal.proposedMatcher)}`);
-  const cmds = entry.hooks ?? [];
-  if (cmds.length !== 1) details.push(`entry has ${String(cmds.length)} hook command(s), exactly 1 required`);
-  else {
-    const h = cmds[0]!;
-    if (h.type !== "command") details.push(`hook type is ${JSON.stringify(h.type)}, not "command"`);
-    if (h.command !== proposal.proposedCommand) details.push(`command is ${JSON.stringify(h.command)}, proposal has ${JSON.stringify(proposal.proposedCommand)}`);
-    if (h.timeout !== proposal.timeout) details.push(`timeout is ${JSON.stringify(h.timeout)}, proposal has ${String(proposal.timeout)}`);
+  // Deep equality with the merge's own entry covers every handler key (async, if, args, shell, asyncRewake, once, statusMessage, unknown keys).
+  if (!isDeepStrictEqual(entry, buildGateEntry(proposal))) {
+    details.push(`the gate entry is not exactly the merge's entry: have ${JSON.stringify(entry)}, want ${JSON.stringify(buildGateEntry(proposal))}`);
   }
   // The matcher-drift extractor over the same file: every token must be a vendored tool name or the one pattern token.
   const tokens = extractMatcherToolNames({ hooks: { PreToolUse: [entry] } });
   const vendoredNames = vendored ?? new Set(loadBuiltinToolInventory().tools);
   details.push(...computeMatcherDrift(tokens, vendoredNames));
   if (details.length > 0) return fail("the PreToolUse gate entry does not match the proposal", details);
-  return { ok: true, vacuous: false, summary: "the PreToolUse gate entry matches the proposal (launcher command byte for byte, matcher, timeout)", details: [] };
+  return { ok: true, vacuous: false, summary: "the PreToolUse gate entry is exactly the merge's entry (every handler key), is the only PreToolUse group, and disableAllHooks is not set", details: [] };
 }
 
 export interface K5Mutant {
@@ -63,10 +65,17 @@ function mutateEntry(text: string, f: (entry: { matcher: string; hooks: { comman
   f(entry);
   return JSON.stringify(parsed);
 }
+function mutateHandler(text: string, extra: Record<string, unknown>): string {
+  const parsed = JSON.parse(text) as { hooks: { PreToolUse: { hooks: Record<string, unknown>[] }[] } };
+  const entry = parsed.hooks.PreToolUse.find((e) => JSON.stringify(e).includes(GATE_SCRIPT));
+  if (entry === undefined) throw new Error("no gate entry to mutate");
+  Object.assign(entry.hooks[0]!, extra);
+  return JSON.stringify(parsed);
+}
 const dropToken = (token: string) => (text: string): string => mutateEntry(text, (e) => void (e.matcher = e.matcher.split("|").filter((t) => t !== token).join("|")));
 const setCommand = (f: (c: string) => string) => (text: string): string => mutateEntry(text, (e) => void (e.hooks[0]!.command = f(e.hooks[0]!.command)));
 
-/** The 8 seeded mutants (Monitor and RemoteTrigger counted separately). Each must make checkK5 fail; the count is read from this array. */
+/** The seeded mutants (8 command and matcher mutants, Monitor and RemoteTrigger counted separately, plus the neutering set). Each must make checkK5 fail; the count is read from this array. */
 export const K5_MUTANTS: readonly K5Mutant[] = [
   { name: "bare node gate", apply: setCommand((c) => c.replace(/^sh "[^"]*launch-gate\.sh" /, "node ")) },
   { name: "trailing || true", apply: setCommand((c) => `${c} || true`) },
@@ -76,6 +85,30 @@ export const K5_MUTANTS: readonly K5Mutant[] = [
   { name: "PowerShell missing from matcher", apply: dropToken("PowerShell") },
   { name: "Monitor missing from matcher", apply: dropToken("Monitor") },
   { name: "RemoteTrigger missing from matcher", apply: dropToken("RemoteTrigger") },
+  ...(
+    [
+      ["handler async true", { async: true }],
+      ["handler if never matches", { if: "Bash(__never__)" }],
+      ["handler args empty", { args: [] }],
+      ["handler shell powershell", { shell: "powershell" }],
+      ["handler asyncRewake true", { asyncRewake: true }],
+      ["handler once true", { once: true }],
+      ["handler statusMessage added", { statusMessage: "x" }],
+      ["handler unknown key", { notAKnownHandlerKey: 1 }],
+    ] as [string, Record<string, unknown>][]
+  ).map(([name, extra]): K5Mutant => ({ name, apply: (text) => mutateHandler(text, extra) })),
+  {
+    name: "top-level disableAllHooks true",
+    apply: (text) => JSON.stringify({ ...(JSON.parse(text) as object), disableAllHooks: true }),
+  },
+  {
+    name: "second PreToolUse group",
+    apply: (text) => {
+      const parsed = JSON.parse(text) as { hooks: { PreToolUse: unknown[] } };
+      parsed.hooks.PreToolUse.push({ matcher: "*", hooks: [{ type: "command", command: "node other.mjs", timeout: 5 }] });
+      return JSON.stringify(parsed);
+    },
+  },
 ];
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
