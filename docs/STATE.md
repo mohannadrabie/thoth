@@ -10,6 +10,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Issues closed by the merge or by the Manager after it:** #408, #410, #424, #428, #429, #436, #440, #441, #443, #445, #446, #447, #448, #449, #451.
 - **#308 reopened again:** commit 6d56e5a's subject `fix: #308 ...` auto-closed it. Commit subjects must not start with fix/close/resolve followed by #308 until K ships.
 - **K (wiring the gate):** planned, not wired. Plan: `docs/plans/s308-K-wiring-plan-2026-10-05.md` (CRITICAL). Wiring needs the human's explicit approval (K1).
+- **K stage 0 built (branch `s308/k-stage0-build`, not merged):** merge script, K3, K5, `qa:k-readiness`, `--form` worktree emission (#442) and the runbook exist; nothing is wired. `npm run qa:k-readiness` is red by design (it names every open precondition). Reviews (red-team, app-security-reviewer, cross-domain-reviewer) are the next step, then the human wires K.
 - **Open S7 work** (query: `gh issue list --milestone "S7 — Self-protection & enforcement-layer integrity" --state open`):
 
 | Issue | What | Role |

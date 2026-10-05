@@ -43,8 +43,12 @@ test("worktree-targets: absolute form", () => {
   const fx = synthetic();
   try {
     const lines = worktreeEditLines(fx.wt, "absolute");
-    const abs = (p: string): string => `Edit(//${posix(p).replace(/^\//, "")})`;
-    assert.deepEqual(lines, [abs(join(fx.wt, ".git")), abs(join(fx.main, ".git")), `${abs(join(fx.main, ".git"))}`.replace(/\)$/, "/**)")].sort());
+    const body = (p: string): string => {
+      const q = posix(p);
+      return q.startsWith("/") ? q.slice(1) : q;
+    };
+    const want = [`Edit(//${body(join(fx.wt, ".git"))})`, `Edit(//${body(join(fx.main, ".git"))})`, `Edit(//${body(join(fx.main, ".git"))}/**)`];
+    assert.deepEqual(lines, want.sort());
   } finally {
     fx.cleanup();
   }
