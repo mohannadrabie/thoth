@@ -797,5 +797,23 @@
     }
   },
   "note_2026_10_02c": "Stories G, C, H SHIPPABLE on s308/activation (not pushed). Next: A draft + B live tests, then D, E, F, J; K human-only.",
-  "note_2026_10_05": "THOTH-ADR-0003 accepted by the human 2026-10-05 (exemption kept); E/F/J hold released; K held for separate approval. Manager rulings under pre-approval await ratification (not blocking)."
+  "note_2026_10_05": "THOTH-ADR-0003 accepted by the human 2026-10-05 (exemption kept); E/F/J hold released; K held for separate approval. Manager rulings under pre-approval await ratification (not blocking).",
+  "storyRounds": {
+    "s308-E0": {
+      "sinceClean": 0,
+      "total": 0
+    },
+    "s409": {
+      "sinceClean": 1,
+      "total": 1
+    },
+    "s428": {
+      "sinceClean": 0,
+      "total": 0
+    },
+    "s429": {
+      "sinceClean": 0,
+      "total": 0
+    }
+  }
 }
