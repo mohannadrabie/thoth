@@ -29,7 +29,7 @@ Human judgement asked (plan line 103): accept the three plugin-file hooks as amb
 ## 2. Setup (no spend)
 
 - A fresh clone of the merged K stage 0 branch outside C:\playground\thoth and not in a thoth-wt worktree, e.g. `C:\scratch\thoth-k1`. Its `.claude/settings.json` is the merge script's dry-run output written with `--write` **in the clone only**. One linked worktree of the clone is used for P-K4.
-- Runner: a copy of docs/qa/s7-live-probes/harness/run7.mjs with `CAP = 1.60`, a new ledger `docs/qa/s308-K-live-probes/ledger.jsonl` (`SPIKE_NEW_LEDGER=1` once), the 40-call ceiling kept, `--budget 0.06` per call, and a 180 s kill. Model alias haiku, as before.
+- Runner: a copy of docs/qa/s7-live-probes/harness/run7.mjs with `CAP = 1.60`, a new ledger file, ledger.jsonl in a new s308-K-live-probes directory under docs/qa, created by the first run (`SPIKE_NEW_LEDGER=1` once), the 40-call ceiling kept, `--budget 0.06` per call, and a 180 s kill. Model alias haiku, as before.
 - Cap: USD 2.00 for stages 1 and 2 (human ruling, 2026-10-05). Stage 1 is capped at USD 1.60, leaving USD 0.40 for stage 2's roughly 8 calls (about USD 0.30). The prior USD 0.5864 in docs/qa/s7-live-probes/ledger.txt belongs to the previous session's own cap and does not count here.
 
 ## 3. Probes
