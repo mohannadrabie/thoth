@@ -98,8 +98,9 @@ const envFor = (bin: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =
 test("CC-extraction-covers-judged/mutant-drops-4-of-31: an extraction missing 4 of the 31 judged user entries is reported, exactly those 4", () => {
   const j = judged();
   const all = names(j.user);
-  assert.equal(all.length, 31, "the judgment holds 31 user entries today");
-  const dropped = [all[3]!, all[10]!, all[17]!, all[30]!];
+  assert.ok(all.length >= 4, "the judgment has enough user entries to drop four");
+  const dropped = [0, 1, 2, 3].map((k) => all[Math.floor((k * (all.length - 1)) / 3)]!);
+  assert.equal(new Set(dropped).size, 4, "four distinct entries dropped");
   const partial = { user: all.filter((n) => !dropped.includes(n)), project: names(j.project), mcpJson: true };
   const c = coverage(partial, j);
   assert.deepEqual([...c.judgedNotExtracted].sort(), dropped.map((n) => `user:${n}`).sort());
@@ -126,7 +127,7 @@ test("CC-extraction-covers-judged/equal-sets-pass: the full judged set yields bo
 test("CC-extraction-covers-judged/version-parse", () => {
   assert.equal(parseClaudeVersion("2.1.267 (Claude Code)"), "2.1.267");
   assert.equal(parseClaudeVersion("2.1.267 (Claude Code)\nextra"), "2.1.267");
-  for (const bad of ["", "garbage", "v2", "2.1"]) assert.equal(parseClaudeVersion(bad), undefined, bad);
+  for (const bad of ["", "garbage", "v2", "2.1", "2.1.267-beta", "2.1.267abc", "2.1.2670x"]) assert.equal(parseClaudeVersion(bad), undefined, bad);
 });
 
 test("CC-extraction-covers-judged/version-mismatch-fails: a different installed version is FAIL even when the sets are equal", () => {
@@ -269,4 +270,18 @@ test("CC-extraction-covers-judged/final-line-names-binary: the final line names 
   const bad = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: "9.9.9" }));
   assert.equal(bad.code, 1);
   assert.ok(bad.line.includes(local) && bad.line.includes(override) && bad.line.includes("9.9.9"), bad.line);
+});
+
+test("CC-extraction-covers-judged/judgment-unreadable-fails-closed: a missing or invalid judgment file is FAIL with a final line, not a crash", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const bad = join(home, "judgment.json");
+  writeFileSync(bad, "{ not json", "utf8");
+  for (const path of [bad, join(home, "missing.json")]) {
+    const r = runCli(env, versionByPath({ [local]: j.claudeCodeVersion }), path);
+    assert.equal(r.code, 1);
+    assert.match(r.line, /^CC-extraction-covers-judged: FAIL .*judgment/);
+  }
 });

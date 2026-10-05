@@ -159,7 +159,7 @@ export function coverage(ex: Extracted, j: Judged): { unjudged: string[]; judged
 
 /** "2.1.267 (Claude Code)" -> "2.1.267"; anything else -> undefined. */
 export function parseClaudeVersion(text: string): string | undefined {
-  return /^(\d+\.\d+\.\d+)/.exec(text.trim().split(/\r?\n/)[0] ?? "")?.[1];
+  return /^(\d+\.\d+\.\d+)(?=\s|$)/.exec(text.trim().split(/\r?\n/)[0] ?? "")?.[1];
 }
 
 /** Asks the SAME binary the extractor reads (no shell, bounded). Throws on failure or timeout. */
@@ -187,13 +187,18 @@ export interface BinaryResult {
 const JUDGMENT = fileURLToPath(new URL("../../docs/qa/claude-code-write-deny-judgment.json", import.meta.url));
 
 /** Tri-state check of EVERY installed Claude Code against the judgment file. Each binary found must pass on its own. None found is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
-export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion): CheckResult {
+export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath: string = JUDGMENT): CheckResult {
   const found = discoverClaudeBinaries(env);
   if (found.length === 0) {
     const reason = "no installed Claude Code binary";
     return env["THOTH_REQUIRE_CLAUDE"] === "1" ? { status: "FAIL", reasons: [`${reason} (THOTH_REQUIRE_CLAUDE=1: absence is a failure)`], binaries: [] } : { status: "SKIPPED", reasons: [reason], binaries: [] };
   }
-  const j = JSON.parse(readFileSync(JUDGMENT, "utf8")) as Judged;
+  let j: Judged;
+  try {
+    j = JSON.parse(readFileSync(judgmentPath, "utf8")) as Judged;
+  } catch (e) {
+    return { status: "FAIL", reasons: [`judgment file unreadable or invalid (${judgmentPath}): ${e instanceof Error ? e.message : String(e)}`], binaries: [] };
+  }
   const binaries = found.map((b) => checkOne(b, j, versionProvider));
   const reasons = binaries.flatMap((b) => b.reasons.map((r) => `${b.path}: ${r}`));
   return { status: binaries.every((b) => b.status === "PASS") ? "PASS" : "FAIL", reasons, binaries };

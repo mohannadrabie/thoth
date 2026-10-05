@@ -4,8 +4,8 @@
 // The last stdout line is always `CC-extraction-covers-judged: <PASS|FAIL|SKIPPED> <detail>`.
 import { checkExtraction, installedClaudeVersion } from "./claude-code-write-deny-extract.ts";
 
-export function runCli(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion): { code: number; line: string; details: string[] } {
-  const r = checkExtraction(env, versionProvider);
+export function runCli(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath?: string): { code: number; line: string; details: string[] } {
+  const r = checkExtraction(env, versionProvider, judgmentPath);
   const one = (b: (typeof r.binaries)[number]): string => {
     const c = b.counts;
     const counts = c === undefined ? "" : `, user ${String(c.extractedUser)}/${String(c.judgedUser)}, project ${String(c.extractedProject)}/${String(c.judgedProject)}`;
