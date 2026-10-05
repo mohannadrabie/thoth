@@ -461,7 +461,7 @@ test("S409-residuals-listed: R1-R4 are carried by the preflight, the plan and th
 // --- Round 1 fix-now (#440, #441, #442, #443, app-security and cross-domain reviews) -------------------------------------
 
 const GIT_DIR_LOCAL = [".git/config.worktree", ".git/modules/", ".git/worktrees/"];
-const denyFor = (rules: Rule[], target: string): { outcome: string; ruleId?: string } => decide(WORLD(rules), { source: "shell", verbs: ["write"], targets: [canonicalizePathTarget(target)], environment: "e", identity: "i", deferred: false, unresolved: [] });
+const denyFor = (rules: Rule[], target: string): { outcome: string; ruleId?: string } => decide(WORLD(rules), { source: "parsed", verbs: ["write"], targets: [canonicalizePathTarget(target)], environment: "e", identity: "i", deferred: false, unresolved: [] });
 
 test("S409-submodule-gitdir-protected (#440): .git/modules/, .git/config.worktree and .git/worktrees/ are protected, including the files git reads in a submodule git dir", () => {
   assert.deepEqual(GIT_DIR_LOCAL.filter((p) => !PATHS.all.includes(p)), []);
