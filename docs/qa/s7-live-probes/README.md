@@ -4,7 +4,7 @@
 - Method: story J's harness (`../s308-live-spikes-J/harness/`), copied and adapted in `harness/`: `run7.mjs` (runner), `gen-s7.mjs` (profiles and scratch fixtures), `gen-p2b.mjs` (P2b profiles and dummy file), `log-hook.mjs` (logger, now also records the hook payload's key names, `agent_id` and `agent_type`), `scrub-s7.mjs` (builds the evidence files), `peek.mjs` (local stream summary). Each run is `claude -p` (Claude Code 2.1.267, model alias haiku, Windows 11, Git Bash) in a scratch project outside this repo, with `--setting-sources project` and its own `.claude/settings.json`.
 - Gate: hosted from a detached worktree of `origin/master` (6f78aee) in the scratch folder, wired with the K shell form `sh "<launcher>" "<gate>"` and the K matcher `Bash|PowerShell|mcp__.*`. The worktree was removed after the runs. Nothing wired the repo's `.claude/settings.json` or any user settings.
 - Spend: USD 0.5864 over 16 live calls (2 of them stopped before the model at zero cost). Hard cap USD 1.00, checked by the runner before each run (`ledger.txt`).
-- Paths, ids, host and user names are scrubbed by `harness/scrub-s7.mjs`. Attribution is by content (the gate's deny text in the hook response and the tool result, the logger's own file with `agent_id`, and `parent_tool_use_id` in the stream), not by event order.
+- Paths, ids, host and user names are scrubbed by `docs/qa/s7-live-probes/harness/scrub-s7.mjs`. Attribution is by content (the gate's deny text in the hook response and the tool result, the logger's own file with `agent_id`, and `parent_tool_use_id` in the stream), not by event order.
 
 ## Outcomes
 

@@ -18,7 +18,7 @@ Method: code-traced against the shipped normalizer/gate; measured on this Window
    - `name.lnk` (Windows shortcut, MSYS `lnk`-style symlink): **resolves and runs.**
    - `name.cmd`, `name.bat`, `name.com`, `name.ps1`: **not found** — MSYS `bash` ignores PATHEXT and does not run these for a bare name.
 3. **Routing table** (`src/policy/gate/tool-routing.ts:42-56`): exactly two rows — `Bash` (exact) to `shell` normalizer; `mcp__*` (prefix) to `tool-class`. Any other `tool_name` to `unroutable-tool` deny (`decide-tool-call.ts:78-80`). **PowerShell is not routed today → denied (fail-closed).**
-4. **`normalizeToolToken`** (`src/policy/normalizer/shell-scanner.ts:588`) strips a path prefix only on `/`, not `\`, and lowercases. A bare lowercase `kubectl` passes; `KUBECTL` lowercases to `kubectl` but the F9b raw-token-equality check (`shell.ts:493`) and F9 exact-set check (`shell.ts:364`, `RESOLVABLE_BINARIES` is lowercase-only) both reject it → deny. Uppercase/path-qualified command tokens are over-denied (fail-closed).
+4. **`normalizeToolToken`** (`src/policy/normalizer/shell-scanner.ts:576`) strips a path prefix only on `/`, not `\`, and lowercases. A bare lowercase `kubectl` passes; `KUBECTL` lowercases to `kubectl` but the F9b raw-token-equality check (`src/policy/normalizer/shell.ts:493`) and F9 exact-set check (`src/policy/normalizer/shell.ts:364`, `RESOLVABLE_BINARIES` is lowercase-only) both reject it → deny. Uppercase/path-qualified command tokens are over-denied (fail-closed).
 
 ## Findings, ranked by blast radius (exposure × irreversibility × silence)
 

@@ -81,7 +81,7 @@ Residual risk, stated plainly (kept in the file header and the review hand-off):
 
 ## 7. Files to touch (this story, after E0 merges)
 
-New: `src/policy/normalizer/bare-binary-trust.ts`, `src/policy/normalizer/bare-binary-trust.test.ts`, `hooks/pretooluse-kernel-gate-path-trust.test.ts`.
+New: src/policy/normalizer/bare-binary-trust.ts, src/policy/normalizer/bare-binary-trust.test.ts, hooks/pretooluse-kernel-gate-path-trust.test.ts.
 Edit: `src/policy/normalizer/shell.ts` (one additive export), `src/policy/gate/decide-tool-call.ts` (new optional-by-design but wired-required port; absent port = deny, fail closed), `hooks/pretooluse-kernel-gate.mjs` (supply the real fs port), `docs/decisions.md` (record the order-independent choice and the three residuals), CHANGELOG, `docs/STATE.md`, review report under `docs/reviews/`. Not touched: `kernel.ts`, `wrapper-catalog.ts`, `.github/*`.
 
 ## 8. Plan of work and tests (each criterion to a named failing-first test; first commit is these tests, RED)
