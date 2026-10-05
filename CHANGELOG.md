@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story E (AP-1: baseline rules) - HELD behind THOTH-ADR-0003 acceptance
+
+CRITICAL tier (guard content, policy delivery). Not wired (story K); merge held until the human accepts THOTH-ADR-0003 (rule: E, F, J, K MUST NOT ship before). Refs #308, #306, #329, #408.
+
+- `src/policy/config/shipped-defaults.json`: one rule, `baseline-allow-class-read-only` (allow, verb `tool-class:read-only`, no target). `defaultOutcome` stays undeclared (resolved `allow`, source `bootstrap`).
+- Deviation from the ratified two-rule list: `baseline-allow-read-verbs` is withheld. PT-2 fails for it: the shell normalizer's verb resolution is tool-blind (`rm get pods/x --context=c` normalizes to verbs `[get]`). It returns with story E0 (#408).
+- Bash consequence, measured 2026-10-04: with the gate wired, ordinary reads (`ls`, `cat`, `git status`) are denied by POL-05 (unresolved) before any rule runs; no allow rule can change that. Story E0 (#408) addresses it.
+- `src/policy/config/baseline-rules.test.ts` (new): `E-shape`, `PT-1`, `PT-2`, `PT2-mutant`, `PT-12`, `PT-12b`, `E3`, against the real shipped file. Red run recorded before the rule data (3 failing).
+- `src/qa/fixture-name-triage.ts` (+ test, `npm run qa:fixture-name-triage`): E6, fixture names read at run time via the single-source funnel; every hit file needs a verdict; an untriaged hit, a stale verdict or a violation fails.
+
 ### Added - Issue #308 story D (AP-13: launcher `hooks/launch-gate.sh`)
 
 CRITICAL tier (session gate). Nothing is wired into `.claude/settings.json` (story J). Refs #308, #397, #398, #399, #401, #402, #403.
