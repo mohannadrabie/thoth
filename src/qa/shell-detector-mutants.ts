@@ -609,8 +609,15 @@ const MUTANTS: Mutant[] = [
     "ro-bare-path-check-dropped",
     "E0 criterion 9: dropping the raw-equals-dequoted check lets a quoted or escaped operand ('x', a\"b\"c) be recorded as a target string that differs from what was screened",
     READONLY,
+    "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
+    "return t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
+  ),
+  textMutant(
+    "ro-unc-operand-check-dropped",
+    "E0 Issue #436: dropping the leading-// refusal lets a UNC operand (cat //host/share/x, an SMB authentication vector) resolve to a clean read that canonicalization folds to /host/share/x",
+    READONLY,
+    "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
     "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\");",
-    "return t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\");",
   ),
   textMutant(
     "ro-pattern-single-quote-check-dropped",
