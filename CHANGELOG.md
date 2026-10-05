@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - #308 story K, stage 0 (tooling only, nothing wired)
+
+Refs #308, #442 (stays open until live probe P-K4 picks the form), #401. CRITICAL tier. No wiring: `.claude/settings.json` and every `.claude/` file are unchanged. Plan `docs/plans/s308-K0-stage0-plan-2026-10-05.md`.
+
+- `src/qa/k-settings-merge.ts` (`npm run qa:k-merge`): computes the settings text with the PreToolUse gate entry (from the K proposal JSON) and the generated Edit denies merged in. Dry run by default, `--write` for the human, `--out=<path>` for the fixture. Refuses a conflicting existing gate entry. The checked-in `docs/qa/k-proposed-merged-settings.fixture.txt` is produced by the CLI (never hand-edited; the test fails when it is out of sync; `.txt` so the one-manifest check does not count it).
+- Checks K3 (`npm run qa:k3`, every protected path has its Edit deny entry; 2 mutants) and K5 (`npm run qa:k5`, the PreToolUse entry equals the pinned launcher command and matcher, matcher run through the matcher-drift extractor; 8 mutants, count read from the exported array). Each takes a settings-file path (default `.claude/settings.json`). Default `npm test` runs them on the dry-run output and the mutants only.
+- `npm run qa:k-readiness`: read-only, one query per activation precondition (open `k-blocker` Issues via two agreeing gh queries, fix-branch ancestry, preflight, protected-path drift, the five gate checks, K3, K5, #452 and settings-named-script rows, the latency allow-path row, the K1 and K4 decisions rows). Exits 1 unless every row is PASS; unbuilt rows report MISSING. Red by design until K is wired. Its command runner refuses anything but gh issue list, gh label list, git merge-base, git rev-parse and node src/qa scripts.
+- Changed (#442): `node src/qa/protected-path-list.ts --print-worktree-targets` now REQUIRES `--form=relative` or `--form=absolute` and prints ready-to-paste `Edit(...)` lines; without it, exit 1 and nothing on stdout. A main checkout prints nothing, exit 0. `worktreeExtraPaths` is unchanged and still exported. The earlier bare form had no caller outside docs.
+- Runbook `docs/runbooks/k-kill-switch-and-verification.md`: measured facts only; `disableAllHooks` and `--setting-sources user,local` appear only under its "Unmeasured until P-K5" heading.
+
 ### Fixed - Issue #428 (S7, #308 K blocker): an allowed bare binary must not resolve to a planted file
 
 Fixes #428. Refs #308, #439 (follow-up: pin the resolved path with `updatedInput`). CRITICAL tier. No wiring (K held): no runtime effect until the gate is wired. Plan `docs/plans/s428-path-planted-binary-plan-2026-10-05.md`; design challenge `docs/reviews/s428-path-trust-design-challenge-2026-10-05.md` (go).
