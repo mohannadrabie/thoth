@@ -51,7 +51,7 @@ export interface PreflightInput {
 
 /** Residuals the seal does NOT close. Keys are pinned by S409-residuals-listed; the plan and CHANGELOG carry the same four. */
 export const RESIDUALS: Readonly<Record<string, string>> = {
-  R1: "shell profile files (~/.bashrc, ~/.profile, ~/.zshrc) are session-writable and feed the next session's shell env; routed to the #428 story",
+  R1: "shell profile files (~/.bashrc, ~/.profile, ~/.zshrc) are write-protected by the #429/#446 story (named paths); pre-existing content, other shells and a profile reached through BASH_ENV or ENV are not covered",
   R2: "managed settings and OS-level or ambient environment are not session-writable and are not sealed; this command reads them (system gitconfig only at the usual POSIX and Git for Windows paths: files from scoop, winget or choco installs are not located)",
   R3: "config that existed before activation (git config, hooks, attributes, rg config) is outside the write seal; this command detects it",
   R4: "user-scope settings env reach was not run live (J8 ran project scope only) and is treated as reachable; the user settings file is protected either way",

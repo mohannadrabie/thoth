@@ -83,7 +83,7 @@ This is not preventable by a write-protect list (already on disk). It is disclos
 
 ## 8. Residuals (disclosed; R-keys pinned by criterion 11)
 
-- R1: shell profile files (`~/.bashrc` etc.) are session-writable and feed the next session's shell env snapshot; routed to #428's story.
+- R1: shell profile files (`~/.bashrc` etc.) are session-writable and feed the next session's shell env snapshot; write-protected by the #429/#446 story (named paths), no longer routed to #428.
 - R2: managed settings and OS/ambient env are not session-writable and not sealed; the preflight reads them.
 - R3: pre-existing config (section 7).
 - R4: user-scope `env` reach is unproven live (J8 did not run it; treated as reachable); the seal protects `~/.claude/settings.json` regardless, so the answer does not change the plan.

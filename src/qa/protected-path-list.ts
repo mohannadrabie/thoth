@@ -257,6 +257,16 @@ function namedPaths(root: string): string[] {
     "~/.claude/skills/",
     "~/.claude/agents/",
     "~/.claude/plugins/", // plugin skills and commands load from here
+    // #446 (S7, Manager ruling on the #428 cross-domain finding): login-shell profile files. A session that can write one can
+    // prepend a planted PATH directory for its next shell. Residual R1 of #409 is now owned by #429/#446 (this list).
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.bash_login",
+    "~/.profile",
+    "~/.zshrc",
+    "~/.zprofile",
+    "~/.zshenv",
+    "~/.config/fish/",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
