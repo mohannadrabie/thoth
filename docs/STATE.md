@@ -1,9 +1,35 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-05, end of session `s7/knockout` (E0, #428, #409, #429 review-complete and merged on one branch; K planned, not wired)
+**Last updated:** 2026-10-05, after PR #453 merged (E0, #428, #409, #429 on master; K planned, not wired)
 
-## Resume point — 2026-10-05, end of session (newest): S7 K blockers built on `s7/knockout`; K planned, not wired
+## Resume point — 2026-10-05, after PR #453 merged (newest): S7 K blockers on master; K waits for the human
+
+- **Merged:** PR #453 (`s7/knockout`) to `master` as `80ec926`, 2026-10-05 21:26 UTC. CI on its head: all 30 steps green (the first two attempts never got a runner: GitHub Actions outage).
+- **On master now:** E0 (`ls`, `cat`, `head`, `tail`, `wc`, `grep` resolve to read), #428 bare-binary trust check, #409 git/rg lever seal (whole `.git/` protected; `qa:git-rg-lever-preflight`), #429/#424/#446 per-tool exec judgment and derived K matcher `Bash|Monitor|PowerShell|RemoteTrigger|mcp__.*`. Details: the "Prior entry" below and the decisions rows dated 2026-10-05.
+- **Issues closed by the merge or by the Manager after it:** #408, #410, #424, #428, #429, #436, #440, #441, #443, #445, #446, #447, #448, #449, #451.
+- **#308 reopened again:** commit 6d56e5a's subject `fix: #308 ...` auto-closed it. Commit subjects must not start with fix/close/resolve followed by #308 until K ships.
+- **K (wiring the gate):** planned, not wired. Plan: `docs/plans/s308-K-wiring-plan-2026-10-05.md` (CRITICAL). Wiring needs the human's explicit approval (K1).
+- **Open S7 work** (query: `gh issue list --milestone "S7 — Self-protection & enforcement-layer integrity" --state open`):
+
+| Issue | What | Role |
+|---|---|---|
+| #435, #437 | Read-deny for secrets and out-of-repo paths; recursive reads record one target | K blocker (plan question 3: block or disclose) |
+| #442 | K emits per-checkout linked-worktree targets (`node src/qa/protected-path-list.ts --print-worktree-targets`) | K build item |
+| #444 | Human-run writability probe of each trusted PATH dir at activation | K activation step |
+| #452 | Write-deny extractor must check both directions and the installed Claude Code version | K precondition |
+| #438 | kubeconfig write side; read side is the preflight's one finding (exec block in `~/.kube/config`) | Human clears or accepts |
+| #406, #397 | Settings env-block levers | Close with K (settings protection) |
+| #450 | Preflight misses `protocol.ext.allow` and `ext::` URLs | git/rg re-add story precondition, not K |
+| #93, #107, #288 | S5/S6 follow-ups | Not K blockers |
+
+- **Not filed:** the fixed HIGH (main-checkout `.git/commondir` redirect, `docs/reviews/s409-red-team-round2-2026-10-05.md`); the session's permission classifier blocked `gh issue create`. Human decides.
+- **Pending human:** ratify or overrule the Manager rows dated 2026-10-04 and 2026-10-05; answer K plan section 7; clear or accept the `~/.kube/config` exec block.
+- **Process notes:** `qa:vendor-tool-inventory` rewrites `docs/qa/tool-inventory.json` when "every qa:*" runs; skip it in verify loops. Builders can stop without reporting: watch branch commits with a Monitor and verify yourself.
+
+**Single next action:** the human answers the K plan's blocking questions (section 7, at least 1, 3, 8, 9), then a session builds K's stage-0 pieces on a fresh branch and stops before wiring.
+
+## Prior entry (superseded above): S7 K blockers built on `s7/knockout`; K planned, not wired
 
 - **Branch:** `s7/knockout` (local, not pushed). One branch for the whole session; merge is human-only.
 - **Shipped on the branch (all CRITICAL, reviews complete):**
