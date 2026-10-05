@@ -96,7 +96,7 @@ Policy: a command is claimed only if the WHOLE text is one simple command whose 
 
 ## 5. Tests, written failing first
 
-New files: `src/policy/normalizer/readonly-catalog.test.ts` (unit, table-driven; names derived from the table at run time), `src/policy/normalizer/readonly-bypass-corpus.test.ts` (corpus), `src/policy/config/readonly-gate.e2e.test.ts` (real hook, real shipped defaults, `node hooks/pretooluse-kernel-gate.mjs`, same harness style as the existing gate tests). RED recorded in the first commit message before `readonly-catalog.ts` or the `shell.ts` call site exist.
+New files: src/policy/normalizer/readonly-catalog.test.ts (unit, table-driven; names derived from the table at run time), src/policy/normalizer/readonly-bypass-corpus.test.ts (corpus), src/policy/config/readonly-gate.e2e.test.ts (real hook, real shipped defaults, `node hooks/pretooluse-kernel-gate.mjs`, same harness style as the existing gate tests). RED recorded in the first commit message before `readonly-catalog.ts` or the `shell.ts` call site exist.
 
 | Criterion | Named checks |
 |---|---|
@@ -143,7 +143,7 @@ Interaction with E: E's two allow rules stay as planned; with E0, the allow path
 
 ## 7. Files touched (planned)
 
-New: `src/policy/normalizer/readonly-catalog.ts` (data table plus pure matcher, no I/O), `readonly-catalog.test.ts`, `readonly-bypass-corpus.test.ts`, `src/policy/config/readonly-gate.e2e.test.ts`, `src/policy/fixtures/readonly-corpus.ts` (shared corpus data, so unit and e2e use the same rows), a pre-change snapshot of redirect-fixture records.
+New: src/policy/normalizer/readonly-catalog.ts (data table plus pure matcher, no I/O), `readonly-catalog.test.ts`, `readonly-bypass-corpus.test.ts`, src/policy/config/readonly-gate.e2e.test.ts, src/policy/fixtures/readonly-corpus.ts (shared corpus data, so unit and e2e use the same rows), a pre-change snapshot of redirect-fixture records.
 Edited: `src/policy/normalizer/shell.ts` (one call site and import; header comment entry), `src/policy/normalizer/shell-scanner.ts` (additive: expose each token's raw `end`; no behavior change, existing scanner tests unmodified), `CHANGELOG.md`, `docs/STATE.md` (Manager), `docs/decisions.md` row (Manager, after ratification).
 Zero diff: `kernel.ts`, `registry.ts`, `action-catalog.ts` (E0 uses only the existing verbs `read` and `list`), `target-format.ts`, `hooks/pretooluse-kernel-gate.mjs`, `shipped-defaults.json`.
 `package.json`: none expected.

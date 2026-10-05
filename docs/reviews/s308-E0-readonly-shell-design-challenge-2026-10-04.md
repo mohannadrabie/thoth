@@ -69,7 +69,7 @@ HEAD in the scratchpad (removed after). Read-only; no tracked file touched, no s
   as a legitimate correction. A read-ALLOW rule scoped to a filesystem path passes V4 cleanly.
 - **Scenario:** a future (or F-era) read-allow rule `{effect:"allow", verbs:["read"], targets:["docs/"]}`. With the
   cap lifted, `cat docs/ok.md /etc/shadow` → one read record with 2 targets. `kernel.ts` `matchesTarget` (line 133)
-  ORs with `.some()`: the rule matches on `docs/ok.md` and authorizes the WHOLE record, including the read of
+  ORs with `.some()`: the rule matches on docs/ok.md and authorizes the WHOLE record, including the read of
   `/etc/shadow`. This is Issue #82's exact cross-target-bundling exposure, reopened for reads, with the normalizer
   guard that closed it removed.
 - **Current defense:** the #82 cap at shell.ts:388 (code-traced). Q2(b) removes it for reads. Today E ships a
