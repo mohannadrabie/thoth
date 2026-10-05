@@ -316,7 +316,9 @@ function scanSettingsFile(scope: string, file: string, findings: Finding[]): voi
   }
 }
 
-function defaultManagedSettings(env: Readonly<Record<string, string | undefined>>): string {
+export const isUncPath = (_p: string): boolean => false; // RED stub
+
+export function defaultManagedSettings(env: Readonly<Record<string, string | undefined>>, _platform: string = process.platform): string {
   if (process.platform === "win32") return join(env["ProgramData"] ?? env["PROGRAMDATA"] ?? "C:/ProgramData", "ClaudeCode", "managed-settings.json");
   if (process.platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
   return "/etc/claude-code/managed-settings.json";

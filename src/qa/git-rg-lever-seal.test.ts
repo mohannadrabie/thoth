@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { buildDenyRules, buildSettingsProposal, missingEditDenies, protectedPaths, ruleIdFor, unmatchedPaths, worktreeExtraPaths } from "./protected-path-list.ts";
 import { AMBIENT_COMMON, isAmbientCommon, isLeverKey, LEVER_NAMED, scanSettingsEnv } from "./exec-lever-env.ts";
-import { exitCodeFor, KNOWN_PROJECT_CONFIG, RESIDUALS, runPreflight, unacknowledged, type Finding } from "./git-rg-lever-preflight.ts";
+import { defaultManagedSettings, exitCodeFor, isUncPath, KNOWN_PROJECT_CONFIG, RESIDUALS, runPreflight, unacknowledged, type Finding } from "./git-rg-lever-preflight.ts";
 import { decide } from "../policy/kernel/kernel.ts";
 import type { Rule } from "../policy/kernel/rule-types.ts";
 import type { ActionRecord } from "../policy/kernel/action-record.ts";
@@ -38,6 +38,10 @@ const WORLD = (rules: Rule[]) => ({ rules: { version: "0.0.0-test", rules }, def
 const PATHS = protectedPaths(REPO_ROOT);
 
 /** Criterion 1: every git config / attribute / hook path a lever reads. A trailing "/" is a directory entry. */
+/** The protected-list entry that owns a path: the path itself, or the longest directory entry above it (a directory entry covers
+ * its children and the directory itself). The whole git dir is one directory entry (.git/), so a file list cannot miss one. */
+const ownerEntry = (p: string): string | undefined => PATHS.all.filter((e) => e === p || (e.endsWith("/") && (p === e.slice(0, -1) || p.startsWith(e)))).sort((a, b) => b.length - a.length)[0];
+const covered = (p: string): boolean => ownerEntry(p) !== undefined;
 const GIT_CONFIG_PATHS = [".git/config", ".git/hooks/", ".gitattributes", ".git/info/attributes", "~/.gitconfig", "~/.config/git/config", "~/.config/git/attributes"];
 const SETTINGS_PATHS = [".claude/settings.json", ".claude/settings.local.json", "~/.claude/settings.json"];
 const probe = (p: string): string => (p.endsWith("/") ? `${p}pre-commit` : p);
@@ -45,19 +49,20 @@ const probe = (p: string): string => (p.endsWith("/") ? `${p}pre-commit` : p);
 // --- Criterion 1 and 2: the protected list, generated deny rules and Edit(...) entries -----------------------------------
 
 test("S409-protected-list-covers-git-config-paths: every git config, attribute and hook path a lever reads is on the protected list", () => {
-  const missing = GIT_CONFIG_PATHS.filter((p) => !PATHS.all.includes(p));
+  const missing = GIT_CONFIG_PATHS.filter((p) => !covered(p));
   assert.deepEqual(missing, []);
 });
 
 test("S409-new-paths-have-deny-and-edit-deny: each path has a generated deny rule and an Edit(...) entry in the proposal; a dropped entry or rule is detected", () => {
   const rules = shipped();
-  const noRule = GIT_CONFIG_PATHS.filter((p) => !rules.some((r) => r.id === ruleIdFor(p)));
+  const owners = [...new Set(GIT_CONFIG_PATHS.map((p) => ownerEntry(p) ?? p))];
+  const noRule = owners.filter((p) => !rules.some((r) => r.id === ruleIdFor(p)));
   assert.deepEqual(noRule, [], "committed shipped rule missing");
   const text = readFileSync(PROPOSAL_PATH, "utf8").split(String.fromCharCode(13)).join("");
-  assert.deepEqual(missingEditDenies(text, GIT_CONFIG_PATHS), []);
+  assert.deepEqual(missingEditDenies(text, owners), []);
   assert.equal(text, buildSettingsProposal(PATHS.all));
   // Mutants: drop one Edit entry / one rule, the check must name it.
-  for (const p of GIT_CONFIG_PATHS) {
+  for (const p of owners) {
     const parsed = JSON.parse(text) as { permissions: { deny: string[] } };
     const dropped = JSON.stringify({ permissions: { deny: parsed.permissions.deny.filter((e) => !e.includes(p.replace(/\/$/, "/**"))) } });
     assert.deepEqual(missingEditDenies(dropped, [p]), [p], `edit mutant ${p}`);
@@ -85,7 +90,7 @@ function writeFormProblems(paths: readonly string[]): string[] {
       const r = normalize("shell", { command, environment: "e", identity: "i", deferred: false });
       const resolved: ActionRecord = { ...r, unresolved: [] };
       const v = decide(world, resolved);
-      if (v.outcome !== "deny" || v.ruleId !== ruleIdFor(p)) problems.push(`${command}: ${JSON.stringify(v)}`);
+      if (v.outcome !== "deny" || v.ruleId !== ruleIdFor(ownerEntry(p) ?? p)) problems.push(`${command}: ${JSON.stringify(v)}`);
     }
     for (const command of OTHER_FORMS(target)) {
       const v = decide(world, normalize("shell", { command, environment: "e", identity: "i", deferred: false }));
@@ -464,7 +469,7 @@ const GIT_DIR_LOCAL = [".git/config.worktree", ".git/modules/", ".git/worktrees/
 const denyFor = (rules: Rule[], target: string): { outcome: string; ruleId?: string } => decide(WORLD(rules), { source: "parsed", verbs: ["write"], targets: [canonicalizePathTarget(target)], environment: "e", identity: "i", deferred: false, unresolved: [] });
 
 test("S409-submodule-gitdir-protected (#440): .git/modules/, .git/config.worktree and .git/worktrees/ are protected, including the files git reads in a submodule git dir", () => {
-  assert.deepEqual(GIT_DIR_LOCAL.filter((p) => !PATHS.all.includes(p)), []);
+  assert.deepEqual(GIT_DIR_LOCAL.filter((p) => !covered(p)), []);
   assert.deepEqual(writeFormProblems(GIT_DIR_LOCAL), []);
   for (const target of [".git/modules/adr/config", ".git/modules/adr/hooks/pre-commit", ".git/modules/adr/info/attributes", ".git/modules/a/modules/b/config", ".git/worktrees/x/config.worktree"]) {
     assert.equal(denyFor(shipped(), target).outcome, "deny", target);
@@ -512,7 +517,7 @@ test("S409-linked-worktree-common-dir-config-protected (#442): in a linked workt
     writeFileSync(join(common, "worktrees", "wt", "commondir"), "../..\n");
     assert.deepEqual(worktreeExtraPaths(fx.repo), [], "a main checkout needs no extra targets");
     const extra = worktreeExtraPaths(wt);
-    for (const want of ["../repo/.git/config", "../repo/.git/hooks/", "../repo/.git/info/attributes", "../repo/.git/modules/", "../repo/.git/worktrees/", "../repo/.git/worktrees/wt/config.worktree"]) {
+    for (const want of [".git", "../repo/.git/"]) {
       assert.ok(extra.includes(want), `missing ${want} in ${JSON.stringify(extra)}`);
     }
     const rules = buildDenyRules(extra);
@@ -616,7 +621,7 @@ test("S409-preflight-skips-unc-and-non-regular-paths: a UNC path in KUBECONFIG o
 // --- Red-team round 1 proof-test names (same properties as the #440/#441 tests above, their fixtures) -----------------
 
 test("S409-protected-list-covers-submodule-git-dir (red-team #440): submodule git dir config, hooks and attributes are protected", () => {
-  assert.ok(PATHS.all.includes(".git/modules/"));
+  assert.ok(covered(".git/modules/"));
   for (const target of [".git/modules/adr/config", ".git/modules/adr/hooks/post-checkout", ".git/modules/adr/info/attributes"]) assert.equal(denyFor(shipped(), target).outcome, "deny", target);
 });
 
@@ -640,4 +645,116 @@ test("S409-preflight-detects-exec-config-keys (red-team #441): the five keys the
       fx.cleanup();
     }
   }
+});
+
+// --- Round 2 (red-team: main-checkout commondir redirect, pointer file; app-security #447; managed settings) -----------
+
+test("S409-hook-denies-write-to-main-commondir: the whole git dir is one protected directory entry, so a new file such as .git/commondir is denied in every write form, with an Edit entry in the proposal", () => {
+  assert.ok(PATHS.all.includes(".git/"));
+  const problems = writeFormProblems([".git/", ".git/commondir", ".git/HEAD", ".git/anything-new"]);
+  assert.deepEqual(problems, []);
+  const text = readFileSync(PROPOSAL_PATH, "utf8").split(String.fromCharCode(13)).join("");
+  assert.deepEqual(missingEditDenies(text, [".git/"]), []);
+  assert.equal(denyFor(shipped(), ".git/commondir").ruleId, ruleIdFor(".git/"));
+});
+
+test("S409-hook-denies-write-to-git-pointer-file: the .git entry itself (the pointer file of a linked worktree) is denied in every write form, and the proposal carries an entry for it", () => {
+  assert.deepEqual(writeFormProblems([".git"]), []);
+  assert.equal(denyFor(shipped(), ".git").outcome, "deny");
+  const text = readFileSync(PROPOSAL_PATH, "utf8");
+  assert.ok(text.includes('"Edit(/.git)"'), "an Edit entry for the .git entry itself");
+});
+
+test("S409-worktree-targets-include-git-pointer: a linked worktree derives the pointer file and the whole common dir as protected targets", () => {
+  const fx = fixture();
+  try {
+    const wt = join(fx.repo, "..", "wt");
+    mkdirSync(join(fx.repo, ".git", "worktrees", "wt"), { recursive: true });
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(fx.repo, ".git", "worktrees", "wt").split("\\").join("/")}\n`);
+    writeFileSync(join(fx.repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
+    const extra = worktreeExtraPaths(wt);
+    assert.ok(extra.includes(".git") && extra.includes("../repo/.git/"), JSON.stringify(extra));
+    assert.equal(denyFor(buildDenyRules(extra), ".git").outcome, "deny");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-flags-main-checkout-commondir: a commondir file in a MAIN checkout's .git is a counted finding, and the redirected dir is scanned too", () => {
+  const fx = fixture();
+  try {
+    const elsewhere = join(fx.repo, "..", "elsewhere");
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, "config"), "[core]\n\tfsmonitor = x\n");
+    writeFileSync(join(fx.repo, ".git", "commondir"), `${elsewhere.split("\\").join("/")}\n`);
+    const found = pf(fx);
+    assert.ok(unacknowledged(found).some((f) => f.key === "commondir in main checkout"), JSON.stringify(found));
+    assert.ok(hasKey(found, "core.fsmonitor", "elsewhere/config"), JSON.stringify(found));
+    assert.equal(exitCodeFor(found), 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-windows-managed-settings-under-programdata-is-session-writable (#447): the legacy ProgramData managed-settings file is a counted finding; the current Program Files path is the ambient default", () => {
+  const fx = fixture();
+  try {
+    mkdirSync(join(fx.programData, "ClaudeCode"), { recursive: true });
+    writeFileSync(join(fx.programData, "ClaudeCode", "managed-settings.json"), JSON.stringify({ env: { GIT_PAGER: "x" } }));
+    const found = runPreflight({ repoRoot: fx.repo, home: fx.home, env: {}, programData: fx.programData, systemConfigPaths: [], managedSettingsPath: join(fx.home, "none.json") });
+    assert.ok(found.some((f) => f.key === "GIT_PAGER" && f.scope === "session-writable"), JSON.stringify(found));
+    assert.equal(exitCodeFor(found), 1);
+  } finally {
+    fx.cleanup();
+  }
+  assert.equal(defaultManagedSettings({ ProgramFiles: "C:/Program Files" }, "win32").split("\\").join("/"), "C:/Program Files/ClaudeCode/managed-settings.json");
+  assert.equal(defaultManagedSettings({}, "darwin"), "/Library/Application Support/ClaudeCode/managed-settings.json");
+  assert.equal(defaultManagedSettings({}, "linux"), "/etc/claude-code/managed-settings.json");
+});
+
+test("S409-preflight-detects-path-and-tunnel-keys (red-team round 2): tool path keys, imap.tunnel and an absolute sendemail.smtpServer are reported; a hostname smtpServer is not", () => {
+  const rows: [string, string][] = [
+    ['[difftool "x"]\n\tpath = /x\n', "difftool.x.path"],
+    ['[mergetool "x"]\n\tpath = /x\n', "mergetool.x.path"],
+    ['[man "x"]\n\tpath = /x\n', "man.x.path"],
+    ["[imap]\n\ttunnel = x\n", "imap.tunnel"],
+    ["[sendemail]\n\tsmtpServer = /usr/bin/x\n", "sendemail.smtpserver"],
+  ];
+  for (const [body, key] of rows) {
+    const fx = fixture();
+    try {
+      writeFileSync(join(fx.repo, ".git", "config"), body);
+      assert.ok(hasKey(pf(fx), key), `${key}: ${JSON.stringify(pf(fx))}`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+  const fx = fixture();
+  try {
+    writeFileSync(join(fx.repo, ".git", "config"), "[sendemail]\n\tsmtpServer = smtp.example.invalid\n");
+    assert.deepEqual(pf(fx), []);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-scans-slash-named-submodule: a submodule git dir whose name contains a slash (.git/modules/a/b) is scanned", () => {
+  const fx = fixture();
+  try {
+    gitTree(join(fx.repo, ".git"), { "modules/a/b/HEAD": "ref: refs/heads/x\n", "modules/a/b/config": "[core]\n\tfsmonitor = x\n" });
+    assert.ok(hasKey(pf(fx), "core.fsmonitor", "modules/a/b/config"), JSON.stringify(pf(fx)));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-skips-mixed-separator-unc: every two-separator prefix is a UNC path", () => {
+  for (const p of ["//h/s/x", String.raw`\\h\s\x`, String.raw`/\h\s`, String.raw`\/h/s`]) assert.equal(isUncPath(p), true, p);
+  for (const p of ["/h/s", "C:/x", String.raw`C:\x`, "rel/x"]) assert.equal(isUncPath(p), false, p);
+});
+
+test("S409-residual-text-names-profile-protection: R1 and R2 say shell profiles are protected by #446 and that the process env is printed as ambient", () => {
+  assert.match(RESIDUALS["R1"] ?? "", /#446/);
+  assert.match(RESIDUALS["R2"] ?? "", /process env/i);
 });
