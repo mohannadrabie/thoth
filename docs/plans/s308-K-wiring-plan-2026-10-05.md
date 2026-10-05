@@ -93,7 +93,17 @@ The milestone has no `k-blocker` label, so the K-blocker split below is my judgm
 | #410 multi-target read cap | med | Ruled: premise closed by ruling 2 | Close with a comment at E0 merge | Manager |
 | #93, #107, #288 | med | S5/S6 follow-ups, not about wiring | Not K blockers (my judgment; confirm) | none |
 
-Merge order proposal (human merges, in this order, each followed by a re-sync of the next): E0 (s7/knockout) first, then #409, #428, #429, each of which is built on the previous per the #429 merge commit 9b5b481. Then cut the K branch from the resulting master.
+**Update (Manager, 2026-10-05, end of session).** All four stories are merged into `s7/knockout` (one branch, one PR). Rows above that say "on its branch, not merged" now mean "on `s7/knockout`, not on master". Closing lines that land with that PR: #408, #428, #445, #436, #440, #441, #447, #446, #448, #449, #451, #424, #429. New items since the table was written:
+
+| Item | Sev | State | Treatment at K | Owner |
+|---|---|---|---|---|
+| Main-checkout `.git/commondir` redirect (red-team #409 round 2) | HIGH | Fixed on `s7/knockout` (whole `.git/` protected, 8de1f22). No Issue: the session's permission classifier blocked filing it | Human decides whether to file a closed Issue for the record | human |
+| #450 preflight misses `protocol.ext.allow` and `ext::` URLs in `.gitmodules` | med | Open | Not a K blocker (detection-only; git stays unresolved). Precondition of the git/rg re-add story | re-add story |
+| #452 write-deny extractor passes on partial extraction | med | Open | K precondition: `CC-extraction-covers-judged` (both directions, installed version equals recorded version) green on the Claude Code version K activates with | K |
+| Scripts named in settings fields (`statusLine`, user hooks, `apiKeyHelper`, `awsAuthRefresh`, `otelHeadersHelper`) run outside the gate | med (suspicion) | Not enumerated | K precondition: human runs a read-only listing of those fields in user, project and local settings and judges each script; test `F1-settings-named-scripts-judged` | K |
+| Lowercased Edit-deny entries (`~/.claude/claude.md`, PowerShell profiles, `/.git/**`) | low | Matching case-insensitivity unproven | Extend the P-K4 live spike to every lowercased entry, on Windows and Linux | K |
+
+Merge order: the human merges the single `s7/knockout` PR. Then cut the K branch from the resulting master.
 
 ### 2.2 Preflight on this machine (generated; run from the #409 worktree, read-only, rc 0, today)
 
