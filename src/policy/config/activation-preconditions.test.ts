@@ -301,3 +301,18 @@ test("F1-skill-protect-no-overblock: a write under .claude/worktrees/ is not den
   const v = decide(WORLD(shipped()), writeRecord(".claude/worktrees/x/file.txt"));
   assert.notEqual(v.outcome, "deny", JSON.stringify(v));
 });
+
+// #446 (S7, cross-domain finding on #428; Manager ruling): a session able to write its login-shell profile files can prepend a
+// planted PATH directory for the next shell, so these user-level files are write-protected too.
+const SHELL_PROFILE_FILES = ["~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.config/fish/"];
+test("F1-shell-profile-files-protected-or-residual-owned: every login-shell profile file is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const proposal = readFileSync(PROPOSAL_PATH, "utf8");
+  for (const f of SHELL_PROFILE_FILES) {
+    assert.ok(PATHS.all.includes(f), `shell profile file not protected: ${f}`);
+    assert.deepEqual(missingEditDenies(proposal, [f]), [], `K Edit entry missing for ${f}`);
+    for (const verb of PROTECTED_VERBS) {
+      const v = decide(WORLD(shipped()), { ...writeRecord(f), verbs: [verb] });
+      assert.equal(v.outcome, "deny", `${verb} ${f}: ${JSON.stringify(v)}`);
+    }
+  }
+});
