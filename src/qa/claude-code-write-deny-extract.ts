@@ -7,9 +7,11 @@
 //   - the literal ".mcp.json".
 // Reliability: this is an extraction from minified code, valid for the version recorded in the judgment file; a layout change
 // makes it return fewer entries or throw "anchor not found", and the test fails loudly rather than passing vacuously.
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ANCHOR = '"shell-snapshots","session-env","plugins"';
 const END_MARK = "bareGitRepoScrubPaths.length=0";
@@ -25,7 +27,8 @@ export interface Extracted {
 
 /** Where the installed binary is, or undefined. THOTH_CLAUDE_BIN overrides (used by tests). */
 export function locateClaudeBinary(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const candidates = [env["THOTH_CLAUDE_BIN"], join(homedir(), ".local", "bin", "claude.exe"), join(homedir(), ".local", "bin", "claude")];
+  const home = env["USERPROFILE"] ?? env["HOME"] ?? homedir();
+  const candidates = [env["THOTH_CLAUDE_BIN"], join(home, ".local", "bin", "claude.exe"), join(home, ".local", "bin", "claude")];
   return candidates.find((c): c is string => c !== undefined && c !== "" && existsSync(c));
 }
 
@@ -80,6 +83,66 @@ export function unjudged(ex: Extracted, j: Judged): string[] {
   for (const n of ex.project) if (!project.has(n)) out.push(`project:${n}`);
   if (ex.mcpJson && !(j.projectRoot ?? []).some((e) => e.name === ".mcp.json")) out.push("projectRoot:.mcp.json");
   return out;
+}
+
+/** #452: both directions. unjudged = extracted but not judged; judgedNotExtracted = judged but not extracted (a partial extraction). */
+export function coverage(ex: Extracted, j: Judged): { unjudged: string[]; judgedNotExtracted: string[] } {
+  const missing: string[] = [];
+  const user = new Set(ex.user);
+  const project = new Set(ex.project);
+  for (const e of j.user) if (!user.has(e.name)) missing.push(`user:${e.name}`);
+  for (const e of j.project) if (!project.has(e.name)) missing.push(`project:${e.name}`);
+  for (const e of j.projectRoot ?? []) if (e.name === ".mcp.json" && !ex.mcpJson) missing.push("projectRoot:.mcp.json");
+  return { unjudged: unjudged(ex, j), judgedNotExtracted: missing };
+}
+
+/** "2.1.267 (Claude Code)" -> "2.1.267"; anything else -> undefined. */
+export function parseClaudeVersion(text: string): string | undefined {
+  return /^(\d+\.\d+\.\d+)/.exec(text.trim().split(/\r?\n/)[0] ?? "")?.[1];
+}
+
+/** Asks the SAME binary the extractor reads (no shell, bounded). Throws on failure or timeout. */
+export function installedClaudeVersion(binary: string): string {
+  return execFileSync(binary, ["--version"], { timeout: 10000, encoding: "utf8", windowsHide: true });
+}
+
+export interface CheckResult {
+  status: "PASS" | "FAIL" | "SKIPPED";
+  reasons: string[];
+  /** Generated counts for the final line; absent when nothing was extracted. */
+  counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number; version: string };
+}
+
+const JUDGMENT = fileURLToPath(new URL("../../docs/qa/claude-code-write-deny-judgment.json", import.meta.url));
+
+/** Tri-state check of the installed Claude Code against the judgment file. Absent binary is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
+export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion): CheckResult {
+  const binary = locateClaudeBinary(env);
+  if (binary === undefined) {
+    const reason = "no installed Claude Code binary";
+    return env["THOTH_REQUIRE_CLAUDE"] === "1" ? { status: "FAIL", reasons: [`${reason} (THOTH_REQUIRE_CLAUDE=1: absence is a failure)`] } : { status: "SKIPPED", reasons: [reason] };
+  }
+  const reasons: string[] = [];
+  const j = JSON.parse(readFileSync(JUDGMENT, "utf8")) as Judged;
+  let version: string | undefined;
+  try {
+    version = parseClaudeVersion(versionProvider(binary));
+    if (version === undefined) reasons.push("installed Claude Code version is unparseable");
+    else if (version !== j.claudeCodeVersion) reasons.push(`installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}: re-run extraction, re-judge every new entry, then bump claudeCodeVersion`);
+  } catch (e) {
+    reasons.push(`installed Claude Code version could not be read: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  let counts: CheckResult["counts"];
+  try {
+    const ex = extractWriteDeny(readFileSync(binary));
+    const c = coverage(ex, j);
+    for (const u of c.unjudged) reasons.push(`extracted but not judged: ${u}`);
+    for (const m of c.judgedNotExtracted) reasons.push(`judged but not extracted: ${m}`);
+    counts = { extractedUser: ex.user.length, judgedUser: j.user.length, extractedProject: ex.project.length, judgedProject: j.project.length, version: version ?? "unknown" };
+  } catch (e) {
+    reasons.push(e instanceof Error ? e.message : String(e));
+  }
+  return { status: reasons.length === 0 ? "PASS" : "FAIL", reasons, ...(counts === undefined ? {} : { counts }) };
 }
 
 if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
