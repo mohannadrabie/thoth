@@ -8,15 +8,16 @@
 // lever key placed there anyway is detected (S409-settings-env-scan-detects-levers).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { canonicalizePathTarget } from "../policy/normalizer/path-canonical.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { buildDenyRules, buildSettingsProposal, missingEditDenies, protectedPaths, ruleIdFor, unmatchedPaths } from "./protected-path-list.ts";
+import { buildDenyRules, buildSettingsProposal, missingEditDenies, protectedPaths, ruleIdFor, unmatchedPaths, worktreeExtraPaths } from "./protected-path-list.ts";
 import { AMBIENT_COMMON, isAmbientCommon, isLeverKey, LEVER_NAMED, scanSettingsEnv } from "./exec-lever-env.ts";
-import { KNOWN_PROJECT_CONFIG, RESIDUALS, runPreflight, unacknowledged, type Finding } from "./git-rg-lever-preflight.ts";
+import { exitCodeFor, KNOWN_PROJECT_CONFIG, RESIDUALS, runPreflight, unacknowledged, type Finding } from "./git-rg-lever-preflight.ts";
 import { decide } from "../policy/kernel/kernel.ts";
 import type { Rule } from "../policy/kernel/rule-types.ts";
 import type { ActionRecord } from "../policy/kernel/action-record.ts";
@@ -441,7 +442,7 @@ test("S409-precondition-preflight-clean: the preflight reports nothing in this r
     const found = runPreflight({ repoRoot: REPO_ROOT, home: empty, env: {}, programData: join(empty, "none"), systemConfigPaths: [], managedSettingsPath: join(empty, "none.json") });
     assert.deepEqual(unacknowledged(found), []);
     // The one acknowledged entry is matched on key and exact value, so a changed hooksPath is a finding again.
-    assert.ok(found.every((f) => f.acknowledged !== true || KNOWN_PROJECT_CONFIG.some((k) => k.key === f.key)));
+    assert.ok(found.every((f) => f.acknowledged !== true || f.key === "githooks file" || KNOWN_PROJECT_CONFIG.some((k) => k.key === f.key)));
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
@@ -455,4 +456,188 @@ test("S409-residuals-listed: R1-R4 are carried by the preflight, the plan and th
   const changelog = readFileSync(join(REPO_ROOT, "CHANGELOG.md"), "utf8");
   for (const k of ["R1", "R2", "R3", "R4"]) assert.ok(new RegExp(`^- ${k}:`, "m").test(plan), `plan lacks ${k}`);
   assert.ok(/#409[\s\S]{0,6000}R1-R4/.test(changelog), "CHANGELOG #409 entry names R1-R4");
+});
+
+// --- Round 1 fix-now (#440, #441, #442, #443, app-security and cross-domain reviews) -------------------------------------
+
+const GIT_DIR_LOCAL = [".git/config.worktree", ".git/modules/", ".git/worktrees/"];
+const denyFor = (rules: Rule[], target: string): { outcome: string; ruleId?: string } => decide(WORLD(rules), { source: "parsed", verbs: ["write"], targets: [canonicalizePathTarget(target)], environment: "e", identity: "i", deferred: false, unresolved: [] });
+
+test("S409-submodule-gitdir-protected (#440): .git/modules/, .git/config.worktree and .git/worktrees/ are protected, including the files git reads in a submodule git dir", () => {
+  assert.deepEqual(GIT_DIR_LOCAL.filter((p) => !PATHS.all.includes(p)), []);
+  assert.deepEqual(writeFormProblems(GIT_DIR_LOCAL), []);
+  for (const target of [".git/modules/adr/config", ".git/modules/adr/hooks/pre-commit", ".git/modules/adr/info/attributes", ".git/modules/a/modules/b/config", ".git/worktrees/x/config.worktree"]) {
+    assert.equal(denyFor(shipped(), target).outcome, "deny", target);
+  }
+});
+
+function gitTree(root: string, files: Record<string, string>): void {
+  for (const [rel, text] of Object.entries(files)) {
+    mkdirSync(join(root, rel, ".."), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  }
+}
+
+test("S409-preflight-detects-planted-submodule-config (#440): executing keys in .git/modules (nested too), hooks there, and config.worktree under .git/worktrees are reported", () => {
+  const fx = fixture();
+  try {
+    gitTree(join(fx.repo, ".git"), {
+      "modules/sub/config": "[core]\n\tfsmonitor = x\n",
+      "modules/sub/modules/inner/config": "[core]\n\tpager = x\n",
+      "modules/sub/hooks/post-checkout": "#!/bin/sh\n",
+      "modules/sub/info/attributes": "*.a diff=evil\n",
+      "worktrees/w1/config.worktree": "[core]\n\teditor = x\n",
+      "config.worktree": "[diff]\n\texternal = x\n",
+    });
+    const found = pf(fx);
+    assert.ok(hasKey(found, "core.fsmonitor", "modules/sub/config"), JSON.stringify(found));
+    assert.ok(hasKey(found, "core.pager", "modules/sub/modules/inner/config"), JSON.stringify(found));
+    assert.ok(hasKey(found, "hook", "modules/sub/hooks/post-checkout"), JSON.stringify(found));
+    assert.ok(hasKey(found, "attribute diff", "modules/sub/info/attributes"), JSON.stringify(found));
+    assert.ok(hasKey(found, "core.editor", "worktrees/w1/config.worktree"), JSON.stringify(found));
+    assert.ok(hasKey(found, "diff.external", ".git/config.worktree"), JSON.stringify(found));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-linked-worktree-common-dir-config-protected (#442): in a linked worktree the generator derives protect targets for the COMMON dir (outside the worktree root) and they deny writes; a main checkout derives none", () => {
+  const fx = fixture();
+  try {
+    const wt = join(fx.repo, "..", "wt");
+    const common = join(fx.repo, ".git");
+    mkdirSync(join(common, "worktrees", "wt"), { recursive: true });
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(common, "worktrees", "wt").split("\\").join("/")}\n`);
+    writeFileSync(join(common, "worktrees", "wt", "commondir"), "../..\n");
+    assert.deepEqual(worktreeExtraPaths(fx.repo), [], "a main checkout needs no extra targets");
+    const extra = worktreeExtraPaths(wt);
+    for (const want of ["../repo/.git/config", "../repo/.git/hooks/", "../repo/.git/info/attributes", "../repo/.git/modules/", "../repo/.git/worktrees/", "../repo/.git/worktrees/wt/config.worktree"]) {
+      assert.ok(extra.includes(want), `missing ${want} in ${JSON.stringify(extra)}`);
+    }
+    const rules = buildDenyRules(extra);
+    assert.equal(denyFor(rules, "../repo/.git/config").outcome, "deny");
+    assert.equal(denyFor(rules, "../repo/.git/hooks/pre-commit").outcome, "deny");
+    assert.equal(denyFor(rules, "../repo/.git/worktrees/wt/config.worktree").outcome, "deny");
+    // The preflight sees the same common dir.
+    writeFileSync(join(common, "config"), "[core]\n\tfsmonitor = x\n");
+    assert.ok(hasKey(runPreflight({ repoRoot: wt, home: fx.home, env: {}, systemConfigPaths: [], managedSettingsPath: join(fx.home, "none.json") }), "core.fsmonitor", ".git/config"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const LESS_COMMON: [string, string][] = [
+  ["[core]\n\talternateRefsCommand = x\n", "core.alternaterefscommand"],
+  ['[tar "x"]\n\tcommand = x\n', "tar.x.command"],
+  ['[submodule "s"]\n\tupdate = !x\n', "submodule.s.update"],
+  ['[browser "b"]\n\tcmd = x\n', "browser.b.cmd"],
+  ["[web]\n\tbrowser = x\n", "web.browser"],
+  ['[gpg "ssh"]\n\tdefaultKeyCommand = x\n', "gpg.ssh.defaultkeycommand"],
+  ["[core]\n\taskPass = x\n", "core.askpass"],
+  ["[sequence]\n\teditor = x\n", "sequence.editor"],
+  ["[http]\n\tsslCommand = x\n", "http.sslcommand"],
+];
+test("S409-preflight-detects-less-common-exec-keys (#441): every key in the known list is reported; ordinary keys are not", () => {
+  for (const [body, key] of LESS_COMMON) {
+    const fx = fixture();
+    try {
+      writeFileSync(join(fx.repo, ".git", "config"), body);
+      assert.ok(hasKey(pf(fx), key), `${key}: ${JSON.stringify(pf(fx))}`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+  const fx = fixture();
+  try {
+    writeFileSync(join(fx.repo, ".git", "config"), '[user]\n\tname = a\n[submodule "s"]\n\tupdate = checkout\n[core]\n\tautocrlf = true\n[branch "m"]\n\tremote = origin\n');
+    assert.deepEqual(pf(fx), []);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-ambient-ack-or-split-exit (#443): ambient state (system gitconfig, process env, managed settings) is printed as ambient and exits 0; session-writable state (repo, home, ProgramData, kubeconfig) exits 1", () => {
+  const fx = fixture();
+  try {
+    const sys = join(fx.home, "system-gitconfig");
+    writeFileSync(sys, '[filter "lfs"]\n\tclean = git-lfs clean\n[credential]\n\thelper = manager\n');
+    const managed = join(fx.home, "managed.json");
+    writeFileSync(managed, JSON.stringify({ env: { GIT_PAGER: "x" } }));
+    const ambient = runPreflight({ repoRoot: fx.repo, home: fx.home, env: { GIT_EDITOR: "x", KUBECONFIG: join(fx.home, "nope") }, systemConfigPaths: [sys], managedSettingsPath: managed });
+    assert.ok(ambient.length >= 4, JSON.stringify(ambient));
+    assert.ok(ambient.every((f) => f.scope === "ambient"), JSON.stringify(ambient));
+    assert.equal(exitCodeFor(ambient), 0);
+    const cases: [string, () => void][] = [
+      ["repo config", () => writeFileSync(join(fx.repo, ".git", "config"), "[core]\n\tfsmonitor = x\n")],
+      ["home gitconfig", () => writeFileSync(join(fx.home, ".gitconfig"), "[core]\n\tfsmonitor = x\n")],
+      ["ProgramData config (standard users can create it, measured)", () => writeFileSync(join(fx.programData, "Git", "config"), "[core]\n\tfsmonitor = x\n")],
+      ["kubeconfig exec", () => writeFileSync(join(fx.home, ".kube", "config"), "users:\n  - user:\n      exec:\n        command: x\n")],
+      ["project settings env", () => writeFileSync(join(fx.repo, ".claude", "settings.json"), JSON.stringify({ env: { GIT_EXTERNAL_DIFF: "x" } }))],
+    ];
+    for (const [label, plant] of cases) {
+      plant();
+      const found = runPreflight({ repoRoot: fx.repo, home: fx.home, env: {}, programData: fx.programData, systemConfigPaths: [], managedSettingsPath: join(fx.home, "none.json") });
+      assert.equal(exitCodeFor(found), 1, label);
+      assert.ok(found.some((f) => f.scope === "session-writable"), label);
+      for (const p of [join(fx.repo, ".git", "config"), join(fx.home, ".gitconfig"), join(fx.programData, "Git", "config"), join(fx.home, ".kube", "config"), join(fx.repo, ".claude", "settings.json")]) rmSync(p, { force: true });
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-lists-githooks-files: each file in .githooks/ is a NOTE (name only), not counted", () => {
+  const fx = fixture();
+  try {
+    gitTree(fx.repo, { ".githooks/pre-commit": "#!/bin/sh\n", ".githooks/other": "x" });
+    const found = pf(fx);
+    const notes = found.filter((f) => f.key === "githooks file");
+    assert.equal(notes.length, 2, JSON.stringify(found));
+    assert.ok(notes.every((n) => n.acknowledged === true));
+    assert.deepEqual(unacknowledged(found), []);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-skips-unc-and-non-regular-paths: a UNC path in KUBECONFIG or RIPGREP_CONFIG_PATH is never opened, and a directory there is ignored", () => {
+  const fx = fixture();
+  try {
+    const found = pf(fx, { KUBECONFIG: "//nohost.invalid/share/x", RIPGREP_CONFIG_PATH: fx.home });
+    assert.ok(found.every((f) => f.key !== "unreadable"), JSON.stringify(found));
+    const unc = pf(fx, { RIPGREP_CONFIG_PATH: String.raw`\\nohost.invalid\share\x` });
+    assert.ok(unc.every((f) => f.key !== "unreadable"), JSON.stringify(unc));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// --- Red-team round 1 proof-test names (same properties as the #440/#441 tests above, their fixtures) -----------------
+
+test("S409-protected-list-covers-submodule-git-dir (red-team #440): submodule git dir config, hooks and attributes are protected", () => {
+  assert.ok(PATHS.all.includes(".git/modules/"));
+  for (const target of [".git/modules/adr/config", ".git/modules/adr/hooks/post-checkout", ".git/modules/adr/info/attributes"]) assert.equal(denyFor(shipped(), target).outcome, "deny", target);
+});
+
+test("S409-preflight-detects-submodule-levers (red-team #440): core.fsmonitor in .git/modules/adr/config plus a post-checkout hook there count at least 2", () => {
+  const fx = fixture();
+  try {
+    gitTree(join(fx.repo, ".git"), { "modules/adr/config": "[core]\n\tfsmonitor = x\n", "modules/adr/hooks/post-checkout": "#!/bin/sh\n" });
+    assert.ok(unacknowledged(pf(fx)).length >= 2, JSON.stringify(pf(fx)));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-detects-exec-config-keys (red-team #441): the five keys the red-team demonstrated are counted", () => {
+  for (const body of ["[core]\n\talternateRefsCommand = x\n", '[submodule "x"]\n\tupdate = !x\n', '[gpg "ssh"]\n\tdefaultKeyCommand = x\n', '[tar "tgz"]\n\tcommand = x\n', '[browser "x"]\n\tcmd = x\n']) {
+    const fx = fixture();
+    try {
+      writeFileSync(join(fx.repo, ".git", "config"), body);
+      assert.equal(unacknowledged(pf(fx)).length, 1, body);
+    } finally {
+      fx.cleanup();
+    }
+  }
 });
