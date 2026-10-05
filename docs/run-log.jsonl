@@ -195,3 +195,24 @@
 {"at":"2026-10-02T22:51:35.614Z","event":"story-shipped","scope":"s308-G","rounds":"1","reports":"3","findings":"12","adrTokensSaved":"109800","councilFired":"false"}
 {"at":"2026-10-02T22:51:35.668Z","event":"story-shipped","scope":"s308-C","rounds":"0","reports":"3","findings":"6","adrTokensSaved":"146400","councilFired":"false"}
 {"at":"2026-10-02T22:51:35.716Z","event":"story-shipped","scope":"s308-H","rounds":"0","reports":"3","findings":"5","adrTokensSaved":"128100","councilFired":"false"}
+{"at":"2026-10-02T23:51:19.382Z","event":"tier-ratified","scope":"s308-B","proposed":"STANDARD","ratified":"STANDARD","changed":"false","reason":"evidence only, no repo behavior change"}
+{"at":"2026-10-02T23:52:08.813Z","event":"tier-ratified","scope":"s308-A","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"widens standing security exemption, policy delivery, ADR outranks CLAUDE.md"}
+{"at":"2026-10-03T00:09:24.207Z","event":"tier-ratified","scope":"s308-D","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"launcher fronts the session gate; B4b live fail-open"}
+{"at":"2026-10-03T00:23:17.693Z","event":"receipt-reopened","scope":"s308-A","agent":"architecture","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-architecture-2026-10-02.md"}
+{"at":"2026-10-03T00:23:17.807Z","event":"receipt-reopened","scope":"s308-A","agent":"architecture","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-architecture-round2-2026-10-02.md"}
+{"at":"2026-10-03T00:23:17.919Z","event":"receipt-reopened","scope":"s308-A","agent":"cross-domain","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-cross-domain-2026-10-02.md"}
+{"at":"2026-10-03T00:23:18.021Z","event":"receipt-reopened","scope":"s308-A","agent":"cross-domain","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-cross-domain-round2-2026-10-02.md"}
+{"at":"2026-10-03T00:23:18.119Z","event":"receipt-reopened","scope":"s308-A","agent":"red-team","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-red-team-2026-10-02.md"}
+{"at":"2026-10-03T00:23:18.225Z","event":"receipt-reopened","scope":"s308-A","agent":"red-team","trigger":"critical-full-read","report":"docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md"}
+{"at":"2026-10-03T00:23:18.340Z","event":"receipt-reopened","scope":"s308-B","agent":"code-review","trigger":"pre-merge-full-read","report":"docs/reviews/s308-B-live-spikes-code-review-2026-10-02.md"}
+{"at":"2026-10-03T00:23:18.452Z","event":"receipt-reopened","scope":"s308-B","agent":"cross-domain","trigger":"pre-merge-full-read","report":"docs/reviews/s308-B-live-spikes-cross-domain-2026-10-02.md"}
+{"at":"2026-10-03T02:58:36.509Z","event":"receipt-reopened","scope":"s308-D","agent":"app-security","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-app-security-2026-10-02.md"}
+{"at":"2026-10-03T02:58:36.621Z","event":"receipt-reopened","scope":"s308-D","agent":"app-security-round2","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-app-security-round2-2026-10-02.md"}
+{"at":"2026-10-03T02:58:36.723Z","event":"receipt-reopened","scope":"s308-D","agent":"cross-domain","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-cross-domain-2026-10-02.md"}
+{"at":"2026-10-03T02:58:36.823Z","event":"receipt-reopened","scope":"s308-D","agent":"red-team","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-red-team-2026-10-02.md"}
+{"at":"2026-10-03T02:58:36.933Z","event":"receipt-reopened","scope":"s308-D","agent":"design-challenge","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-design-challenge-2026-10-02.md"}
+{"at":"2026-10-03T03:13:03.400Z","event":"receipt-reopened","scope":"s308-D","agent":"red-team-round2","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-red-team-round2-2026-10-02.md"}
+{"at":"2026-10-03T03:13:03.478Z","event":"receipt-reopened","scope":"s308-D","agent":"cross-domain-round2","trigger":"critical-full-read","report":"docs/reviews/s308-D-launcher-cross-domain-round2-2026-10-02.md"}
+{"at":"2026-10-03T03:53:03.955Z","event":"story-shipped","scope":"s308-A","rounds":"1","reports":"6","findings":"24","adrTokensSaved":"169200","councilFired":"false"}
+{"at":"2026-10-03T03:53:04.012Z","event":"story-shipped","scope":"s308-B","rounds":"0","reports":"2","findings":"8","adrTokensSaved":"56400","councilFired":"false"}
+{"at":"2026-10-03T03:53:04.066Z","event":"story-shipped","scope":"s308-D","rounds":"1","reports":"7","findings":"21","adrTokensSaved":"150400","councilFired":"false"}

@@ -2,7 +2,7 @@
 // revision (v2) ratified on item 2(b)" row; design-challenger's S5 round-1 report, HIGH #2): a
 // structural, build-time check that `.claude/settings.json`'s `hooks` object never names a
 // `type: "command"` script that does not actually exist on disk. Had this check existed before S1,
-// it would have caught `hooks/report-subject-gate.mjs`'s own defect (wired into `hooks.PreToolUse`
+// it would have caught the retired report-subject-gate hook script's own defect (wired into `hooks.PreToolUse`
 // since `master`'s orphan Initial commit, referencing a file that has never existed on this branch)
 // the moment it was introduced, instead of four full CRITICAL-tier review cycles later.
 //
@@ -29,6 +29,8 @@ export interface CommandPathReference {
   /** The script path extracted from `command`, before `${CLAUDE_PROJECT_DIR}` substitution — or
    * `null` when no `.mjs`-shaped path token could be found in the command string at all. */
   extractedPath: string | null;
+  /** Every .sh/.mjs path the command names (the launcher form names two). */
+  extractedPaths: string[];
 }
 
 interface HookEntryShape {
@@ -53,6 +55,18 @@ export function extractScriptPath(command: string): string | null {
   if (quoted?.[1]) return quoted[1];
   const bare = /(\S+\.mjs)/.exec(command);
   return bare?.[1] ?? null;
+}
+
+/**
+ * #308 story D: every script path a command names, in order. The launcher form is
+ * `sh "<launcher>.sh" "<gate>.mjs"`, which names two files that must both resolve. Double-quoted
+ * `.sh`/`.mjs` tokens are taken first; with none, bare `.sh`/`.mjs` tokens are used. Same narrow shape
+ * as extractScriptPath, not a shell parser.
+ */
+export function extractScriptPaths(command: string): string[] {
+  const quoted = [...command.matchAll(/"([^"]+\.(?:mjs|sh))"/g)].map((m) => m[1] as string);
+  if (quoted.length > 0) return quoted;
+  return [...command.matchAll(/([^\s"']+\.(?:mjs|sh))(?=\s|$)/g)].map((m) => m[1] as string);
 }
 
 /** Substitutes every `${CLAUDE_PROJECT_DIR}` occurrence with `projectDir` — the one runtime
@@ -82,7 +96,7 @@ export function extractCommandPathReferences(settings: unknown): CommandPathRefe
       entries.forEach((entry, hookIndex) => {
         if (entry?.type !== "command") return; // "prompt"/"agent" — no script path to check
         const command = typeof entry.command === "string" ? entry.command : "";
-        refs.push({ event, groupIndex, hookIndex, command, extractedPath: extractScriptPath(command) });
+        refs.push({ event, groupIndex, hookIndex, command, extractedPath: extractScriptPath(command), extractedPaths: extractScriptPaths(command) });
       });
     });
   }
@@ -113,13 +127,16 @@ export function checkCommandPaths(
   const dangling: string[] = [];
   for (const ref of refs) {
     const label = `hooks.${ref.event}[${ref.groupIndex}].hooks[${ref.hookIndex}]`;
-    if (!ref.extractedPath) {
-      dangling.push(`${label}: could not extract a ".mjs" script path from command "${ref.command}"`);
+    const paths = ref.extractedPaths.length > 0 ? ref.extractedPaths : ref.extractedPath ? [ref.extractedPath] : [];
+    if (paths.length === 0) {
+      dangling.push(`${label}: could not extract a ".mjs" or ".sh" script path from command "${ref.command}"`);
       continue;
     }
-    const resolved = resolve(substituteProjectDir(ref.extractedPath, projectDir));
-    if (!exists(resolved)) {
-      dangling.push(`${label}: "${resolved}" does not exist on disk (command: "${ref.command}")`);
+    for (const p of paths) {
+      const resolved = resolve(substituteProjectDir(p, projectDir));
+      if (!exists(resolved)) {
+        dangling.push(`${label}: "${resolved}" does not exist on disk (command: "${ref.command}")`);
+      }
     }
   }
 
