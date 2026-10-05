@@ -612,3 +612,32 @@ test("S409-preflight-skips-unc-and-non-regular-paths: a UNC path in KUBECONFIG o
     fx.cleanup();
   }
 });
+
+// --- Red-team round 1 proof-test names (same properties as the #440/#441 tests above, their fixtures) -----------------
+
+test("S409-protected-list-covers-submodule-git-dir (red-team #440): submodule git dir config, hooks and attributes are protected", () => {
+  assert.ok(PATHS.all.includes(".git/modules/"));
+  for (const target of [".git/modules/adr/config", ".git/modules/adr/hooks/post-checkout", ".git/modules/adr/info/attributes"]) assert.equal(denyFor(shipped(), target).outcome, "deny", target);
+});
+
+test("S409-preflight-detects-submodule-levers (red-team #440): core.fsmonitor in .git/modules/adr/config plus a post-checkout hook there count at least 2", () => {
+  const fx = fixture();
+  try {
+    gitTree(join(fx.repo, ".git"), { "modules/adr/config": "[core]\n\tfsmonitor = x\n", "modules/adr/hooks/post-checkout": "#!/bin/sh\n" });
+    assert.ok(unacknowledged(pf(fx)).length >= 2, JSON.stringify(pf(fx)));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-preflight-detects-exec-config-keys (red-team #441): the five keys the red-team demonstrated are counted", () => {
+  for (const body of ["[core]\n\talternateRefsCommand = x\n", '[submodule "x"]\n\tupdate = !x\n', '[gpg "ssh"]\n\tdefaultKeyCommand = x\n', '[tar "tgz"]\n\tcommand = x\n', '[browser "x"]\n\tcmd = x\n']) {
+    const fx = fixture();
+    try {
+      writeFileSync(join(fx.repo, ".git", "config"), body);
+      assert.equal(unacknowledged(pf(fx)).length, 1, body);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
