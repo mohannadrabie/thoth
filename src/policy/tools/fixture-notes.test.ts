@@ -31,3 +31,8 @@ test("fixture-notes-do-not-claim-no-shipped-class-rule: the fixture notes and th
   if (matched === 0) assert.match(notes, claimsNone, "no committed entry has a class a shipped allow matches, and the notes say so");
   else assert.doesNotMatch(notes, claimsNone, `${String(matched)} committed entr(ies) match a shipped class rule, so 'matches none' is false`);
 });
+
+test("header-names-withheld-bash-allow (Issue #422): the gate hook header names the Bash baseline allow as still unmet and points at E0 (#408)", () => {
+  const header = readFileSync(`${ROOT}hooks/pretooluse-kernel-gate.mjs`, "utf8").split(String.fromCharCode(10)).slice(0, 25).join(String.fromCharCode(10));
+  assert.match(header, /Bash baseline allow[^.]*unmet[^.]*E0[^.]*#408/is, "header says the Bash baseline allow is unmet (E0, #408)");
+});

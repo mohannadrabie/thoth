@@ -44,6 +44,7 @@ import {
   parentDirs,
   readByPathCandidates,
   unmatchedParentDirs,
+  wiredHookScan,
   wiredHookScripts,
   protectedPaths,
   ruleIdFor,
@@ -239,4 +240,44 @@ test("#415 parent-dirs: move, delete and rename of every parent directory of a p
   }
   assert.deepEqual(problems, []);
   assert.ok(unmatchedParentDirs(shipped().filter((r) => !r.id.startsWith("protect-parent-")), dirs).length === dirs.length, "mutant: dropping the parent rules is detected");
+});
+
+// ---- review round 2 fix-now (Issues #418 residual, #421, cross-domain LOW 2) ----
+
+test("#418 residual: member-access and new-expression load forms make the generator fail closed (throw), one mutant per form", () => {
+  const withLine = (line: string) => (abs: string) => {
+    if (!existsSync(abs)) return undefined;
+    const text = readFileSync(abs, "utf8");
+    return abs.replaceAll("\\", "/").endsWith("src/policy/config/sanitize.ts") ? `${text}\n${line}\n` : text;
+  };
+  const forms = [
+    'const a = module.require("./synthetic-extra-module.ts");',
+    'const a = process.mainModule.require("./synthetic-extra-module.ts");',
+    'const a = new Worker("./synthetic-extra-module.ts");',
+    'const a = new worker_threads.Worker(path);',
+    'const a = import.meta.resolve("./synthetic-extra-module.ts");',
+  ];
+  for (const line of forms) assert.throws(() => importGraphFiles(REPO_ROOT, withLine(line)), /member-access|new Worker|import\.meta\.resolve|cannot be followed/, `fails closed: ${line}`);
+});
+
+test("#421 mcp-config: .mcp.json and ~/.claude.json are found by the read-by-path instrument (project-dir and home-dir first arguments), are on the protected list, and have Edit entries", () => {
+  const found = readByPathCandidates(REPO_ROOT, importGraphFiles(REPO_ROOT));
+  for (const p of [".mcp.json", "~/.claude.json"]) {
+    assert.ok(found.includes(p), `instrument finds ${p}`);
+    assert.ok(PATHS.all.includes(p), `${p} protected`);
+  }
+  const probe = readByPathCandidates(REPO_ROOT, ["src/policy/config/sanitize.ts"], (abs) =>
+    `${readFileSync(abs, "utf8")}\nimport { readFileSync } from "node:fs";\nexport const A = readFileSync(join(projectDir(), "synthetic-project.json"), "utf8");\nexport const B = readFileSync(join(homeDir(), "synthetic-home.json"), "utf8");\n`);
+  assert.deepEqual(probe, ["synthetic-project.json", "~/synthetic-home.json"]);
+});
+
+test("cross-domain LOW 2: a non-project hook in the gitignored local settings is skipped and listed; in the project settings it still throws", () => {
+  const bad = JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: "echo done" }] }] } });
+  const good = JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: 'node "${CLAUDE_PROJECT_DIR}/hooks/x.mjs"' }] }] } });
+  const only = (name: string, text: string) => (abs: string) => (abs.replaceAll("\\", "/").endsWith(name) ? text : undefined);
+  const local = wiredHookScan(REPO_ROOT, only(".claude/settings.local.json", bad));
+  assert.deepEqual(local.scripts, []);
+  assert.equal(local.skipped.length, 1);
+  assert.throws(() => wiredHookScan(REPO_ROOT, only(".claude/settings.json", bad)), /wired hook command/);
+  assert.deepEqual(wiredHookScan(REPO_ROOT, only(".claude/settings.local.json", good)).scripts, ["hooks/x.mjs"]);
 });

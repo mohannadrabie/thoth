@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #308 story F round 2 conditions (#420 F9b/F10, #421, #422)
+
+Refs #308, #409. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first. Closes #421, closes #422.
+
+- F9b (#420): the wrapper dispatch applies the same bare, lowercase RAW first-token check as F9. A path-qualified, upper-case or `.exe` spelling of any wrapper binary (names derived from the wrapper table through `WRAPPER_BINARY_NAMES`) is unresolved, so `./scratch/sh -c "kubectl ..."` and `/tmp/env kubectl ...` are denied. The nested command is re-checked by the same rules. Corpus: 240 commands (10 derived names, 6 spellings, 4 shapes).
+- F10 (#420, instance of #409): the kubectl shape resolves only when every flag is in `KUBECTL_GRAMMAR_FLAGS` (`context`, the one flag the grammar reads; the alias `-c` maps to it). `--kubeconfig`, `--server`, `--token`, `--as`, `--insecure-skip-tls-verify`, any unknown flag, in equals, space or bare form, make the record unresolved. An unknown short flag (`-n=ns`) was silently dropped by `scanFlags`; it is now kept visible. Residuals recorded on #409 as K blockers: an ambient `~/.kube/config` or `KUBECONFIG` exec plugin, and git and rg config levers.
+- #418 residual: the generator fails closed (throws) on `module.require`, `process.mainModule.require`, `new Worker(...)` and `import.meta.resolve(...)`, one mutant per form.
+- #421: `.mcp.json` and `~/.claude.json` are protected (47 paths). The read-by-path instrument now matches `join(projectDir(), lit)` and `join(homeDir(), lit)` first arguments and finds them without naming them.
+- #422: the gate hook header names the Bash baseline allow as unmet (E0, #408); pinned by `header-names-withheld-bash-allow`.
+- Cross-domain LOW 2: a non-project hook in the gitignored local settings file is skipped and listed; the committed project settings file still throws.
+- Editorial: orphaned F8 comment moved onto its constant; the generator header states that user and managed settings hooks are not walked and that a `..` in a `CLAUDE_PROJECT_DIR` capture is developer-time input only.
+- No locked test changed this round.
+
 ### Added - Issue #308 story J (live verification of the gate as it will wire) - HELD behind THOTH-ADR-0003 acceptance
 
 Evidence only; no repo behavior change, nothing written to `.claude/settings.json`. Refs #308, #398, #406, #409, #401.

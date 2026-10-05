@@ -18,6 +18,11 @@
 // forward slash. In this module's lists a trailing "/" marks a DIRECTORY entry (the canonicalizer itself drops it);
 // a directory entry gets a rule for the directory and for its children. The user settings file is the literal `~/...` form.
 //
+// Disclosed limits: hooks wired in USER or MANAGED settings (outside the repo) are not walked; only the project
+// settings file (committed) and the gitignored local settings file are read, and a local-file command that names no
+// project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
+// developer-time input only (the settings file is itself a protected path).
+//
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -61,6 +66,13 @@ function specifierOf(node: ts.Node): string | undefined {
   if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined && ts.isStringLiteralLike(node.moduleSpecifier)) {
     return node.moduleSpecifier.text;
   }
+  // Load forms whose target cannot be followed statically: new Worker(path), import.meta.resolve(...), x.require(...)
+  // (module.require, process.mainModule.require). Fail closed, as for a computed import().
+  if (ts.isNewExpression(node) && (calleeName(node.expression) === "Worker" || calleeName(node.expression) === "SharedWorker")) return "(computed)";
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    if (node.expression.name.text === "require") return "(computed)";
+    if (node.expression.name.text === "resolve" && node.expression.expression.getText() === "import.meta") return "(computed)";
+  }
   if (ts.isCallExpression(node)) {
     const callee = node.expression;
     const arg = node.arguments[0];
@@ -80,8 +92,19 @@ const JS_ROOT = /\.(mjs|js|cjs|ts|mts)$/;
 /** Project scripts named by the command hooks wired in .claude/settings.json and .claude/settings.local.json (read-only
  * parse, Issue #419). A command is expected to reference its script as ${CLAUDE_PROJECT_DIR}/<path>; a wired command
  * that names no project script cannot be enumerated and throws (fail closed). `readSettings` is injectable. */
+export interface WiredHookScan {
+  scripts: string[];
+  /** Commands in the gitignored local settings file that name no project script: skipped, not enumerable (listed, not thrown). */
+  skipped: string[];
+}
+
 export function wiredHookScripts(root: string, readSettings: Reader = readReal): string[] {
+  return wiredHookScan(root, readSettings).scripts;
+}
+
+export function wiredHookScan(root: string, readSettings: Reader = readReal): WiredHookScan {
   const out = new Set<string>();
+  const skipped: string[] = [];
   for (const f of [".claude/settings.json", ".claude/settings.local.json"]) {
     const text = readSettings(resolve(root, f));
     if (text === undefined) continue;
@@ -92,13 +115,21 @@ export function wiredHookScripts(root: string, readSettings: Reader = readReal):
           if (typeof h.command !== "string") continue;
           // The class below spells double quote, single quote and backtick as hex escapes: a literal quote in a regex makes the R1-6b comment stripper mis-parse this file.
           const found = [...h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s\x22\x27\x60;|&]+)/g)].map((m) => canonicalizePathTarget(m[1]!));
-          if (found.length === 0) throw new Error(`wired hook command names no CLAUDE_PROJECT_DIR script, cannot enumerate it: ${h.command.slice(0, 80)}`);
+          if (found.length === 0) {
+            // The project settings file is committed and must be enumerable (throw). The local file is a developer's
+            // gitignored override (user-level hooks are legitimate there): skip and list.
+            if (f.endsWith("settings.local.json")) {
+              skipped.push(h.command.slice(0, 80));
+              continue;
+            }
+            throw new Error(`wired hook command names no CLAUDE_PROJECT_DIR script, cannot enumerate it: ${h.command.slice(0, 80)}`);
+          }
           for (const x of found) out.add(x);
         }
       }
     }
   }
-  return [...out].sort();
+  return { scripts: [...out].sort(), skipped };
 }
 
 const READ_FNS = new Set(["readFileSync", "readFile", "readdirSync", "readdir", "createReadStream", "openSync", "readSync"]);
@@ -133,16 +164,19 @@ export function readByPathCandidates(root: string, files: readonly string[], rea
           if (parts.every((x): x is string => x !== undefined) && tail !== undefined && DATA_EXT.test(tail)) {
             const f = lit(first!);
             const moduleDir = ts.isIdentifier(first!) ? /dir$/i.test(first.text) : ts.isCallExpression(first!) && calleeName(first.expression) === "dirname";
-            if (f !== undefined) hits.push(resolve(root, f, ...parts));
-            else if (moduleDir) hits.push(resolve(dirname(abs), ...parts));
+            const rootFn = ts.isCallExpression(first!) ? calleeName(first.expression) : undefined;
+            if (f !== undefined) hits.push(toRel(root, resolve(root, f, ...parts)));
+            else if (moduleDir) hits.push(toRel(root, resolve(dirname(abs), ...parts)));
+            else if (rootFn === "projectDir") hits.push(toRel(root, resolve(root, ...parts)));
+            else if (rootFn === "homeDir") hits.push(`~/${parts.join("/")}`);
           }
         }
       } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL" && node.arguments !== undefined) {
         const a = node.arguments[0];
         const l = a === undefined ? undefined : lit(a);
-        if (l !== undefined && DATA_EXT.test(l) && node.arguments[1]?.getText(sf).includes("import.meta.url")) hits.push(resolve(dirname(abs), l));
+        if (l !== undefined && DATA_EXT.test(l) && node.arguments[1]?.getText(sf).includes("import.meta.url")) hits.push(toRel(root, resolve(dirname(abs), l)));
       } else if (ts.isStringLiteralLike(node) && node.text.includes("/") && DATA_EXT.test(node.text) && !node.text.startsWith(".") && !/^[a-z]+:/i.test(node.text)) {
-        hits.push(resolve(root, node.text));
+        hits.push(toRel(root, resolve(root, node.text)));
       }
       ts.forEachChild(node, visit);
     };
@@ -150,7 +184,6 @@ export function readByPathCandidates(root: string, files: readonly string[], rea
     if (reads) for (const h of hits) found.add(h);
   }
   return [...found]
-    .map((a) => toRel(root, a))
     .filter((r) => !r.startsWith(".."))
     .map(canonicalizePathTarget)
     .sort();
@@ -172,7 +205,7 @@ export function importGraphFiles(root: string, read: Reader = readReal, fallback
     const visit = (node: ts.Node): void => {
       const spec = specifierOf(node);
       if (spec !== undefined) {
-        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: computed import(), non-literal require(), or a stored createRequire not invoked with a literal on the spot`);
+        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: a load form that cannot be followed statically (computed import(), non-literal or member-access require(), new Worker, import.meta.resolve, or a stored createRequire)`);
         if (spec.startsWith(".")) queue.push(resolve(dirname(abs), spec));
         else if (!spec.startsWith("node:")) throw new Error(`${toRel(root, abs)}: non-relative, non-node: import "${spec}"`);
       }
@@ -319,6 +352,8 @@ export function renderShippedDefaults(existingText: string, paths: readonly stri
 export function main(argv: readonly string[]): number {
   const write = argv.includes("--write");
   const { all } = protectedPaths(REPO_ROOT);
+  const skipped = wiredHookScan(REPO_ROOT).skipped;
+  if (skipped.length > 0) console.log(`protected-path-list: skipped ${String(skipped.length)} non-project hook command(s) in the local settings file: ${skipped.join(" | ")}`);
   const shippedPath = join(REPO_ROOT, SHIPPED_REL);
   const proposalPath = join(REPO_ROOT, PROPOSAL_REL);
   const wantShipped = renderShippedDefaults(readFileSync(shippedPath, "utf8"), all);

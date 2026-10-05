@@ -141,6 +141,9 @@ const WRAPPER_CATALOG: readonly WrapperEntry[] = [
   },
 ];
 
+/** Every binary name the wrapper table dispatches on (derived from the table, for tests and reviewers). */
+export const WRAPPER_BINARY_NAMES: readonly string[] = WRAPPER_CATALOG.flatMap((e) => e.binaryNames);
+
 /** Dispatches on `toolToken` (already `normalizeToolToken`'d). Returns a match (possibly with
  * `inner: undefined`, see `WrapperMatch`), `"unresolved-shaped"` when the binary name is
  * recognized but the sub-shape isn't, or `undefined` when nothing in the catalog matches at all. */

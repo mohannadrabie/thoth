@@ -3,6 +3,7 @@
     "deny": [
       "Edit(/.claude/settings.json)",
       "Edit(/.claude/settings.local.json)",
+      "Edit(/.mcp.json)",
       "Edit(/.thoth/halt-state/**)",
       "Edit(/.thoth/policy.json)",
       "Edit(/docs/qa/s5-central-classification.json)",
@@ -45,6 +46,7 @@
       "Edit(/src/policy/tools/classification.ts)",
       "Edit(/src/policy/tools/mcp-enumeration.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
+      "Edit(~/.claude.json)",
       "Edit(~/.claude/settings.json)"
     ]
   }

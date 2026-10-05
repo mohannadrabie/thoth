@@ -76,15 +76,25 @@
 // fail-closed pattern every branch below follows without exception.
 import { canonicalizePathTarget, pathFormIssue } from "./path-canonical.ts";
 
-/** F8 (Issue #411): the one unresolved cause a redirect-decorated, non-resolving command carries. */
 /** F9 (Issue #420): the closed set of leading binaries the kubectl-shaped grammar resolves. The grammar reads the verb
  * from the token after the binary, so without this set `node get pods/x --context=c` resolved as a read and ran a file
  * named `get`. A binary counts only when the first token is EXACTLY one of these names: bare (no path, so no planted
  * `./kubectl`) and lowercase (no `KUBECTL`, no `kubectl.exe`). Anything else is unresolved and POL-05 denies. */
 export const RESOLVABLE_BINARIES: ReadonlySet<string> = new Set(["kubectl"]);
 
+/** F10 (Issue #420, round 2): the flags the kubectl-shaped grammar reads for its decision. scanFlags consumes
+ * `flags["context"]` and nothing else (the alias table maps `-c` to it), so this is the whole closed set. Any other flag
+ * (--kubeconfig, --server, --token, --as, --insecure-skip-tls-verify, an unknown one) can change what the binary does while
+ * staying invisible to the record, so a command carrying one is unresolved. */
+export const KUBECTL_GRAMMAR_FLAGS: ReadonlySet<string> = new Set(["context"]);
+
+export const FLAG_NOT_IN_CLOSED_SET_UNRESOLVED = "command carries a flag outside the closed set the grammar reads (F10, Issue #420)";
+
+export const WRAPPER_BINARY_NOT_BARE_UNRESOLVED = "wrapper binary is not spelled as the bare lowercase name (F9b, Issue #420)";
+
 export const BINARY_NOT_RECOGNIZED_UNRESOLVED = "command binary is not one of the recognized set (F9, Issue #420)";
 
+/** F8 (Issue #411): the one unresolved cause a redirect-decorated, non-resolving command carries. */
 export const REDIRECT_DECORATES_UNRESOLVED = "redirect decorates a command that does not resolve on its own (F8, Issue #411)";
 
 import type { ActionRecord } from "../kernel/action-record.ts";
@@ -224,6 +234,9 @@ function scanFlags(tokens: readonly string[], isRedirectOperatorToken: readonly 
       const [, shortKey, value] = shortForm;
       const canonical = shortKey ? resolveFlagAlias(shortKey) : undefined;
       if (canonical && value) values[canonical] = value;
+      // F10 (Issue #420): an unknown short flag was silently dropped here; keep it visible as a positional token so the
+      // closed-set check sees it.
+      else positional.push(token);
       i += 1;
       continue;
     }
@@ -349,6 +362,11 @@ function resolveKubectlShape(
   // F9 (Issue #420): fail closed on any binary outside the closed set. Recorded, not returned early, so the verb and
   // targets stay visible (a redirect-decorated record still says write plus its target).
   if (!RESOLVABLE_BINARIES.has(binaryToken)) unresolved.push(BINARY_NOT_RECOGNIZED_UNRESOLVED);
+  // F10: every flag must be in the closed set. scanFlags keeps `--key=value` in `flags` and leaves every other flag-shaped
+  // token (bare, space form, short form) in `positional`; both are checked.
+  if (Object.keys(flags).some((k) => !KUBECTL_GRAMMAR_FLAGS.has(k)) || positional.some((t) => t.startsWith("-"))) {
+    unresolved.push(FLAG_NOT_IN_CLOSED_SET_UNRESOLVED);
+  }
 
   // Position, not a broader search: after scanFlags removes every flag from `positional`
   // (SUR-07's reordering criterion is about FLAGS moving, not verb/resource swapping), the verb is
@@ -471,6 +489,11 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
 
   const toolToken = normalizeToolToken(tokens[0] ?? "");
   const wrapper = detectWrapper(toolToken, tokens, liveText, bodies);
+  // F9b (Issue #420): the dispatch above matches the path-stripped, lowercased name. A wrapper binary counts only when the
+  // RAW first token is that bare lowercase name; otherwise the OS would run a planted file, not the real wrapper.
+  if (wrapper !== undefined && (tokens[0] ?? "") !== toolToken) {
+    return unresolvedRecord(raw, [WRAPPER_BINARY_NOT_BARE_UNRESOLVED], raw.deferred ?? false);
+  }
   const wrapperResult = resolveWrapperMatch(raw, wrapper, depth);
   if (wrapperResult) return wrapperResult;
 
