@@ -157,6 +157,7 @@ function failingPorts(failedLayer: unknown, reasonKind: unknown): GatePorts {
   return {
     loadPolicy: () => ({ ok: false, failedLayer, reasonKind }) as never,
     loadCatalog: () => ({ version: "0.0.0-test", tools: [{ name: "standin", class: "read-only", sourceLayer: "central" }] }),
+    checkBareBinaries: () => ({ ok: true }),
   };
 }
 function reasonFor(toolName: string, toolInput: unknown, p: GatePorts): string {

@@ -12,7 +12,7 @@
 // EVOLUTION: at the third normalizer (a filesystem one is the first candidate) move this mapping to
 // registration-time declaration and delete the table. Until then adding a tool type edits two
 // shared lines: a row here and the side-effect import below.
-import "../normalizer/shell.ts";
+import { invokedBareBinaries } from "../normalizer/shell.ts";
 import "../normalizer/tool-class.ts";
 import type { MergedToolClassificationSet } from "../tools/classification.ts";
 
@@ -31,6 +31,9 @@ export interface ToolRoute {
   toolType: string;
   needsCatalog: boolean;
   buildRaw: (ctx: RouteCallContext) => BuildRawResult;
+  /** Issue #428: the bare command names the built raw call would run (each needs a binary-trust check before an allow stands).
+   * An empty list means the route runs no PATH-resolved binary; `undefined` means it could not be determined (a deny). */
+  invokedBinaries: (raw: unknown) => readonly string[] | undefined;
 }
 
 // No real environment or identity model exists yet (S6/S11a): the disclosed-placeholder pattern
@@ -50,6 +53,10 @@ export const ROUTES: readonly ToolRoute[] = [
       }
       return { ok: true, raw: { command, environment: ENVIRONMENT, identity: ctx.identity, deferred: false } };
     },
+    invokedBinaries: (raw) => {
+      const command = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).command : undefined;
+      return typeof command === "string" ? invokedBareBinaries(command) : undefined;
+    },
   },
   {
     match: { kind: "prefix", value: "mcp__" },
@@ -59,6 +66,7 @@ export const ROUTES: readonly ToolRoute[] = [
       ok: true,
       raw: { toolName: ctx.toolName, catalog: ctx.catalog, environment: ENVIRONMENT, identity: ctx.identity, deferred: false },
     }),
+    invokedBinaries: () => [],
   },
 ];
 

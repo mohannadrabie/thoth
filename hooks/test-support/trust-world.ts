@@ -92,6 +92,7 @@ export function winWorld(over: Partial<WorldOptions> & { gitBin?: readonly strin
   return world({
     platform: "win32",
     path: WIN_PATH,
+    ...rest,
     dirs: {
       [GIT_BIN]: gitNames,
       "C:\\WINDOWS\\system32": ["cmd.exe", "notepad.exe"],
@@ -100,7 +101,6 @@ export function winWorld(over: Partial<WorldOptions> & { gitBin?: readonly strin
       "C:\\WINDOWS": [],
       ...(rest.dirs ?? {}),
     },
-    ...rest,
   });
 }
 
@@ -108,6 +108,7 @@ export const POSIX_PATH = "/home/u/bin:/usr/local/bin:/usr/bin:/bin";
 export function posixWorld(over: Partial<WorldOptions> = {}) {
   return world({
     path: POSIX_PATH,
+    ...over,
     dirs: {
       "/": [],
       "/usr": [],
@@ -119,7 +120,6 @@ export function posixWorld(over: Partial<WorldOptions> = {}) {
       ...(over.dirs ?? {}),
     },
     links: { "/bin": "/usr/bin", ...(over.links ?? {}) },
-    ...over,
   });
 }
 

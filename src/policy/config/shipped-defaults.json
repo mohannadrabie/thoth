@@ -249,6 +249,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-policy-config-path-trust-check-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/config/path-trust-check.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-policy-config-pin-ts",
       "effect": "deny",
       "verbs": [
@@ -329,6 +346,23 @@
       ],
       "targets": [
         "src/policy/config/shipped-defaults.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-policy-gate-bare-binary-trust-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/gate/bare-binary-trust.ts"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true

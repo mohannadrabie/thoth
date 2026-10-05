@@ -15,7 +15,7 @@ import { checkBareBinaries, isTrustedDirectory, scannedDirectories, type TrustPo
 import { createRealTrustPorts } from "../src/policy/config/path-trust-check.ts";
 import { invokedBareBinaries } from "../src/policy/normalizer/shell.ts";
 import { normalize } from "../src/policy/normalizer/registry.ts";
-import { createGateSandbox, describeRun, isSilentAllow, wasPolicyDenied, denyReason } from "./test-support/gate-sandbox.ts";
+import { createGateSandbox, describeRun, isSilentAllow, denyReason } from "./test-support/gate-sandbox.ts";
 import { PATH_BINARIES, USER_LOCAL, winWorld, posixWorld } from "./test-support/trust-world.ts";
 
 const sanitize = (t: string): string => t;
@@ -25,7 +25,7 @@ function gatePorts(check: GatePorts["checkBareBinaries"], defaultOutcome: "allow
     loadPolicy: () => ({ ok: true, ruleSet: { version: "0.0.0-test", rules: [] }, defaultOutcome }),
     loadCatalog: () => ({ version: "0.0.0-test", tools: [] }),
     ...(check === undefined ? {} : { checkBareBinaries: check }),
-  };
+  } as GatePorts;
 }
 const bash = (command: string, ports: GatePorts): GateResult => decideToolCall({ tool_name: "Bash", tool_input: { command }, session_id: "t428" }, ports);
 const realCheck = (ports: TrustPorts) => (names: readonly string[]) => checkBareBinaries(names, ports);
@@ -205,7 +205,7 @@ test("TRUST-13-real-plant-end-to-end: a temp directory prepended to the hook's P
   const name = process.platform === "win32" ? "ls.exe" : "ls";
   withPlantDir([name], (dir) => {
     const run = sb.bash("ls -la", { PATH: `${dir}${PATH_SEP}${process.env.PATH ?? ""}` });
-    assert.ok(wasPolicyDenied(run) || run.code === 0, describeRun(run));
+    assert.equal(run.code, 0, describeRun(run));
     assert.ok(!isSilentAllow(run), `planted ls must not be a silent allow: ${describeRun(run)}`);
     assert.ok(denyReason(run).includes("ls") && denyReason(run).includes(dir), denyReason(run));
   });

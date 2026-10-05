@@ -417,7 +417,7 @@ const ALLOWED_MEMBER_WRITES: ReadonlySet<string> = new Set<string>();
 // Exact ALLOW-LIST of module specifiers (Issue #370 residual): the hook's own two node built-ins and
 // its 6 pinned Promise.all imports. Anything else (node:vm, node:child_process, node:worker_threads,
 // node:fs, a project module outside the six) is refused, whether static, re-exported or runtime.
-const ALLOWED_SPECIFIERS: ReadonlySet<string> = new Set(["node:path", "node:url", ...PROMISE_ALL_SHAPE.flatMap((e) => (e.specifier === undefined ? [] : [e.specifier]))]);
+const ALLOWED_SPECIFIERS: ReadonlySet<string> = new Set(["node:path", "node:url", "../src/policy/config/path-trust-check.ts", ...PROMISE_ALL_SHAPE.flatMap((e) => (e.specifier === undefined ? [] : [e.specifier]))]);
 
 /** True when `id` is in a position that REFERENCES a value binding (as opposed to naming a property,
  * a key, a label or a meta-property, which never resolve through scope). */

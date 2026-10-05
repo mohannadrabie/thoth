@@ -251,7 +251,7 @@ test("TRUST-8-posix-group-writable-system-dir-demoted: a system directory (or an
   const userOwned = posixWorld({ stats: { "/usr/local": { uid: 501, mode: 0o40755 } }, dirs: { "/usr/local/bin": ["kubectl"] } });
   assert.equal(denied(checkBareBinaries(["kubectl"], userOwned)).kind, "shadow", "an untrusted ANCESTOR demotes the directory");
   const worldWritableRoot = posixWorld({ stats: { "/usr/bin": { uid: 0, mode: 0o40757 } } });
-  assert.equal(denied(checkBareBinaries(["ls"], worldWritableRoot)).kind, "no-trusted-hit");
+  assert.equal(denied(checkBareBinaries(["ls"], worldWritableRoot)).kind,"shadow", "the demoted /usr/bin holds ls, and an untrusted copy is a shadow");
   assert.equal(isTrustedDirectory(posixWorld(), "/usr/bin"), true);
   assert.equal(isTrustedDirectory(groupWritable, "/usr/local/bin"), false);
   assert.equal(isTrustedDirectory(posixWorld(), "/home/u/bin"), false);
