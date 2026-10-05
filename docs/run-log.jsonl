@@ -226,3 +226,6 @@
 {"at":"2026-10-05T14:47:58.199Z","event":"tier-ratified","scope":"s429","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"changes protected write list and K routed-tool set"}
 {"at":"2026-10-05T17:03:38.517Z","event":"story-shipped","scope":"s308-E0","rounds":"0","reports":"5","findings":"7","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-05T18:39:34.885Z","event":"tier-ratified","scope":"s308-K","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"wires live enforcement hook into this repo's settings"}
+{"at":"2026-10-05T20:02:02.644Z","event":"story-shipped","scope":"s428","rounds":"0","reports":"6","findings":"20","adrTokensSaved":"18800","councilFired":"false"}
+{"at":"2026-10-05T20:02:02.701Z","event":"story-shipped","scope":"s409","rounds":"2","reports":"6","findings":"21","adrTokensSaved":"18800","councilFired":"false"}
+{"at":"2026-10-05T20:02:02.758Z","event":"story-shipped","scope":"s429","rounds":"2","reports":"5","findings":"19","adrTokensSaved":"18800","councilFired":"false"}

@@ -1,9 +1,30 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-05 (THOTH-ADR-0003 accepted by the human, keeping the 2026-09-19 exemption; #308 E, F, J pushed on `s308/activation-3` as a draft PR; K held)
+**Last updated:** 2026-10-05, end of session `s7/knockout` (E0, #428, #409, #429 review-complete and merged on one branch; K planned, not wired)
 
-## Resume point — 2026-10-05, later (newest): THOTH-ADR-0003 accepted; E, F, J on a draft PR
+## Resume point — 2026-10-05, end of session (newest): S7 K blockers built on `s7/knockout`; K planned, not wired
+
+- **Branch:** `s7/knockout` (local, not pushed). One branch for the whole session; merge is human-only.
+- **Shipped on the branch (all CRITICAL, reviews complete):**
+
+| Story | What | Final verdicts | REWORK rounds |
+|---|---|---|---|
+| E0 (#408) | `ls`, `cat`, `head`, `tail`, `wc`, `grep` resolve to read; git and rg stay denied | red-team go; app-security and cross-domain APPROVE-WITH-CONDITIONS; #436 re-confirm APPROVE | 0 |
+| #428 | Gate checks every bare binary resolves only to a trusted system file (shadow scan, fail closed) | red-team go (round 1 and two re-confirms); app-security APPROVE; cross-domain APPROVE-WITH-CONDITIONS | 0 |
+| #409 | Git/rg exec levers sealed at the write boundary: whole `.git/` protected; read-only preflight `qa:git-rg-lever-preflight` | red-team go at round 3; app-security and cross-domain APPROVE-WITH-CONDITIONS | 2 |
+| #429/#424/#446 | Every vendored tool judged exec or not; K matcher derived: `Bash|Monitor|PowerShell|RemoteTrigger|mcp__.*`; skill/command/agent/plugin dirs, shell profiles, shell-snapshots and session-env protected | red-team go at round 3; app-security APPROVE-WITH-CONDITIONS; cross-domain APPROVE | 2 |
+
+- **Verify (Manager, merged tree):** build, typecheck, lint, every `qa:*` except `qa:vendor-tool-inventory` rc=0; QA-14 diff mode PASS; full suite 2483/2486, 1 skipped (TRUST-7b, no symlink permission), 2 failures pass alone (latency 43/43, R4 26/26). `qa:git-rg-lever-preflight` rc=1 by design: one session-writable finding (an exec block in `~/.kube/config`).
+- **Live probes (USD 0.59 of 1.00):** the gate fires for Bash inside a subagent (hook tool name is `Agent`, not `Task`); a `~/` Edit deny blocks Edit and Write, including under bypassPermissions; the J5 negative control passes. Evidence: `docs/qa/s7-live-probes/`.
+- **K:** planned only (`docs/plans/s308-K-wiring-plan-2026-10-05.md`, tier CRITICAL). Wiring waits for the human's explicit approval. Open K blockers: #435 and #437 (read-deny for secrets, recursive reads), #442 (per-checkout worktree targets), #444 (Program Files writability probe), #452 (extractor completeness), settings-named scripts, the live spikes in plan section 2.
+- **Not filed:** a HIGH found and fixed this session (main-checkout `.git/commondir` redirect); the session's permission classifier blocked `gh issue create`. Human decides whether to file a closed record.
+- **Housekeeping:** #308 reopened (PR #430's `fix: #308` subject auto-closed it). `qa:vendor-tool-inventory` rewrites `docs/qa/tool-inventory.json`'s capturedAt when "every qa:*" runs; skip it in verify loops. An empty folder `C:/playground/thoth-wt429` is held by a busy handle; delete it later.
+- **Rulings pending human ratification:** decisions rows dated 2026-10-04 and 2026-10-05 (session rulings 1-3, E0 result, #409/#428/#429 result).
+
+**Single next action:** push `s7/knockout`, open its PR, and merge once CI is green. Then answer the K plan's blocking questions (section 7).
+
+## Prior entry (superseded above): THOTH-ADR-0003 accepted; E, F, J on a draft PR
 
 - **Human, 2026-10-05:** "accept ADR-0003 but keep the 2026-09-19 exemption". The ADR is `accepted`; the Manager's narrowing is removed (decisions row "THOTH-ADR-0003 accepted"). PR #407 merged by the human.
 - **Branch:** `s308/activation-3`, synced with `origin/master`, pushed by the Manager at the human's request; draft PR open. Merge is human-only.

@@ -102,6 +102,9 @@ The milestone has no `k-blocker` label, so the K-blocker split below is my judgm
 | #452 write-deny extractor passes on partial extraction | med | Open | K precondition: `CC-extraction-covers-judged` (both directions, installed version equals recorded version) green on the Claude Code version K activates with | K |
 | Scripts named in settings fields (`statusLine`, user hooks, `apiKeyHelper`, `awsAuthRefresh`, `otelHeadersHelper`) run outside the gate | med (suspicion) | Not enumerated | K precondition: human runs a read-only listing of those fields in user, project and local settings and judges each script; test `F1-settings-named-scripts-judged` | K |
 | Lowercased Edit-deny entries (`~/.claude/claude.md`, PowerShell profiles, `/.git/**`) | low | Matching case-insensitivity unproven | Extend the P-K4 live spike to every lowercased entry, on Windows and Linux | K |
+| macOS extended ACLs (add_file without search) on a root 0700 PATH dir | low | UNPROVEN, needs a Mac (red-team #428 R4) | Run the red-team macOS probe before K on any macOS host K covers | K |
+| Tool-name aliases beyond Task/Agent (SendMessage, Workflow call-time names) | low | UNPROVEN (only P1 measured) | Live PreToolUse `tool_name` probe per exec tool in stage 1 | K |
+| Latency corpus has no allow-path command | low | The #428 allow-path scan is not measured by `qa:gate-latency-budget` | Add an allow-path row before K (cross-domain #428 G1) | K |
 
 Merge order: the human merges the single `s7/knockout` PR. Then cut the K branch from the resulting master.
 

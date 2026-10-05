@@ -85,3 +85,19 @@ Method: code-traced against the shipped normalizer/gate; measured on this Window
 
 ## Scariest unproven assumption
 The gate validates trust against the PATH *it* sees, but the shell resolves the command against the PATH *it* sees, and nothing in the design guarantees the shell's untrusted search set is a subset of what the gate scans (A2). On this machine they happen to align safely; the design offers no proof they always will, and the one measured divergence (`/etc/profile.d/env.sh`, MSYS `/usr/local/bin`) is real. Settle it with the TRUST-15 live spike before K wires the gate.
+
+<!-- Manager (Osiris) backstop, 2026-10-05: the agent returned this RECEIPT in its hand-back but did not persist it in this file. Copied verbatim from the hand-back. -->
+RECEIPT: verdict=go
+attacks (ranked by blast radius):
+1. [ISSUE][MED][demonstrated] A1 scan name-set omits .lnk; bash resolves a bare name to a planted name.lnk; plan scans .exe/.cmd/.bat/.com/.ps1 but not .lnk; criterion-7 realpath does not follow a .lnk
+2. [SUSPICION][MED][demonstrated] A2 gate PATH != shell PATH (spike S1); order-independent scan sound only over the gate's PATH; no proof of subset
+3. [SUSPICION][MED][code-traced] A3 PowerShell forward seam; routing table handles only Bash+mcp__; K intends to route PowerShell, which honours PATHEXT
+4. [CLEAN][code-traced] A4 leading PATH=/env VAR= prefix fail-closed via shape-mismatch/not-bare
+5. [CLEAN][code-traced] A5 missing-but-creatable user bin dir handled by order-independent scan
+6. [CLEAN][derived] A6 per-call scan cost bounded but unmeasured
+7. [CLEAN][derived] A7 trusted set is allowlist not ACL; elevated session writes Program Files (plan residual c)
+counts: issues=1 suspicions=2 clean=4
+evidence: demonstrated=2 code-traced=3 derived=2
+checks=n/a (read-only measurement only; no project test suite run)
+adr=HIT(38)
+report=docs/reviews/s428-path-trust-design-challenge-2026-10-05.md
