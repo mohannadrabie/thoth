@@ -3,7 +3,7 @@
 - Scope: #308 story J (J1 to J9). Nothing here wires the real `.claude/settings.json` or any user settings.
 - Method: story B harness (`../s308-live-spikes/harness/`), copied and extended in `harness/`. Each run is `claude -p` (Claude Code 2.1.267, model alias haiku, Windows 11, Git Bash) in a scratch project outside this repo, with its own `.claude/settings.json` wiring the gate at this repo's absolute paths.
 - Rules at HEAD 4ad9f87 (E and F shipped locally, held behind THOTH-ADR-0003).
-- Spend: USD 0.9857 over 39 live calls; hard cap USD 1.50 (`ledger.txt`). Paths, ids, host and user names are scrubbed by `harness/scrub-j.mjs`; a run that printed a full environment is omitted from J8.txt.
+- Spend: USD 0.9857 over 39 live calls; hard cap USD 1.50 (`ledger.txt`). Paths, ids, host and user names are scrubbed by `docs/qa/s308-live-spikes-J/harness/scrub-j.mjs`; a run that printed a full environment is omitted from J8.txt.
 - Hook attribution: the first `hook_started` is the gate (config order), the second is the logger. The order is read from the stream, not from a hook name.
 
 ## Outcomes by item
