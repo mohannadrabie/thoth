@@ -171,8 +171,9 @@ const PROJECT_POLICY_REL = path.join(".thoth", "policy.json");
 const EMPTY_RULE_SET = `${JSON.stringify({ version: "0.0.0-s7-test-empty", rules: [] }, null, 2)}\n`;
 
 const PATH_TRUST_REL = path.join("src", "policy", "config", "path-trust-check.ts");
-const PATH_TRUST_PIN = `// gate-sandbox pin (Issue #428): the sandbox host's PATH is not a trusted-install world (CI has no kubectl, a developer
-// machine has per-user tools), so tests that judge the NORMALIZER and the kernel through the real hook pin the binary-trust
+const PATH_TRUST_PIN = `// gate-sandbox pin (Issue #428): the sandbox host's PATH is not a trusted-install world (the ubuntu runner image ships kubectl at
+// /usr/local/bin and AC-2 passed in an ubuntu:24.04 runner-like container, but a developer machine has per-user tools and
+// host PATH directories vary, for example a root-owned mode 700 /opt/pipx_bin), so tests that judge the NORMALIZER and the kernel through the real hook pin the binary-trust
 // check to allow. Tests of the check itself ask for the real one: createGateSandbox({ realPathTrust: true }).
 export function createRealTrustPorts(): never {
   throw new Error("pinned away in the sandbox");

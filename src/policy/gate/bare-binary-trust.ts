@@ -229,6 +229,16 @@ function dirTrusted(ctx: TrustContext, dir: string): boolean {
   return real !== undefined && isTrustedRealDir(ctx, real);
 }
 
+/** POSIX: true only when the directory's real path and every ancestor are root-owned and not group/world-writable. Any
+ * failure to establish that is false (the caller then denies). */
+function onlyRootCanWrite(ports: TrustPorts, dir: string): boolean {
+  try {
+    return posixChainTrusted(ports, ports.realpath(dir));
+  } catch {
+    return false;
+  }
+}
+
 /** Whether `dir` is a trusted system directory (its real path is allowlisted and, on POSIX, owner and mode check out). */
 export function isTrustedDirectory(ports: TrustPorts, dir: string): boolean {
   try {
@@ -339,6 +349,9 @@ function check(names: readonly string[], ports: TrustPorts): TrustResult {
     } catch (error) {
       const code = codeOf(error);
       if (code === "ENOENT" || code === "ENOTDIR") continue; // nothing there to find
+      // Issue #445: on POSIX, a directory the gate cannot list (EACCES/EPERM) but whose whole real path is root-owned with no
+      // group/world write cannot be planted into by the session, so there is nothing to find. Skip it. Anything else denies.
+      if (!isWin(platform) && (code === "EACCES" || code === "EPERM") && onlyRootCanWrite(ports, d.dir)) continue;
       return deny("unreadable-dir", `PATH directory ${bounded(d.dir)} (${d.source}) cannot be listed (${code}), so the gate cannot rule out a planted "${wanted[0] ?? ""}"; fail-closed.`);
     }
     for (const name of wanted) {

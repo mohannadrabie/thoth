@@ -191,7 +191,8 @@ test("TRUST-6d-dot-and-relative-entry: . and a relative entry are scanned agains
 
 test("TRUST-6e-readdir-throws: an untrusted directory whose listing throws something other than not-found denies", () => {
   for (const code of ["EACCES", "EIO", "EMFILE", "EPERM"]) {
-    const w = posixWorld({ dirs: { "/home/u/bin": { throws: code } } });
+    // a session-owned directory (the realistic /home/u/bin): the access errors still deny (Issue #445 skips only root-owned ones)
+    const w = posixWorld({ dirs: { "/home/u/bin": { throws: code } }, stats: { "/home/u/bin": { uid: 1001, mode: 0o40755 } } });
     assert.equal(denied(checkBareBinaries(["ls"], w)).kind, "unreadable-dir", code);
   }
   const noCode = posixWorld();
