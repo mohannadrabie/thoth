@@ -4,7 +4,7 @@ Author: Manager (Osiris), 2026-10-05, session `s308/k-stage0`. Status: **awaitin
 
 ## 1. Command-bearing settings fields today (read-only listing, 2026-10-05)
 
-Produced by a read-only node script (`JSON.parse` of each file; it printed only the named fields). Claude Code 2.1.267.
+Produced by a read-only node script (`JSON.parse` of each file; it printed only the named fields). Two Claude Code binaries are installed: `~/.local/bin/claude.exe` 2.1.267 (first on PATH), and the VS Code extension's native binary 2.1.289, which runs every governed session today (#462, #463).
 
 | Scope | File | Command-bearing fields |
 |---|---|---|
@@ -29,7 +29,8 @@ Human judgement asked (plan line 103): accept the three plugin-file hooks as amb
 ## 2. Setup (no spend)
 
 - A fresh clone of the merged K stage 0 branch outside C:\playground\thoth and not in a thoth-wt worktree, e.g. `C:\scratch\thoth-k1`. Its `.claude/settings.json` is the merge script's dry-run output written with `--write` **in the clone only**. One linked worktree of the clone is used for P-K4.
-- Runner: a copy of docs/qa/s7-live-probes/harness/run7.mjs with `CAP = 1.60`, a new ledger file, ledger.jsonl in a new s308-K-live-probes directory under docs/qa, created by the first run (`SPIKE_NEW_LEDGER=1` once), the call ceiling raised from 40 to 45 (the USD cap stays the binding limit), `--budget 0.06` per call, and a 180 s kill. Model alias haiku, as before.
+- Binary: every probe drives the binary the governed sessions run, today the VS Code extension's native binary 2.1.289, invoked by absolute path. Bare `claude` on PATH resolves to the 2.1.267 copy, so the runner refuses a bare `claude` and records the binary path and `--version` on every ledger row. Stage 1 starts only after #463 (re-vendor and re-judge for that version) is done, so the probed binary matches K's inputs.
+- Runner: a copy of docs/qa/s7-live-probes/harness/run7.mjs with `CAP = 1.60`, a new ledger file, ledger.jsonl in a new s308-K-live-probes directory under docs/qa, created by the first run (`SPIKE_NEW_LEDGER=1` once), the call ceiling raised from 40 to 48 (the USD cap stays the binding limit), `--budget 0.06` per call, and a 180 s kill. Model alias haiku, as before.
 - Cap: USD 2.00 for stages 1 and 2 (human ruling, 2026-10-05). Stage 1 is capped at USD 1.60, leaving USD 0.40 for stage 2's roughly 8 calls (about USD 0.30). The prior USD 0.5864 in docs/qa/s7-live-probes/ledger.txt belongs to the previous session's own cap and does not count here.
 
 ## 3. Probes
@@ -48,10 +49,11 @@ Call counts are estimates; the ledger is the real count.
 | Case spike | every lowercased Edit-deny entry (list generated at run time from the merge output, not typed), tried with a case-changed path | about 4 to 6 | each case-changed write refused on Windows; see residual R1 |
 | Alias probe | PreToolUse `tool_name` as logged by `log-hook.mjs` for SendMessage, Workflow, PowerShell, Monitor, RemoteTrigger | 2 to 3 (most names come free from P-K2's logs) | each name recorded; any name not in the K matcher or the residual table returns to the human |
 | P-K5 | kill switch: entry removed from outside; a running session keeps the old hooks; a new session is unwired; `disableAllHooks` measured; `--setting-sources user,local` measured | 5 | measured results replace the runbook's "Unmeasured until P-K5" section |
+| P-K7 | mods (#464): record the installed mod count and the mod locations Claude Code reads, then try authoring a mod from the wired session (expected: refused, because ~/.claude/plugins/ is protected; any other location is a finding) | 2 | outcome recorded; any session-authorable mod location, or any installed mod handling tool.check, blocks K pending the human's #464 decision |
 | P-K6 | operability table: everyday commands the wired session can still run; allow-path latency from the hook log | 3 | table recorded; allow path within the J6 budget |
 | Latency allow-path row | the corpus row for `qa:gate-latency-budget` (plan line 107) | 0 (offline) | row added through its own story; P-K6 gives the live number |
 
-Total estimate: about 39 to 44 calls, USD 1.00 to 1.40 at the measured USD 0.024 to 0.037 per call.
+Total estimate: about 41 to 46 calls, USD 1.00 to 1.40 at the measured USD 0.024 to 0.037 per call.
 
 ## 4. Residuals stated before running
 
