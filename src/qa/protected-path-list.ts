@@ -51,9 +51,8 @@ const toRel = (root: string, abs: string): string => relative(root, abs).split(s
 type Reader = (abs: string) => string | undefined;
 const readReal: Reader = (abs) => (existsSync(abs) ? readFileSync(abs, "utf8") : undefined);
 
-// The name of node:module's require factory, assembled so this production file does not itself name it: the locked
-// single-source scan (R1-6b/R1-6d, Issue #332) forbids any production use of that factory by name.
-const MODULE_REQUIRE_FACTORY = ["create", "Require"].join("");
+// The name of node:module require factory, matched by name in an AST to follow dependencies; this file never calls it. Spelled plainly: the locked R1-6d scan (classification-builtin-override.test.ts) does not flag a bare name, only an import, call or member access.
+const MODULE_REQUIRE_FACTORY = "createRequire";
 
 /** The module specifier a node pulls in, if any. Recognized: import, export-from, import("lit"), require("lit") and
  * createRequire(...)("lit"). "(computed)" marks a dependency whose target cannot be read statically (a non-literal
@@ -91,6 +90,7 @@ export function wiredHookScripts(root: string, readSettings: Reader = readReal):
       for (const entry of entries) {
         for (const h of entry.hooks ?? []) {
           if (typeof h.command !== "string") continue;
+          // The class below spells double quote, single quote and backtick as hex escapes: a literal quote in a regex makes the R1-6b comment stripper mis-parse this file.
           const found = [...h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s\x22\x27\x60;|&]+)/g)].map((m) => canonicalizePathTarget(m[1]!));
           if (found.length === 0) throw new Error(`wired hook command names no CLAUDE_PROJECT_DIR script, cannot enumerate it: ${h.command.slice(0, 80)}`);
           for (const x of found) out.add(x);
@@ -172,7 +172,7 @@ export function importGraphFiles(root: string, read: Reader = readReal, fallback
     const visit = (node: ts.Node): void => {
       const spec = specifierOf(node);
       if (spec !== undefined) {
-        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: computed import(), non-literal require(), or a stored require factory not invoked with a literal on the spot`);
+        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: computed import(), non-literal require(), or a stored createRequire not invoked with a literal on the spot`);
         if (spec.startsWith(".")) queue.push(resolve(dirname(abs), spec));
         else if (!spec.startsWith("node:")) throw new Error(`${toRel(root, abs)}: non-relative, non-node: import "${spec}"`);
       }
