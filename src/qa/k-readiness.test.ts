@@ -35,7 +35,7 @@ const allScripts = Object.fromEntries(SCRIPT_ROWS.map((s) => [s.script, `node sr
 const DECISIONS = [
   "| Date | Decision | By | Dissent | Human ratified | Review-back |",
   "|---|---|---|---|---|---|",
-  "| 2026-10-05 | **K1 wiring approved (#308 story K).** evidence | human | none | Y | 2026-11-01 |",
+  "| 2026-10-05 | **K1 approved (#308 story K wiring).** evidence | human | none | Y | 2026-11-01 |",
   "| 2026-10-05 | **THOTH-ADR-0003 accepted by the human, keeping the exemption.** | Manager | none | Y | 2026-10-12 |",
 ].join("\n");
 
@@ -140,20 +140,49 @@ test("k-readiness: two-query disagreement fails with list lag or label drift", (
   assert.match(r2.detail, /list lag or label drift/);
 });
 
+const withDecisions = (rows: string, archive?: string): Deps => deps({}, { "docs/decisions.md": rows, "docs/decisions-archive.md": archive });
+
 test("k-readiness: K1 absent fails", () => {
-  const none = k1Row(deps({}, { "docs/decisions.md": "| 2026-10-05 | something else | M | n | Y | d |" }));
+  const none = k1Row(withDecisions("| 2026-10-05 | something else | M | n | Y | d |"));
   assert.equal(none.status, "FAIL");
-  const pending = k1Row(deps({}, { "docs/decisions.md": "| 2026-10-05 | **K1 approval** | M | n | pending | d |" }));
-  assert.equal(pending.status, "FAIL");
-  const preApproved = k1Row(deps({}, { "docs/decisions.md": "| 2026-10-05 | **K1 approval** | M | n | Y (pre-approved) | d |" }));
-  assert.equal(preApproved.status, "FAIL", "K1 needs the human's explicit Y, not a pre-approval note");
+  assert.equal(k1Row(withDecisions("| 2026-10-05 | **K1 approved** | M | n | pending | d |")).status, "FAIL");
   assert.equal(k1Row(deps({}, { "docs/decisions.md": undefined })).status, "FAIL");
   assert.equal(k1Row(deps()).status, "PASS");
 });
 
+test("k-readiness: a K1 row that does not record approval does not pass", () => {
+  for (const decision of ["**K1 declined:** the human did not approve wiring K this week.", "K1 deferred until next sprint", "**K1** pending the human", "K1 not approved"]) {
+    assert.equal(k1Row(withDecisions(`| 2026-10-06 | ${decision} | Manager | none | Y | 2026-10-20 |`)).status, "FAIL", decision);
+  }
+});
+
+test("k-readiness: K1 passes with the house Y (human, ...) cell and fails with N or a bare note", () => {
+  const row = (cell: string): string => `| 2026-10-06 | **K1 approved** (#308 story K) | Manager | none | ${cell} | 2026-11-06 |`;
+  assert.equal(k1Row(withDecisions(row('Y (human, 2026-10-06: "approved")'))).status, "PASS");
+  assert.equal(k1Row(withDecisions(row("Y"))).status, "PASS");
+  assert.equal(k1Row(withDecisions(row("K1 approved"))).status, "FAIL");
+  assert.equal(k1Row(withDecisions(row("N"))).status, "FAIL");
+  assert.equal(k1Row(withDecisions(row("pending"))).status, "FAIL");
+  assert.equal(k1Row(withDecisions("| 2026-10-06 | K1 approved (bold optional) | M | n | Y | d |")).status, "PASS");
+});
+
 test("k-readiness: K4 row found", () => {
   assert.equal(k4Row(deps()).status, "PASS");
-  assert.equal(k4Row(deps({}, { "docs/decisions.md": "| 2026-10-05 | other | M | n | Y | d |" })).status, "FAIL");
-  assert.equal(k4Row(deps({}, { "docs/decisions.md": "| 2026-10-05 | **THOTH-ADR-0003 accepted** | M | n | pending | d |" })).status, "FAIL");
+  assert.equal(k4Row(withDecisions("| 2026-10-05 | other | M | n | Y | d |")).status, "FAIL");
+  assert.equal(k4Row(withDecisions("| 2026-10-05 | **THOTH-ADR-0003 accepted** | M | n | pending | d |")).status, "FAIL");
   assert.equal(parseDecisionRows(DECISIONS).length, 2);
+});
+
+test("k-readiness: K4 row spoofs fail (substring, not-yet, wait)", () => {
+  for (const decision of ["K4 precondition: wiring waits until THOTH-ADR-0003 accepted by the human (not yet).", "Reminder: THOTH-ADR-0003 accepted? no.", "**Not** THOTH-ADR-0003 accepted"]) {
+    assert.equal(k4Row(withDecisions(`| 2026-10-06 | ${decision} | Manager | none | Y | 2026-10-20 |`)).status, "FAIL", decision);
+  }
+  assert.equal(k4Row(withDecisions('| 2026-10-05 | **THOTH-ADR-0003 accepted** by the human | M | n | Y (human, 2026-10-05: "accept") | d |')).status, "PASS");
+});
+
+test("k-readiness: K4 row found when only in decisions-archive.md", () => {
+  const archived = "| 2026-10-05 | **THOTH-ADR-0003 accepted** by the human | M | n | Y | d |";
+  assert.equal(k4Row(withDecisions("| 2026-10-06 | unrelated | M | n | Y | d |", archived)).status, "PASS");
+  assert.equal(k1Row(withDecisions("| 2026-10-06 | unrelated | M | n | Y | d |", "| 2026-10-06 | **K1 approved** | M | n | Y | d |")).status, "PASS");
+  assert.equal(k4Row(withDecisions("| 2026-10-06 | unrelated | M | n | Y | d |", undefined)).status, "FAIL");
 });

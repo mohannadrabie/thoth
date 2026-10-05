@@ -163,25 +163,36 @@ export function parseDecisionRows(text: string): DecisionRow[] {
   return rows;
 }
 
-/** K1: a decisions row whose decision text starts with "K1" (optionally bold) and whose Human ratified cell is exactly Y. */
-export function k1Row(deps: Deps): Row {
-  const id = "K1-human-approval";
-  const text = deps.readFile("docs/decisions.md");
-  if (text === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
-  const rows = parseDecisionRows(text).filter((r) => /^\**\s*K1\b/.test(r.decision));
-  if (rows.length === 0) return { id, status: "FAIL", detail: "no K1 row in docs/decisions.md (human approval not recorded)" };
-  if (rows.some((r) => r.human === "Y")) return { id, status: "PASS", detail: "K1 row found with Human ratified = Y" };
-  return { id, status: "FAIL", detail: `K1 row found but Human ratified = ${rows.map((r) => JSON.stringify(r.human)).join(", ")}` };
+/** Decision rows from docs/decisions.md and then docs/decisions-archive.md (a ratified row moves to the archive). */
+function allDecisionRows(deps: Deps): DecisionRow[] | undefined {
+  const active = deps.readFile("docs/decisions.md");
+  if (active === undefined) return undefined;
+  return [...parseDecisionRows(active), ...parseDecisionRows(deps.readFile("docs/decisions-archive.md") ?? "")];
 }
 
-/** K4: the ADR gate acceptance (THOTH-ADR-0003 accepted by the human) is recorded in a decisions row with Human ratified = Y. */
+/** The human-ratified cell: Y alone or the house form `Y (human, 2026-10-05: "...")`. */
+const isHumanY = (cell: string): boolean => /^Y\b/.test(cell);
+
+/** K1: a decisions row whose decision text STARTS with "K1 approved" (bold optional) and whose Human ratified cell starts with Y.
+ * A "K1 declined" or "K1 deferred" row never passes. The row form is documented in the runbook. */
+export function k1Row(deps: Deps): Row {
+  const id = "K1-human-approval";
+  const rows = allDecisionRows(deps);
+  if (rows === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
+  const found = rows.filter((r) => /^\**\s*K1 approved\b/.test(r.decision));
+  if (found.length === 0) return { id, status: "FAIL", detail: "no row starting 'K1 approved' in docs/decisions.md or decisions-archive.md (human approval not recorded)" };
+  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: "K1 approved row found with Human ratified starting with Y" };
+  return { id, status: "FAIL", detail: `K1 approved row found but Human ratified = ${found.map((r) => JSON.stringify(r.human)).join(", ")}` };
+}
+
+/** K4: the ADR gate acceptance is a row whose decision text STARTS with "THOTH-ADR-0003 accepted" (bold optional) and is human-ratified (Y...). */
 export function k4Row(deps: Deps): Row {
   const id = "K4-adr-acceptance-recorded";
-  const text = deps.readFile("docs/decisions.md");
-  if (text === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
-  const found = parseDecisionRows(text).filter((r) => /THOTH-ADR-0003 accepted/.test(r.decision));
-  if (found.length === 0) return { id, status: "FAIL", detail: "no row recording THOTH-ADR-0003 acceptance" };
-  if (found.some((r) => /^Y\b/.test(r.human))) return { id, status: "PASS", detail: "THOTH-ADR-0003 acceptance row found, Human ratified = Y" };
+  const rows = allDecisionRows(deps);
+  if (rows === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
+  const found = rows.filter((r) => /^\**\s*THOTH-ADR-0003 accepted\b/.test(r.decision));
+  if (found.length === 0) return { id, status: "FAIL", detail: "no row starting 'THOTH-ADR-0003 accepted' in docs/decisions.md or decisions-archive.md" };
+  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: "THOTH-ADR-0003 acceptance row found, Human ratified starts with Y" };
   return { id, status: "FAIL", detail: "THOTH-ADR-0003 acceptance row found but not human-ratified" };
 }
 
