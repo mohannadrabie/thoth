@@ -31,6 +31,7 @@
 // cased name.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mergeToolClassificationLayers } from "../policy/rule/precedence.ts";
 import { buildBuiltinToolClassificationLayer, loadBuiltinToolClassificationLayer, loadBuiltinToolInventory } from "../policy/tools/builtin-tool-inventory.ts";
 import { loadCentralClassificationFixture } from "../policy/tools/central-classification.ts";
@@ -152,4 +153,21 @@ test("AP-12 positive control: a non-exec tool at read-only (Read) and an exec to
   const real = realLayers();
   assert.ok(real.merged.tools.some((t) => t.name === "Read" && t.class === "read-only"));
   assert.deepEqual(findReadOnlyArbitraryExec({ builtin: asSet([{ name: "Read", class: "read-only" }]), central: asSet([{ name: "PowerShell", class: "workspace-mutating" }]), merged: asSet([]) }), []);
+});
+
+// #424 / #429 (S7): SendMessage resumes subagents and messages teammates (same class as Task), and the live probe
+// (docs/qa/s7-live-probes/README.md, P1) showed the subagent tool is called `Agent` while the init list says `Task`:
+// both names are arbitrary-exec. The set is the instrument's own arrays, never retyped.
+test("AP12-sendmessage-is-arbitrary-exec: SendMessage and Agent (the call-time name of Task) are in the arbitrary-exec set, are never read-only when classified, and are seeded as mutants", () => {
+  const src = readFileSync(new URL(import.meta.url), "utf8");
+  for (const name of ["SendMessage", "Agent"]) {
+    assert.ok(ARBITRARY_EXEC.has(name.toLowerCase()), `${name} is in the arbitrary-exec set`);
+    const real = realLayers();
+    const builtin = asSet([...real.builtin.tools.filter((t) => t.name !== name), { name, class: "read-only" }]);
+    const found = findReadOnlyArbitraryExec({ builtin, central: real.central, merged: mergeToolClassificationLayers(builtin, real.central) });
+    assert.ok(found.some((l) => l.startsWith("builtin: ") && l.includes(name)), `${name}: ${found.join("; ")}`);
+    const cls = real.merged.tools.find((t) => t.name === name)?.class;
+    assert.notEqual(cls, "read-only", `${name} is never read-only in the real catalog`);
+    assert.ok(new RegExp(`for \(const name of \[[^\]]*"${name}"`).test(src), `${name} is in the literal added-builtins mutant list`);
+  }
 });

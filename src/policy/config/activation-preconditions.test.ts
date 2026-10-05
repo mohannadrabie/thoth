@@ -281,3 +281,23 @@ test("cross-domain LOW 2: a non-project hook in the gitignored local settings is
   assert.throws(() => wiredHookScan(REPO_ROOT, only(".claude/settings.json", bad)), /wired hook command/);
   assert.deepEqual(wiredHookScan(REPO_ROOT, only(".claude/settings.local.json", good)).scripts, ["hooks/x.mjs"]);
 });
+
+// #429 (S7): the content Skill and SlashCommand run is authorable by the session unless these directories are write-protected.
+const SKILL_CMD_DIRS = [".claude/commands/", ".claude/skills/", ".claude/agents/", "~/.claude/commands/", "~/.claude/skills/", "~/.claude/agents/", "~/.claude/plugins/"];
+test("F1-skill-command-content-protected: the seven authorable skill/command/agent/plugin directories are named, and the shipped rules deny every write verb under each", () => {
+  for (const d of SKILL_CMD_DIRS) {
+    assert.ok(PATHS.named.includes(d), `named protected directory missing: ${d}`);
+    for (const verb of PROTECTED_VERBS) {
+      const rec: ActionRecord = { ...writeRecord(`${d}x/child.md`), verbs: [verb] };
+      const v = decide(WORLD(shipped()), rec);
+      assert.equal(v.outcome, "deny", `${verb} under ${d}: ${JSON.stringify(v)}`);
+    }
+    assert.deepEqual(unmatchedPaths(shipped(), [d]), [], `shipped rules match ${d}`);
+    assert.deepEqual(unmatchedPaths(shipped().filter((r) => r.id !== ruleIdFor(d)), [d]), [d], `mutant: dropping the rule for ${d} is detected`);
+  }
+});
+
+test("F1-skill-protect-no-overblock: a write under .claude/worktrees/ is not denied by the shipped rules", () => {
+  const v = decide(WORLD(shipped()), writeRecord(".claude/worktrees/x/file.txt"));
+  assert.notEqual(v.outcome, "deny", JSON.stringify(v));
+});
