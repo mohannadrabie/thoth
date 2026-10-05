@@ -304,7 +304,7 @@ test("F1-skill-protect-no-overblock: a write under .claude/worktrees/ is not den
 
 // #446 (S7, cross-domain finding on #428; Manager ruling): a session able to write its login-shell profile files can prepend a
 // planted PATH directory for the next shell, so these user-level files are write-protected too.
-const SHELL_PROFILE_FILES = ["~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.config/fish/"];
+const SHELL_PROFILE_FILES = ["~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.config/fish/", "~/.zlogin", "~/.zlogout", "~/.bash_logout", "~/.bash_aliases", "~/Documents/PowerShell/", "~/Documents/WindowsPowerShell/"];
 test("F1-shell-profile-files-protected-or-residual-owned: every login-shell profile file is on the protected list, denied for every write verb, and has its K Edit entry", () => {
   const proposal = readFileSync(PROPOSAL_PATH, "utf8");
   for (const f of SHELL_PROFILE_FILES) {
@@ -314,5 +314,23 @@ test("F1-shell-profile-files-protected-or-residual-owned: every login-shell prof
       const v = decide(WORLD(shipped()), { ...writeRecord(f), verbs: [verb] });
       assert.equal(v.outcome, "deny", `${verb} ${f}: ${JSON.stringify(v)}`);
     }
+  }
+});
+
+// #448 (HIGH, red-team): the Bash tool sources ~/.claude/shell-snapshots/snapshot-bash-*.sh into every gated command's shell.
+test("F1-shell-snapshot-dir-protected: ~/.claude/shell-snapshots/ is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const d = "~/.claude/shell-snapshots/";
+  assert.ok(PATHS.named.includes(d), "named protected directory missing");
+  assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [d]), []);
+  for (const verb of PROTECTED_VERBS) assert.equal(decide(WORLD(shipped()), { ...writeRecord(`${d}snapshot-bash-1.sh`), verbs: [verb] }).outcome, "deny", verb);
+});
+
+// #429 LOWs (app-security suspicion 2, red-team LOW 4): the instruments that hold the judgments are session-unwritable.
+test("F1-judgment-instruments-protected: the judgment file and the two generator instruments are on the protected list, denied for writes, with K Edit entries", () => {
+  const files = ["docs/qa/tool-exec-judgment.json", "src/qa/tool-exec-judgment.ts", "src/qa/protected-path-list.ts"];
+  for (const f of files) {
+    assert.ok(PATHS.all.includes(f), `not protected: ${f}`);
+    assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [f]), [], `K Edit entry missing: ${f}`);
+    assert.equal(decide(WORLD(shipped()), writeRecord(f)).outcome, "deny", f);
   }
 });

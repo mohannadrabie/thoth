@@ -6,10 +6,12 @@
 // time, so the judgment table carries an alias pair; a test fails if only one name is present.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { REQUIRED_PROTECTED_ENTRIES, checkJudgments, deriveMatcher, loadJudgments, residualEntries, routedTools, type JudgmentFile } from "./tool-exec-judgment.ts";
+import { REQUIRED_PROTECTED_ENTRIES, checkJudgments, deriveMatcher, findNestedSkillDirs, loadJudgments, residualEntries, routedTools, type JudgmentFile } from "./tool-exec-judgment.ts";
 import { protectedPaths } from "./protected-path-list.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -189,4 +191,28 @@ test("K-residual-condition-has-instrument: a tool judged authorable-content-prot
   // mutant: the list without one required entry is detected
   const without = new Set([...named].filter((n) => n !== "~/.claude/plugins/"));
   assert.deepEqual(required.filter((e) => !without.has(e)), ["~/.claude/plugins/"]);
+});
+
+test("K-routed-tools-have-no-route: every exec-routed tool other than Bash has no gate route, so the gate refuses it (cross-domain finding 1)", async () => {
+  const { routeToolName } = await import("../policy/gate/tool-routing.ts");
+  const routed = routedTools(loadJudgments());
+  assert.ok(routed.includes("Bash") && routed.includes("PowerShell"));
+  for (const t of routed) {
+    if (t === "Bash") assert.ok(routeToolName(t) !== undefined, "Bash is the one routed built-in the gate evaluates");
+    else assert.equal(routeToolName(t), undefined, `${t} is exec-routed but the gate has a route for it`);
+  }
+});
+
+test("F1-nested-skill-dirs-covered-or-disclosed (#449): the nested-dir residual is stated in the judgment file and the K md, and the enumerator finds a planted nested dir", () => {
+  const file = loadJudgments();
+  for (const tool of ["Skill", "SlashCommand"]) assert.ok(/nested/i.test(file.judgments.find((j) => j.tool === tool)!.reason), `${tool} reason names the nested-directory residual`);
+  assert.ok(/nested/i.test(readFileSync(PROPOSAL_MD, "utf8")), "the K md names the nested-directory residual");
+  const root = mkdtempSync(join(tmpdir(), "nested-"));
+  try {
+    for (const d of [".claude/skills", "pkg/sub/.claude/commands", ".claude/worktrees/w1/.claude/agents", "node_modules/x/.claude/agents", "pkg/.claude/other"]) mkdirSync(join(root, d), { recursive: true });
+    assert.deepEqual(findNestedSkillDirs(root), [".claude/worktrees/w1/.claude/agents", "pkg/sub/.claude/commands"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  assert.ok(Array.isArray(findNestedSkillDirs(ROOT)), "runs over the real tree");
 });
