@@ -243,6 +243,9 @@ function namedPaths(root: string): string[] {
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
+/** RED-commit stub: extra protected targets for a linked worktree. */
+export const worktreeExtraPaths = (_root: string): string[] => [];
+
 /** Named paths that must exist on disk (the others may legitimately be absent). */
 const MUST_EXIST = [SHIPPED_REL, "hooks/launch-gate.sh", "src/qa/gate-launcher-pin-check.ts"];
 

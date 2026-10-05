@@ -30,7 +30,11 @@ export interface Finding {
   detail: string;
   /** True for a finding that matches KNOWN_PROJECT_CONFIG: reported, not counted. */
   acknowledged?: true;
+  scope?: "session-writable" | "ambient";
 }
+
+/** RED-commit stub. */
+export const exitCodeFor = (findings: readonly Finding[]): number => (findings.length === 0 ? 0 : 1);
 
 export interface PreflightInput {
   repoRoot: string;
