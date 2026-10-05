@@ -307,11 +307,12 @@ test("F1-skill-protect-no-overblock: a write under .claude/worktrees/ is not den
 const SHELL_PROFILE_FILES = ["~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.config/fish/", "~/.zlogin", "~/.zlogout", "~/.bash_logout", "~/.bash_aliases", "~/Documents/PowerShell/", "~/Documents/WindowsPowerShell/"];
 test("F1-shell-profile-files-protected-or-residual-owned: every login-shell profile file is on the protected list, denied for every write verb, and has its K Edit entry", () => {
   const proposal = readFileSync(PROPOSAL_PATH, "utf8");
-  for (const f of SHELL_PROFILE_FILES) {
+  for (const raw of SHELL_PROFILE_FILES) {
+    const f = raw.toLowerCase(); // the protected list is canonical (lowercase)
     assert.ok(PATHS.all.includes(f), `shell profile file not protected: ${f}`);
     assert.deepEqual(missingEditDenies(proposal, [f]), [], `K Edit entry missing for ${f}`);
     for (const verb of PROTECTED_VERBS) {
-      const v = decide(WORLD(shipped()), { ...writeRecord(f), verbs: [verb] });
+      const v = decide(WORLD(shipped()), { ...writeRecord(probeTarget(f)), verbs: [verb] });
       assert.equal(v.outcome, "deny", `${verb} ${f}: ${JSON.stringify(v)}`);
     }
   }

@@ -1,6 +1,7 @@
 // #429 / #424 (S7): the per-tool exec judgment (docs/qa/tool-exec-judgment.json), its validator, and the values derived
 // from it (the K matcher, the residual list). Pure helpers: tests run mutants on in-memory copies.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type Judgment = "exec-routed" | "exec-residual" | "not-exec";
@@ -74,4 +75,29 @@ export const residualEntries = (file: JudgmentFile): JudgmentEntry[] => file.jud
 /** The K matcher: the exec-routed tools, sorted, then the MCP pattern token. */
 export function deriveMatcher(file: JudgmentFile): string {
   return [...routedTools(file).sort(), "mcp__.*"].join("|");
+}
+
+const NESTED_NAMES: ReadonlySet<string> = new Set(["skills", "commands", "agents"]);
+
+/** Read-only enumerator (#449): existing nested .claude/{skills,commands,agents} directories below the root (root-level
+ * ones are protected by name; node_modules and .git are skipped). A kernel target is exact or a trailing-/ prefix, so a
+ * nested directory cannot be one rule; K activation reviews this list. Sorted, project-relative, forward slashes. */
+export function findNestedSkillDirs(root: string): string[] {
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name === "node_modules" || e.name === ".git") continue;
+      const child = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (rel.endsWith(".claude") && NESTED_NAMES.has(e.name) && rel !== ".claude") out.push(child);
+      walk(child);
+    }
+  };
+  walk("");
+  return out.sort();
 }

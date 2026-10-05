@@ -307,6 +307,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-docs-qa-tool-exec-judgment-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "docs/qa/tool-exec-judgment.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-docs-qa-tool-inventory-json",
       "effect": "deny",
       "verbs": [
@@ -987,6 +1004,57 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-qa-protected-path-list-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/protected-path-list.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-tool-exec-judgment-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/tool-exec-judgment.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-aliases",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_aliases"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-bash-login",
       "effect": "deny",
       "verbs": [
@@ -999,6 +1067,23 @@
       ],
       "targets": [
         "~/.bash_login"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-logout",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_logout"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1126,6 +1211,24 @@
       "mandatory": true
     },
     {
+      "id": "protect-home-claude-shell-snapshots",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/shell-snapshots",
+        "~/.claude/shell-snapshots/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-claude-skills",
       "effect": "deny",
       "verbs": [
@@ -1230,6 +1333,40 @@
       "mandatory": true
     },
     {
+      "id": "protect-home-zlogin",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zlogin"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zlogout",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zlogout"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-zprofile",
       "effect": "deny",
       "verbs": [
@@ -1276,6 +1413,42 @@
       ],
       "targets": [
         "~/.zshrc"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-documents-powershell",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/documents/powershell",
+        "~/documents/powershell/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-documents-windowspowershell",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/documents/windowspowershell",
+        "~/documents/windowspowershell/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1542,6 +1715,20 @@
       ],
       "targets": [
         "~/.config/git"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-documents",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/documents"
       ],
       "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true

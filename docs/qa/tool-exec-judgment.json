@@ -66,13 +66,13 @@
     {
       "tool": "Skill",
       "judgment": "exec-residual",
-      "reason": "Runs skill content that can carry shell preprocessing. Conditional on the session being unable to author that content: the skill, command, agent and plugin directories are write-protected. Limit: this does not make installed plugin or marketplace content trusted, and does not cover a directory named through --plugin-dir or a setting pointing outside those roots (not enumerable, unmeasured).",
+      "reason": "Runs skill content that can carry shell preprocessing. Conditional on the session being unable to author that content: the skill, command, agent and plugin directories are write-protected. Limit: this does not make installed plugin or marketplace content trusted, and does not cover a directory named through --plugin-dir or a setting pointing outside those roots (not enumerable, unmeasured). Residual #449: nested .claude/skills, commands and agents directories (below a subdirectory or under .claude/worktrees/) are NOT protected (a kernel target is exact or a trailing-/ prefix, no globs); src/qa/tool-exec-judgment.ts findNestedSkillDirs lists existing ones for K activation review.",
       "residualCondition": "authorable-content-protected"
     },
     {
       "tool": "SlashCommand",
       "judgment": "exec-residual",
-      "reason": "Same as Skill, for command files; same protected directories and same limit.",
+      "reason": "Same as Skill, for command files; same protected directories and same limits, including the nested-directory residual (#449).",
       "residualCondition": "authorable-content-protected"
     },
     {

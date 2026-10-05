@@ -267,6 +267,18 @@ function namedPaths(root: string): string[] {
     "~/.zprofile",
     "~/.zshenv",
     "~/.config/fish/",
+    "~/.zlogin",
+    "~/.zlogout",
+    "~/.bash_logout",
+    "~/.bash_aliases",
+    "~/Documents/PowerShell/", // PowerShell profile directories (the PowerShell tool is routed, but pwsh can be launched by a gated command)
+    "~/Documents/WindowsPowerShell/",
+    // #448 (S7, red-team HIGH): the Bash tool sources snapshot-bash-*.sh from here into every gated command's shell.
+    "~/.claude/shell-snapshots/",
+    // #429 LOWs: the judgments and the two instruments that derive the protected list and the K matcher.
+    "docs/qa/tool-exec-judgment.json",
+    "src/qa/tool-exec-judgment.ts",
+    "src/qa/protected-path-list.ts",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 

@@ -18,6 +18,7 @@
       "Edit(/.thoth/halt-state/**)",
       "Edit(/.thoth/policy.json)",
       "Edit(/docs/qa/s5-central-classification.json)",
+      "Edit(/docs/qa/tool-exec-judgment.json)",
       "Edit(/docs/qa/tool-inventory.json)",
       "Edit(/hooks/launch-gate.sh)",
       "Edit(/hooks/pretooluse-kernel-gate.mjs)",
@@ -58,7 +59,11 @@
       "Edit(/src/policy/tools/classification.ts)",
       "Edit(/src/policy/tools/mcp-enumeration.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
+      "Edit(/src/qa/protected-path-list.ts)",
+      "Edit(/src/qa/tool-exec-judgment.ts)",
+      "Edit(~/.bash_aliases)",
       "Edit(~/.bash_login)",
+      "Edit(~/.bash_logout)",
       "Edit(~/.bash_profile)",
       "Edit(~/.bashrc)",
       "Edit(~/.claude.json)",
@@ -66,15 +71,20 @@
       "Edit(~/.claude/commands/**)",
       "Edit(~/.claude/plugins/**)",
       "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/shell-snapshots/**)",
       "Edit(~/.claude/skills/**)",
       "Edit(~/.config/fish/**)",
       "Edit(~/.config/git/attributes)",
       "Edit(~/.config/git/config)",
       "Edit(~/.gitconfig)",
       "Edit(~/.profile)",
+      "Edit(~/.zlogin)",
+      "Edit(~/.zlogout)",
       "Edit(~/.zprofile)",
       "Edit(~/.zshenv)",
-      "Edit(~/.zshrc)"
+      "Edit(~/.zshrc)",
+      "Edit(~/documents/powershell/**)",
+      "Edit(~/documents/windowspowershell/**)"
     ]
   }
 }
