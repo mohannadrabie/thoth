@@ -182,8 +182,8 @@ test("TRUST-6c-empty-entry: an empty PATH entry means the current directory and 
 });
 
 test("TRUST-6d-dot-and-relative-entry: . and a relative entry are scanned against cwd as untrusted", () => {
-  for (const entry of [".", "./bin", "bin", "../x"]) {
-    const dir = entry === "." ? "/work/proj" : entry === "./bin" ? "/work/proj/bin" : entry === "bin" ? "/work/proj/bin" : "/work/x";
+  for (const entry of [".", "./bin", "bin"]) { // a ".." entry denies instead (TRUST-20)
+    const dir = entry === "." ? "/work/proj" : "/work/proj/bin";
     const w = posixWorld({ path: `/usr/bin:${entry}`, dirs: { [dir]: ["ls"] }, cwd: "/work/proj" });
     assert.equal(denied(checkBareBinaries(["ls"], w)).kind, "shadow", entry);
   }

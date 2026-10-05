@@ -239,6 +239,22 @@ function onlyRootCanWrite(ports: TrustPorts, dir: string): boolean {
   }
 }
 
+/** POSIX: lstat dir/name for each name. undefined = every name is absent or unreachable; otherwise the first name that is present
+ * (`present`) or whose probe failed some other way (`code`). */
+function probeNames(ports: TrustPorts, dir: string, names: readonly string[]): { name: string; present: boolean; code: string } | undefined {
+  for (const name of names) {
+    try {
+      ports.lstat(joinPath("posix", dir, name));
+      return { name, present: true, code: "" };
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") continue;
+      return { name, present: false, code };
+    }
+  }
+  return undefined;
+}
+
 /** Whether `dir` is a trusted system directory (its real path is allowlisted and, on POSIX, owner and mode check out). */
 export function isTrustedDirectory(ports: TrustPorts, dir: string): boolean {
   try {
@@ -282,6 +298,11 @@ function resolveEntries(ports: TrustPorts, pathValue: string): { dirs: ScanDir[]
   for (const rawEntry of pathValue.split(win ? ";" : ":")) {
     let entry = rawEntry;
     if (win && entry.length >= 2 && entry.startsWith('"') && entry.endsWith('"')) entry = entry.slice(1, -1);
+    // A ".." segment is folded lexically here, but the shell resolves it through the file system, so after a symlink the gate
+    // could list a different directory than the shell searches. Fail closed (Issue #445 re-confirm, R2).
+    if (entry.split(win ? /[\\/]/ : "/").includes("..")) {
+      return { dirs, problem: { kind: "unreadable-dir", reason: `PATH entry ${bounded(entry)} contains a ".." segment, so the directory the shell searches cannot be told from the one the gate lists; fail-closed.` } };
+    }
     // An empty entry, `.` and a relative entry all mean the current directory (the shell's reading).
     const absolute = win ? /^([A-Za-z]:[\\/]|[\\/]{2})/.test(entry) : entry.startsWith("/");
     const target = absolute ? entry : joinPath(platform, ports.cwd(), entry);
@@ -351,7 +372,14 @@ function check(names: readonly string[], ports: TrustPorts): TrustResult {
       if (code === "ENOENT" || code === "ENOTDIR") continue; // nothing there to find
       // Issue #445: on POSIX, a directory the gate cannot list (EACCES/EPERM) but whose whole real path is root-owned with no
       // group/world write cannot be planted into by the session, so there is nothing to find. Skip it. Anything else denies.
-      if (!isWin(platform) && (code === "EACCES" || code === "EPERM") && onlyRootCanWrite(ports, d.dir)) continue;
+      if (!isWin(platform) && (code === "EACCES" || code === "EPERM") && onlyRootCanWrite(ports, d.dir)) {
+        // ...but an unlistable directory can still be SEARCHABLE (mode 0711), and bash then runs dir/name. Probe each wanted name:
+        // not there, or unreachable for the shell too (ENOENT, ENOTDIR, EACCES, EPERM), is nothing to find; present or any other error denies.
+        const probed = probeNames(ports, d.dir, wanted);
+        if (probed === undefined) continue;
+        if (probed.present) return deny("shadow", `bare binary "${probed.name}" exists in an untrusted PATH directory (${bounded(d.dir)}) that cannot be listed but can be searched, where a session could have planted it; fail-closed.`);
+        return deny("unreadable-dir", `PATH directory ${bounded(d.dir)} (${d.source}) cannot be listed (${code}) and the gate cannot tell whether "${probed.name}" is there (${probed.code}); fail-closed.`);
+      }
       return deny("unreadable-dir", `PATH directory ${bounded(d.dir)} (${d.source}) cannot be listed (${code}), so the gate cannot rule out a planted "${wanted[0] ?? ""}"; fail-closed.`);
     }
     for (const name of wanted) {
