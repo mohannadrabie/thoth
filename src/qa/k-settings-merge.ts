@@ -72,7 +72,7 @@ export function mergeSettings(settings: unknown, proposal: GateProposal, editDen
   if (permissions.deny !== undefined && !Array.isArray(permissions.deny)) throw new Error("settings.permissions.deny is not an array");
   const existing = (Array.isArray(permissions.deny) ? permissions.deny : []) as unknown[];
   if (!existing.every((d) => typeof d === "string")) throw new Error("settings.permissions.deny has a non-string entry");
-  permissions.deny = [...new Set([...(existing as string[]), ...editDenies])].sort();
+  permissions.deny = [...new Set([...existing, ...editDenies])].sort();
   out.permissions = permissions;
   return out;
 }

@@ -79,7 +79,7 @@ test("k-merge CLI: dry-run default writes nothing; --write writes", () => {
     const dry = cli([`--settings=${f}`]);
     assert.equal(dry.code, 0, dry.err);
     assert.equal(readFileSync(f, "utf8"), original, "dry run did not touch the file");
-    assert.equal(JSON.parse(dry.out).hooks.PreToolUse.length, 1);
+    assert.equal((JSON.parse(dry.out) as { hooks: { PreToolUse: unknown[] } }).hooks.PreToolUse.length, 1);
     const w = cli([`--settings=${f}`, "--write"]);
     assert.equal(w.code, 0, w.err);
     assert.equal(readFileSync(f, "utf8"), dry.out, "--write writes exactly what the dry run printed");
