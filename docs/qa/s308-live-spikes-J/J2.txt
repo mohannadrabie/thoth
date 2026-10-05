@@ -1,0 +1,29 @@
+J2: the four qa checks against a scratch copy of the settings with the proposed entry (2026-10-05)
+Variant a: shell-form launcher entry (J2a-settings-shell-form.txt). Variant b: exec-form entry with env -i (J2b-settings-exec-form.txt). The latency check does not read settings; it times node <gate> with the current rules.
+
+## variant a
+$ qa gate-command-path-check.ts <SCRATCH>/j2a/.claude/settings.json C:/playground/thoth
+[SUR-13/Issue-87 gate-command-path-check] PASS: 3 command-type hook entries checked, every referenced script resolves to a real file on disk.
+$ qa gate-matcher-drift-check.ts <SCRATCH>/j2a/.claude/settings.json
+[SUR-05 gate-matcher-drift-check] FAIL: 1 referenced tool name(s) are absent from the vendored built-in-tool snapshot.
+  - "mcp__.*" is referenced (classification catalog or a .claude/settings.json hook matcher) but is ABSENT from the vendored built-in-tool snapshot (docs/qa/tool-inventory.json) -- possible dead matcher, typo, or renamed/removed tool
+  - NOTE (one-directional): this check catches a referenced tool name absent from the vendored snapshot (a dead matcher). It does NOT catch the inverse -- a new upstream built-in tool nobody has referenced anywhere yet is invisible to it by construction. Re-vendor docs/qa/tool-inventory.json from the live docs page (a human/reviewed action) to pick up a new tool name.
+$ qa gate-manifest-check.ts <SCRATCH>/j2a
+[SUR-13 gate-manifest-check] PASS: Exactly 1 gate manifest found: .claude/settings.json.
+  - .claude/settings.json
+
+## variant b
+$ qa gate-command-path-check.ts <SCRATCH>/j2b/.claude/settings.json C:/playground/thoth
+[SUR-13/Issue-87 gate-command-path-check] FAIL: 1 of 3 command-type hook entries reference a script that does not exist on disk.
+  - hooks.PreToolUse[0].hooks[0]: could not extract a ".mjs" or ".sh" script path from command "env"
+$ qa gate-matcher-drift-check.ts <SCRATCH>/j2b/.claude/settings.json
+[SUR-05 gate-matcher-drift-check] FAIL: 1 referenced tool name(s) are absent from the vendored built-in-tool snapshot.
+  - "mcp__.*" is referenced (classification catalog or a .claude/settings.json hook matcher) but is ABSENT from the vendored built-in-tool snapshot (docs/qa/tool-inventory.json) -- possible dead matcher, typo, or renamed/removed tool
+  - NOTE (one-directional): this check catches a referenced tool name absent from the vendored snapshot (a dead matcher). It does NOT catch the inverse -- a new upstream built-in tool nobody has referenced anywhere yet is invisible to it by construction. Re-vendor docs/qa/tool-inventory.json from the live docs page (a human/reviewed action) to pick up a new tool name.
+$ qa gate-manifest-check.ts <SCRATCH>/j2b
+[SUR-13 gate-manifest-check] PASS: Exactly 1 gate manifest found: .claude/settings.json.
+  - .claude/settings.json
+
+## latency (settings-independent)
+[OPS-03 gate-latency-budget-check] PASS: OPS-03: measured p99 (406.16ms) stays under the declared 2000ms latency budget.
+  - iterations=100 min=273.49ms p50=349.02ms p95=399.93ms p99=406.16ms max=406.16ms ceiling=2000ms

@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story J (live verification of the gate as it will wire) - HELD behind THOTH-ADR-0003 acceptance
+
+Evidence only; no repo behavior change, nothing written to `.claude/settings.json`. Refs #308, #398, #406, #409, #401.
+
+- `docs/qa/s308-live-spikes-J/` (new): 39 live `claude -p` calls in a scratch project, USD 0.9857 (cap 1.50), harness, scrubbed raw output and a README. `docs/plans/s308-K-proposed-entry-2026-10-05.md`: the proposed PreToolUse entry (two forms) and the K plan changes.
+- Findings that change the K plan: the PowerShell tool ran un-gated after a Bash denial (add it to the matcher; the gate refuses it); a settings env block (`CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec`, `BASH_ENV`, `MSYS=noglob`) bypasses or fails open the shell-form entry; the exec form with `env -i` held; `qa:gate-matcher-drift` fails on an `mcp__.*` matcher and `qa:gate-command-path` cannot read the exec form; `Edit(...)` deny blocks Edit and Write incl. under bypassPermissions and matches case-insensitively on Windows; gate latency in-runtime 109 to 448 ms, local p99 at most 385 ms.
+- #406 (`NODE_OPTIONS`) does not reproduce with the launcher wired; #409 keys reach the gate env and the command shell but do not stop the gate.
+
 ### Fixed - Issue #308 story F review conditions (Closes #415, #416, #417, #418, #419, #420)
 
 Refs #308. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first.
