@@ -66,3 +66,138 @@ test("CC-installed-extraction-fully-judged: the list extracted from the installe
   assert.ok(got.user.includes("shell-snapshots") && got.user.includes("session-env") && got.project.includes("skills"), "sanity: the known entries are extracted (an empty or partial extraction is a failure, not a pass)");
   assert.deepEqual(unjudged(got, judged()), []);
 });
+
+// ---- #452: both directions plus the installed version ------------------------------------------------------------------
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { checkExtraction, coverage, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
+import { runCli } from "./cc-extraction-covers-judged.ts";
+
+const names = (es: { name: string }[]): string[] => es.map((e) => e.name);
+const fullExtraction = (): { user: string[]; project: string[]; mcpJson: boolean } => ({ user: names(judged().user), project: names(judged().project), mcpJson: true });
+
+/** A fake "binary" the real extractor can read: the anchor array, project entries, the mcp literal and the end mark. */
+function fakeBinary(user: string[], project: string[], mcp: boolean): string {
+  const dir = mkdtempSync(join(tmpdir(), "cc452-"));
+  const p = join(dir, "claude-fake");
+  const arr = ["shell-snapshots", "session-env", "plugins", ...user].map((n) => JSON.stringify(n)).join(",");
+  const proj = project.map((n) => `G(Ml(Ie,".claude","${n}"),!0);`).join("");
+  const mcpText = mcp ? `U.push(Ml(Ie,".mcp.json"));` : "";
+  writeFileSync(p, `xx;let a=1;for(let S of[${arr}]){q}${proj}${mcpText}bareGitRepoScrubPaths.length=0;`, "latin1");
+  return p;
+}
+const isolatedHome = (): string => mkdtempSync(join(tmpdir(), "cc452-home-"));
+const envFor = (bin: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+  const home = isolatedHome();
+  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, ...extra };
+};
+
+test("CC-extraction-covers-judged/mutant-drops-4-of-31: an extraction missing 4 of the 31 judged user entries is reported, exactly those 4", () => {
+  const j = judged();
+  const all = names(j.user);
+  assert.equal(all.length, 31, "the judgment holds 31 user entries today");
+  const dropped = [all[3]!, all[10]!, all[17]!, all[30]!];
+  const partial = { user: all.filter((n) => !dropped.includes(n)), project: names(j.project), mcpJson: true };
+  const c = coverage(partial, j);
+  assert.deepEqual([...c.judgedNotExtracted].sort(), dropped.map((n) => `user:${n}`).sort());
+  assert.deepEqual(c.unjudged, []);
+});
+
+test("CC-extraction-covers-judged/project-and-mcp-direction: a dropped project entry and a missing .mcp.json are reported", () => {
+  const j = judged();
+  const p0 = j.project[0]!.name;
+  const c = coverage({ user: names(j.user), project: names(j.project).slice(1), mcpJson: false }, j);
+  assert.deepEqual([...c.judgedNotExtracted].sort(), [`project:${p0}`, "projectRoot:.mcp.json"].sort());
+  assert.deepEqual(c.unjudged, []);
+});
+
+test("CC-extraction-covers-judged/unjudged-direction: an extra extracted entry shows through the aggregate", () => {
+  const ex = { ...fullExtraction(), user: [...fullExtraction().user, "brand-new-dir"] };
+  assert.deepEqual(coverage(ex, judged()), { unjudged: ["user:brand-new-dir"], judgedNotExtracted: [] });
+});
+
+test("CC-extraction-covers-judged/equal-sets-pass: the full judged set yields both lists empty", () => {
+  assert.deepEqual(coverage(fullExtraction(), judged()), { unjudged: [], judgedNotExtracted: [] });
+});
+
+test("CC-extraction-covers-judged/version-parse", () => {
+  assert.equal(parseClaudeVersion("2.1.267 (Claude Code)"), "2.1.267");
+  assert.equal(parseClaudeVersion("2.1.267 (Claude Code)\nextra"), "2.1.267");
+  for (const bad of ["", "garbage", "v2", "2.1"]) assert.equal(parseClaudeVersion(bad), undefined, bad);
+});
+
+test("CC-extraction-covers-judged/version-mismatch-fails: a different installed version is FAIL even when the sets are equal", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  const ok = checkExtraction(envFor(bin), () => `${j.claudeCodeVersion} (Claude Code)`);
+  assert.equal(ok.status, "PASS", ok.reasons.join("; "));
+  const bad = checkExtraction(envFor(bin), () => "9.9.9 (Claude Code)");
+  assert.equal(bad.status, "FAIL");
+  assert.match(bad.reasons.join("\n"), /9\.9\.9/);
+  assert.ok(bad.reasons.join("\n").includes(j.claudeCodeVersion));
+});
+
+test("CC-extraction-covers-judged/fail-closed-unparseable: a throwing or unparseable version command, or a throwing extraction, is FAIL", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  assert.equal(checkExtraction(envFor(bin), () => { throw new Error("timed out"); }).status, "FAIL");
+  assert.equal(checkExtraction(envFor(bin), () => "garbage").status, "FAIL");
+  const noAnchor = join(mkdtempSync(join(tmpdir(), "cc452-")), "claude-fake");
+  writeFileSync(noAnchor, "nothing here", "latin1");
+  const r = checkExtraction(envFor(noAnchor), () => `${j.claudeCodeVersion} (Claude Code)`);
+  assert.equal(r.status, "FAIL");
+  assert.match(r.reasons.join("\n"), /anchor not found/);
+});
+
+test("CC-extraction-covers-judged/absent-binary-skipped-or-required: absent is SKIPPED by default, FAIL under THOTH_REQUIRE_CLAUDE=1, never PASS", () => {
+  const missing = join(isolatedHome(), "nope");
+  const never = (): string => { throw new Error("version must not be asked when there is no binary"); };
+  const d = checkExtraction(envFor(missing), never);
+  assert.equal(d.status, "SKIPPED");
+  assert.ok(d.reasons.length > 0);
+  const r = checkExtraction(envFor(missing, { THOTH_REQUIRE_CLAUDE: "1" }), never);
+  assert.equal(r.status, "FAIL");
+  assert.equal(checkExtraction(envFor(missing, { THOTH_REQUIRE_CLAUDE: "0" }), never).status, "SKIPPED");
+});
+
+test("CC-extraction-covers-judged/installed-live: the installed binary's extraction equals the judgment and its version equals the recorded one", (t) => {
+  const r = checkExtraction(process.env);
+  if (r.status === "SKIPPED") {
+    t.skip(`SKIPPED: ${r.reasons.join("; ")}; the pure tests above still ran`);
+    return;
+  }
+  assert.equal(r.status, "PASS", r.reasons.join("; "));
+});
+
+test("CC-extraction-covers-judged/cli-exit-codes: exit 0 PASS / 1 FAIL / 3 SKIPPED with one final parseable line", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  const ver = (v: string) => (): string => v;
+  const pass = runCli(envFor(bin), ver(`${j.claudeCodeVersion} (Claude Code)`));
+  assert.equal(pass.code, 0);
+  assert.match(pass.line, /^CC-extraction-covers-judged: PASS /);
+  assert.match(pass.line, /user \d+\/\d+/);
+  const fail = runCli(envFor(bin), ver("9.9.9 (Claude Code)"));
+  assert.equal(fail.code, 1);
+  assert.match(fail.line, /^CC-extraction-covers-judged: FAIL /);
+  const missing = join(isolatedHome(), "nope");
+  const skip = runCli(envFor(missing), ver("x"));
+  assert.equal(skip.code, 3);
+  assert.match(skip.line, /^CC-extraction-covers-judged: SKIPPED /);
+  const req = runCli(envFor(missing, { THOTH_REQUIRE_CLAUDE: "1" }), ver("x"));
+  assert.equal(req.code, 1, "never exit 3 when required");
+  // the real script, spawned: no binary -> 3, required -> 1
+  const run = (extra: NodeJS.ProcessEnv): { status: number | null; out: string } => {
+    const home = isolatedHome();
+    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
+    return { status: r.status, out: r.stdout.trim().split(/\r?\n/).at(-1) ?? "" };
+  };
+  const s = run({});
+  assert.equal(s.status, 3);
+  assert.match(s.out, /^CC-extraction-covers-judged: SKIPPED /);
+  const q = run({ THOTH_REQUIRE_CLAUDE: "1" });
+  assert.equal(q.status, 1);
+  assert.match(q.out, /^CC-extraction-covers-judged: FAIL /);
+});
