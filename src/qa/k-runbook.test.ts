@@ -1,0 +1,57 @@
+// #308 story K stage 0: the kill-switch and verification runbook states only measured facts. The two settings-based escape hatches
+// (disableAllHooks, --setting-sources user,local) are unmeasured until live probe P-K5 and may appear ONLY under the heading
+// "Unmeasured until P-K5". File names it cites are checked by the QA-14 reference resolver (diff mode) and QA-15, not here.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+
+const PATH = fileURLToPath(new URL("../../docs/runbooks/k-kill-switch-and-verification.md", import.meta.url));
+const text = readFileSync(PATH, "utf8");
+const lines = text.split(/\r?\n/);
+
+/** The heading ("## ...") each line sits under. */
+function sectionOf(index: number): string {
+  for (let i = index; i >= 0; i--) {
+    const m = /^#{1,6}\s+(.*)$/.exec(lines[i]!);
+    if (m) return m[1]!.trim();
+  }
+  return "";
+}
+
+test("runbook: no unmeasured claim asserted", () => {
+  const UNMEASURED = "Unmeasured until P-K5";
+  assert.ok(lines.some((l) => /^#{1,6}\s+/.test(l) && l.includes(UNMEASURED)), `a heading "${UNMEASURED}" exists`);
+  let seen = 0;
+  lines.forEach((l, i) => {
+    if (/disableAllHooks|--setting-sources\s+user,local/.test(l)) {
+      seen++;
+      assert.ok(sectionOf(i).includes(UNMEASURED), `line ${String(i + 1)} names an unmeasured escape hatch outside the unmeasured section: ${l.trim()}`);
+    }
+  });
+  assert.ok(seen >= 2, "both unmeasured items are named (so the section is not vacuous)");
+});
+
+test("runbook: per-worktree emission step names --form and a human-run write to that worktree's settings.local.json", () => {
+  assert.match(text, /--print-worktree-targets --form=relative/);
+  assert.match(text, /--form=absolute/);
+  assert.match(text, /settings\.local\.json/);
+  assert.match(text, /human/i);
+});
+
+test("runbook: states start a NEW session after any settings change", () => {
+  assert.ok(text.includes("start a NEW session after any settings change"));
+});
+
+test("runbook: kill switch follows plan section 3 (checkout, revert never force-push, or delete the entry; new session; ls probe)", () => {
+  assert.match(text, /git -C <checkout> checkout -- \.claude\/settings\.json/);
+  assert.match(text, /git revert/);
+  assert.match(text, /never force-push/i);
+  assert.match(text, /hooks\.PreToolUse/);
+  assert.match(text, /`ls`/);
+});
+
+test("runbook: discloses the joint-lag residual of the k-blocker row", () => {
+  assert.match(text, /list lag/i);
+  assert.match(text, /re-run/i);
+});
