@@ -27,7 +27,7 @@ import type { CentralPolicySource } from "./central-source.ts";
 import type { Rule } from "../kernel/rule-types.ts";
 import { ADMISSIBLE_SERVER_NAME, CLASS_MARKER_VERBS, MCP_TARGET_PREFIX } from "../normalizer/tool-class-format.ts";
 import { normalize } from "../normalizer/registry.ts";
-import "../normalizer/shell.ts";
+import { REDIRECT_DECORATES_UNRESOLVED } from "../normalizer/shell.ts";
 import { decide } from "../kernel/kernel.ts";
 import { mcpRedirectCalls } from "../fixtures/mcp-redirect-commands.ts";
 
@@ -57,6 +57,12 @@ const LOADED: Shape[] = [
   { label: "server prefix only", rule: { id: "ok-server", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}/`] }, field: "" },
   { label: "an exact server-and-tool target", rule: { id: "ok-exact", effect: "deny", targets: [`${MCP_TARGET_PREFIX}${SERVER}/run`] }, field: "" },
 ];
+
+// F8 (Issue #411) recorded act (SE ADR-0005): a real redirect record is now unresolved; these checks model the resolvable
+// record a producer command set (story E0) will emit by dropping only the F8 cause.
+function withoutF8(r: ReturnType<typeof normalize>): ReturnType<typeof normalize> {
+  return { ...r, unresolved: r.unresolved.filter((u) => u !== REDIRECT_DECORATES_UNRESOLVED) };
+}
 
 function load(layer: FailedLayerName, rules: Rule[]): LoadResult {
   return loadText(layer, JSON.stringify({ version: "1.0.0", rules }));
@@ -191,7 +197,8 @@ test("R2-13 reachability-accepts-every-shell-emitted-target (Issue #328): for re
   }
   const emitted: Emitted[] = [];
   for (const call of calls) {
-    const record = normalize("shell", call);
+    const normalized = normalize("shell", call);
+    const record = { ...normalized, unresolved: normalized.unresolved.filter((u) => u !== REDIRECT_DECORATES_UNRESOLVED) }; // F8 (#411) recorded act: the real record is now unresolved; model the resolvable record a producer set (E0) would emit
     assert.equal(record.targets.length, 1, `${call.command}: the shell normalizer emits exactly one target`);
     const target = record.targets[0] as string;
     assert.ok(target.startsWith(MCP_TARGET_PREFIX), `${call.command}: the emitted target ${JSON.stringify(target)} sits under the MCP prefix (the instrument must be able to fail)`);
@@ -211,7 +218,7 @@ test("R2-13 reachability-accepts-every-shell-emitted-target (Issue #328): for re
     if (!r.ok) problems.push(`${layer}: the layer failed to load over rules the kernel matches: ${r.message}`);
   }
   for (const a of authored) {
-    const shellRecord = normalize("shell", { command: a.from.command, environment: "unknown", identity: "s7b-issue-328" });
+    const shellRecord = withoutF8(normalize("shell", { command: a.from.command, environment: "unknown", identity: "s7b-issue-328" }));
     const verdict = decide({ rules: { version: "1.0.0", rules: [a.rule] }, defaultOutcome: "allow" }, shellRecord);
     if (verdict.outcome !== "deny") problems.push(`${a.rule.id} (${a.from.command}): the real kernel says ${verdict.outcome}, expected deny`);
   }
@@ -231,7 +238,7 @@ test("R2-13 reachability-accepts-every-shell-emitted-target (Issue #328): for re
       markerOnlyLoaded += 1;
       if (!r.ok) problems.push(`marker-only + ${JSON.stringify(e.target)}: rejected, but a class record can match it: ${r.message}`);
     }
-    const shellRecord = normalize("shell", { command: e.command, environment: "unknown", identity: "s7b-issue-328" });
+    const shellRecord = withoutF8(normalize("shell", { command: e.command, environment: "unknown", identity: "s7b-issue-328" }));
     const verdict = decide({ rules: { version: "1.0.0", rules: [markerRule] }, defaultOutcome: "allow" }, shellRecord);
     if (verdict.outcome !== "allow") problems.push(`marker-only + ${JSON.stringify(e.target)}: matched the shell record, so the rejection would be unsound`);
   }

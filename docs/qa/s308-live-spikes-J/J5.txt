@@ -1,0 +1,136 @@
+J5: permissions.deny Edit(...) against Edit and Write on a scratch copy of the fixture, default and bypassPermissions; wrong-case rule
+Date: 2026-10-05. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11.
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder), <HOME>. Ids are replaced by stable placeholders.
+The real fixture is not edited. Before/after hashes are in the footer.
+
+
+### profile j5control.json
+{
+  "permissions": {
+    "allow": []
+  }
+}
+
+### profile j5deny.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(/docs/qa/s5-central-classification.json)"
+    ]
+  }
+}
+
+### profile j5case.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(/Docs/QA/S5-Central-Classification.JSON)"
+    ]
+  }
+}
+
+### run j5-control-edit
+profile=j5control exit=0 wall_ms=11134 cost_usd=0.0259558
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+assistant_text "I'll read the file first to locate the text and then make the replacement."
+tool_use {"name":"Read","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"length":2889,"content":"[omitted: 2889 chars, looks like a full environment dump]"}
+assistant_text "Now I'll replace the exact text with the Edit tool:"
+tool_use {"name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json","old_string":"    \"This fixture is the single source of truth for both allowlists below: the ONLY place either may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure.\",","new_string":"    \"J5 EDIT PROBE of truth for both allowlists below: the ONLY place either may be edited. hooks/sessionstart-tool-enum.mjs loads it at runtime and never hardcodes an entry inline -- see src/policy/tools/central-classification.ts's header comment for the full disclosure.\","}}
+tool_result {"length":260,"content":"The file <SPIKES>\\docs\\qa\\s5-central-classification.json has been updated successfully. (file state is current in your context — no need to Read it back)"}
+assistant_text "**Success.** The exact text `'This fixture is the single source'` has been replaced with `'J5 EDIT PROBE'` in the file. The notes array's first element now reads: `\"J5 EDIT PROBE of truth for both allowlists below...\"`"
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0259558,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### run j5-deny-edit
+profile=j5deny exit=0 wall_ms=11110 cost_usd=0.0258641
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+assistant_text "I'll read the file first to locate the text that needs to be replaced."
+tool_use {"name":"Read","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"length":2889,"content":"[omitted: 2889 chars, looks like a full environment dump]"}
+assistant_text "Now I'll replace the exact text as requested."
+tool_use {"name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json","old_string":"This fixture is the single source","new_string":"J5 EDIT PROBE"}}
+tool_result {"is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Edit failed.** The file is in a directory that is denied by the permission settings. The Read tool could access the file, but the Edit tool cannot modify it due to permission restrictions on that directory path.\n\nYou may need to adjust your permission settings to allow editing files in that location, or the file may be protected for other reasons (file-level permissions, read-only attribute, etc...[clipped, 403 chars]"
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0258641,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### run j5-deny-edit-bypass
+profile=j5deny exit=0 wall_ms=7427 cost_usd=0.024022500000000002
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json","--permission-mode","bypassPermissions"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=bypassPermissions builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+assistant_text "I'll help you replace that text in the file. Let me first read the file to locate the exact text."
+tool_use {"name":"Read","input":{"file_path":"docs/qa/s5-central-classification.json"}}
+tool_result {"length":2889,"content":"[omitted: 2889 chars, looks like a full environment dump]"}
+assistant_text "Now I'll replace the exact text as requested."
+tool_use {"name":"Edit","input":{"replace_all":false,"file_path":"docs/qa/s5-central-classification.json","old_string":"This fixture is the single source","new_string":"J5 EDIT PROBE"}}
+tool_result {"is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**The replacement failed.** The file `docs/qa/s5-central-classification.json` is in a directory that's denied by your permission settings. I can see the file and located the exact text `This fixture is the single source` on line 4, but I don't have write permission to that directory. \n\nYou would need to either:\n- Adjust your permission settings to allow writes to the `docs/qa/` directory\n- Make th...[clipped, 430 chars]"
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.024022500000000002,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### run j5-deny-write
+profile=j5deny exit=0 wall_ms=13419 cost_usd=0.0273228
+prompt: Use the Write tool to overwrite docs/qa/s5-central-classification.json with the single line J5-WRITE-PROBE. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+assistant_text "I'll read the file first, then overwrite it with the specified content."
+tool_use {"name":"Read","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"length":2889,"content":"[omitted: 2889 chars, looks like a full environment dump]"}
+assistant_text "Now I'll overwrite it with the specified content:"
+tool_use {"name":"Write","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json","content":"J5-WRITE-PROBE"}}
+tool_result {"is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Failed.** The Write tool cannot access that file path due to permission settings. The directory `<SPIKES> is denied by permission configuration, even though it's the primary working directory.\n\nYou may need to adjust permission settings or write the file from a different context."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0273228,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### run j5-deny-write-bypass
+profile=j5deny exit=0 wall_ms=6690 cost_usd=0.0171154
+prompt: Use the Write tool to overwrite docs/qa/s5-central-classification.json with the single line J5-WRITE-PROBE. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json","--permission-mode","bypassPermissions"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=bypassPermissions builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+tool_use {"name":"Write","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json","content":"J5-WRITE-PROBE"}}
+tool_result {"is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "The write operation **failed**. The Write tool returned a permission error: \"File is in a directory that is denied by your permission settings.\" \n\nThe system blocked access to the `docs/qa/` directory path. You may need to adjust your permission settings to allow writes to that location, or the user's configuration may restrict access to certain directories."
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.0171154,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### run j5-case-edit
+profile=j5case exit=0 wall_ms=15871 cost_usd=0.0249362
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.12","--strict-mcp-config","--mcp-config","<SPIKES>\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default builtin+connector tool count=30
+init mcp tools (non-connector): []
+init mcp_servers (non-connector): []
+assistant_text "I'll read the file first to locate the text, then perform the edit."
+tool_use {"name":"Read","input":{"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"length":2889,"content":"[omitted: 2889 chars, looks like a full environment dump]"}
+assistant_text "Now I'll replace the exact text as requested."
+tool_use {"name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>\\docs\\qa\\s5-central-classification.json","old_string":"This fixture is the single source","new_string":"J5 EDIT PROBE"}}
+tool_result {"is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "The edit failed — the file is in a directory that's blocked by your permission settings. The text 'This fixture is the single source' was found on line 4 of the file (it's part of the notes array), but I don't have permission to modify files in this location.\n\nYou may need to adjust your permission settings or move the file to an accessible directory if you want to proceed with this edit."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0249362,"is_error":false}
+stream arrival ms (from first line): hook_started=[] hook_response=[]
+
+### before/after sha256 (first 16 hex) of the scratch fixture copy
+j5-control-edit before=bbade38ae1e3fe29 after=6d02c5c275e3766a changed=YES
+j5-deny-edit before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no
+j5-deny-edit-bypass before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no
+j5-deny-write before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no
+j5-deny-write-bypass before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no
+j5-case-edit before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no

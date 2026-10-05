@@ -1,7 +1,7 @@
 ---
 id: THOTH-ADR-0003
 title: Amendment to THOTH-ADR-0001 - the central-classification fixture is an input to the PreToolUse gate (docs/qa/s5-central-classification.json)
-status: proposed
+status: accepted
 date: 2026-10-02
 applicableTo:
   - security
@@ -11,20 +11,21 @@ constraints:
   security:
     - "The PreToolUse gate MAY read docs/qa/s5-central-classification.json as an enforcement input for its tool classification (the centralLayer.tools list merged into the gate's catalog). This widens THOTH-ADR-0001 rule 1 for that one use of that one file; it MUST NOT be cited to justify any other allowlist, file, or control."
     - "Precedence: this ADR replaces the sentence of THOTH-ADR-0001 rule 2 (and the matching sentence of its security constraint 2) that begins 'A pull request that only adds or removes an entry in that file MUST NOT be held for a fresh dated review report', as restated in the next constraint; it replaces THOTH-ADR-0001's residual row 'Inert classification'; it scopes THOTH-ADR-0001 rule 5 as stated below; it extends THOTH-ADR-0001 rule 4 to test code. Every other THOTH-ADR-0001 rule stands unchanged, and where the two disagree on those points this ADR governs."
-    - "Every entry in docs/qa/s5-central-classification.json, including its class label, MUST arrive through a pull request whose diff shows it; the merged diff is the approval (human ruling 2026-10-02). Every entry ADDITION, and every label change that can change the gate's outcome for some call, MUST also arrive with a fresh dated review report in docs/reviews/; a removal keeps the 2026-09-19 exemption (Manager recommendation narrowing the human's 2026-09-19 ruling; confirmed or rejected by the human at acceptance). Under the current posture (rules [] and fallback allow) every addition is allow-granting. An entry MUST NOT lower the class of a built-in tool; the catalog loader throws on that and the gate then fails closed."
+    - "Every entry in docs/qa/s5-central-classification.json, including its class label, MUST arrive through a pull request whose diff shows it; the merged diff is the approval (human rulings 2026-09-19 and 2026-10-02). An entry-only pull request (an entry added, removed or relabelled) needs no fresh dated review report: the human kept the 2026-09-19 exemption at acceptance (2026-10-05) and rejected the Manager's proposed narrowing for additions. Under the default-allow posture every addition is allow-granting, so the pull request diff review carries that weight. An entry MUST NOT lower the class of a built-in tool; the catalog loader throws on that and the gate then fails closed."
     - "THOTH-ADR-0001 rule 5 (record the resolved fixture path and source in halt-state) binds the SessionStart hook only. It does not bind the PreToolUse gate, which is write-free and MUST NOT write .thoth/halt-state/. The gate MUST still fail closed (exit 2, fixed-text stderr) when the fixture is missing or malformed, and MUST read the fixture only from its module-relative location, never from a path an environment variable selects."
     - "knownConnectors remains a SessionStart display-name list. Until Issue #381 ships, the gate MUST NOT read connector labels from it, no class label for a claude.ai connector MAY be added to the fixture, and it MUST NOT be described as a security control or as verified identity."
-    - "Before the gate is wired in .claude/settings.json, docs/qa/s5-central-classification.json MUST be protected on every session write path: Bash and mcp__ calls by the gate's deny rules (story F), and the built-in file-editing tools (Edit, Write, MultiEdit, NotebookEdit) by a permissions.deny Edit(...) entry in .claude/settings.json, which ships with story K under the human's approval. The gate does not route the built-in file tools, so its deny rules cannot protect that path."
+    - "Before the gate is wired in .claude/settings.json, docs/qa/s5-central-classification.json MUST be protected on every session write path: Bash and mcp__ calls by the gate's deny rules (story F), and the built-in file-editing tools (Edit, Write, MultiEdit, NotebookEdit) by a permissions.deny Edit(...) entry in .claude/settings.json, which ships with story K under the human's approval. The gate does not route the built-in file tools, so its deny rules cannot protect that path. The PowerShell tool is a session write path too (J3 measured it running un-gated after a Bash denial): K's proposed matcher MUST include it, which makes the gate refuse it. The other arbitrary-execution built-ins are a human decision at K, listed in the pendingHumanDecision list of the K proposal (docs/plans/s308-K-proposed-entry-2026-10-05.json), the single source; a tool the human declines becomes an owned residual row, a tool the human routes leaves that list and this ADR in the same change."
     - "Story F's protected-path list MUST name the fixture explicitly (it is read with readFileSync, not imported, so an import-graph scan cannot produce it), and a mutant test that removes the fixture's deny rule MUST fail."
-    - "Hold: #308 stories E, F, J and K, and the .claude/settings.json PreToolUse entry, MUST NOT ship before the human accepts THOTH-ADR-0003; an agent MUST NOT self-accept it."
+    - "Hold: released for #308 stories E, F and J by the human's acceptance on 2026-10-05. Story K and the .claude/settings.json PreToolUse entry MUST NOT ship without the human's separate approval recorded in docs/decisions.md."
   code:
     - "Code under hooks/ and src/, test code included, MUST NOT hardcode an entry of either list in docs/qa/s5-central-classification.json as an entry of this allowlist; a test that asserts fixture behavior (a name is listed, classified or suppressed) MUST derive the name from the fixture at run time. Not violations: an unrelated use of the same string, a synthetic name in a test's own temporary fixture, and the SUR-04 settings fixture src/policy/fixtures/allowlist-settings.ts."
 ---
 
 # THOTH-ADR-0003: The central-classification fixture is an input to the PreToolUse gate
 
-- **Status:** Proposed (2026-10-02) by `story-implementer` (Ptah). Agents MUST NOT self-accept (SE ADR-0001); the human accepts or declines at the pull request. The ADR catalog (`docs/adr-cache.mjs`) serves a `proposed` ADR's rules exactly like an accepted one's (Issue #220), so readers check this field, not the catalog. Until the human accepts, #308 stories E, F, J and K MUST NOT ship (also a catalog-served constraint above). If the human declines, the pointer sentence on ADR-0001's Status bullet is reverted in the same change.
+- **Status:** Accepted (2026-10-05) by `mohannadrabie`: "accept ADR-0003 but keep the 2026-09-19 exemption" (`docs/decisions.md`, row dated 2026-10-05 "THOTH-ADR-0003 accepted"). Proposed 2026-10-02 by `story-implementer` (Ptah); agents never self-accept (SE ADR-0001), and this status line records the human's words.
 - **Date:** 2026-10-02
+- **Amendment history (text edited in place while `proposed`):** 2026-10-05, story J review (Issues #424, #426; evidence J3 in `docs/qa/s308-live-spikes-J/`): the write-path constraint now names the PowerShell tool and the K decision on the other arbitrary-execution built-ins. Same day, architecture conditions: the closing claim and residual row 1 no longer over-claim, a residual row covers the un-routed built-ins, the tool list lives only in the K proposal, PowerShell consequence added (Refs #424). At acceptance (2026-10-05) the human kept the 2026-09-19 exemption: the Manager's proposed narrowing (a fresh dated report for every entry addition) is removed from the constraint, the Decision, the Rules, the residual table and the Consequences, and the hold is released for stories E, F and J.
 - **Deciders:** `mohannadrabie` ruled "amend THOTH-ADR-0001" on 2026-10-02 (`docs/decisions.md`, row "#308 activation: human rulings", item 1); `story-implementer` drafted this record.
 - **Tier:** project (this repository only). Lives under `docs/adr/`, listed in `maat.json` `adr.dir`.
 - **Relationship to THOTH-ADR-0001:** amends it in part. ADR-0001's Decision and Rules are not edited (SE ADR-0001: an accepted ADR's decision is never edited); its Status line points here. The exact displacements are in the "Precedence" constraint and the Decision below; every other ADR-0001 rule stands unchanged.
@@ -44,10 +45,10 @@ constraints:
 
 - The fixture is an official input to the PreToolUse gate's tool classification. This extends ADR-0001's scope for that use of that file only.
 - The pull request diff is the approval for an entry or label (human ruling 2026-10-02). A change to the loader or the hooks that read the file still needs a fresh dated report.
-- **Manager recommendation narrowing the human's 2026-09-19 ruling; confirmed or rejected by the human at acceptance:** the 2026-09-19 ruling (an entry-only PR needs no fresh dated report) no longer carries over for additions.
-  - Every entry addition, and every label change that can change the gate's outcome for some call, needs a fresh dated review report in `docs/reviews/`. A removal keeps the exemption (it can only turn a listed server back into an opaque, denied one).
-  - Under the current posture every addition is allow-granting: it turns the POL-05 opaque-source deny of an unlisted server into the default outcome, allow. The class name (`remote-mutating` included) does not change that.
-  - `CLAUDE.md`'s "Policy delivery / config surface" sentence still exempts additions until the human edits it after acceptance; this ADR outranks it (PRINCIPLES.md rule 9) once accepted.
+- **Entry-only pull requests keep the 2026-09-19 exemption (human, at acceptance on 2026-10-05):** adding, removing or relabelling an entry needs no fresh dated review report; the merged diff is the approval.
+  - The Manager had proposed a fresh report for every addition; the human rejected it.
+  - Under the default-allow posture every addition is allow-granting: it turns the POL-05 opaque-source deny of an unlisted server into the default outcome, allow. The class name (`remote-mutating` included) does not change that. The pull request diff review is the control.
+  - `CLAUDE.md`'s "Policy delivery / config surface" sentence stays as written; it agrees with this ADR.
 - An entry cannot lower a built-in's class: `assembleCatalog` throws, the gate exits 2 with the fixed classification unlock text (#308 story H).
 - Rule 5 is scoped, not removed:
   - It binds SessionStart. It records the path and source in halt-state as ADR-0001 requires.
@@ -72,7 +73,9 @@ constraints:
   - Bash and `mcp__` calls: the gate's deny rules (story F).
   - Built-in file tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`): a `permissions.deny` `Edit(...)` entry in `.claude/settings.json` (Claude Code applies Edit rules to all built-in tools that edit files). It ships with story K under the human's approval. The gate cannot cover this path because it refuses every tool name other than `Bash` and `mcp__*`.
   - Story F's protected list names the fixture explicitly, since the fixture is read, not imported; a mutant test that drops its deny rule must fail.
-  - Neither mechanism alone makes the file unwritable by a session. Both together close the session write paths this ADR knows of; a human changes the file through a reviewed PR.
+  - PowerShell tool: K's PreToolUse matcher routes it (`Bash|PowerShell|mcp__.*`), and the gate refuses any tool name other than Bash and `mcp__*`, so the tool is unusable. Without that, a session can write through PowerShell after a Bash denial (story J, J3).
+  - Other arbitrary-execution built-ins: a human decision at K, because routing some of them would deny subagents and slash commands. The tools and what routing each would break are the pendingHumanDecision list in docs/plans/s308-K-proposed-entry-2026-10-05.json (single source, not retyped here). A tool the human declines at K becomes an owned residual row below; a tool the human routes leaves that list and this ADR in the same change.
+  - Neither mechanism alone makes the file unwritable by a session. Together they cover Bash, `mcp__`, PowerShell (once K's matcher includes it) and the file-editing tools; the built-ins in the pendingHumanDecision list stay uncovered until the K decision (residual row below). A human changes the file through a reviewed PR.
 - ADR-0001's removal trigger stands and covers this ADR: when an out-of-repo classification source ships (Issue #224), this ADR and ADR-0001 are superseded together, and this ADR MUST NOT be extended to cover that source.
 - ADR-0001's residual row "Inert classification" is superseded by this ADR: `centralLayer.tools[].class` drives the gate's classification of MCP tools.
 
@@ -80,22 +83,23 @@ constraints:
 
 - **MUST** limit the widening to the gate's use of `centralLayer.tools` in `docs/qa/s5-central-classification.json` as an enforcement input for tool classification. **MUST NOT** cite this ADR or ADR-0001 to justify any other allowlist, file, or control.
 - **MUST** treat this ADR as replacing the sentence of ADR-0001 rule 2 that begins "A pull request that only adds or removes an entry in that file MUST NOT be held for a fresh dated review report", and as replacing ADR-0001's residual row "Inert classification"; every other ADR-0001 rule stands. Where the two disagree on those points, this ADR governs.
-- **MUST** route every entry and class label through a pull request whose diff shows it; the merged diff is the approval. **MUST** attach a fresh dated review report in `docs/reviews/` for every entry addition and every label change that can change the gate's outcome for some call (Manager recommendation pending the human's confirmation at acceptance); a removal keeps the 2026-09-19 exemption. **MUST NOT** add an entry that lowers a built-in tool's class.
+- **MUST** route every entry and class label through a pull request whose diff shows it; the merged diff is the approval, and an entry-only pull request needs no fresh dated review report (2026-09-19 exemption, kept by the human at acceptance). **MUST NOT** add an entry that lowers a built-in tool's class.
 - **MUST** treat ADR-0001 rule 5 as binding SessionStart only. **MUST NOT** make the PreToolUse gate write to `.thoth/halt-state/` or anywhere else. **MUST** keep the gate failing closed (exit 2, fixed-text stderr) on a missing or malformed fixture, reading it only from its module-relative location. **MUST NOT** let any environment variable select the fixture file.
 - **MUST NOT** let the gate read `knownConnectors`, and **MUST NOT** add a class label for a claude.ai connector to the fixture, before Issue #381 ships. **MUST NOT** describe `knownConnectors` as a security control or as verified identity.
 - **MUST NOT** hardcode an entry of either list as an entry of this allowlist in code under `hooks/` or `src/`; this includes test code. A test that asserts fixture behavior **MUST** derive the name from the fixture at run time. Not violations: an unrelated use of the same string, a synthetic name in a test's own temporary fixture, and `src/policy/fixtures/allowlist-settings.ts`.
-- **MUST** protect `docs/qa/s5-central-classification.json` on every session write path before the gate is wired in `.claude/settings.json`: the gate's deny rules for Bash and `mcp__` calls (story F), and a `permissions.deny` `Edit(...)` entry for the built-in file tools (ships with story K under the human's approval). **MUST NOT** state or imply that the gate's deny rules alone make the file unwritable.
+- **MUST** protect `docs/qa/s5-central-classification.json` on every session write path before the gate is wired in `.claude/settings.json`: the gate's deny rules for Bash and `mcp__` calls (story F), and a `permissions.deny` `Edit(...)` entry for the built-in file tools (ships with story K under the human's approval). K's proposed matcher **MUST** include the PowerShell tool so the gate refuses it (the human approves the entry at K); the other arbitrary-execution built-ins are a human decision at K, listed in the K proposal's pendingHumanDecision list. **MUST NOT** state or imply that the gate's deny rules alone make the file unwritable.
 - **MUST** name the fixture explicitly in story F's protected-path list, and **MUST** include a mutant test that removes the fixture's deny rule and fails.
-- **MUST NOT** ship #308 stories E, F, J or K, or the `.claude/settings.json` PreToolUse entry, before the human accepts this ADR. **MUST NOT** self-accept it.
+- **MUST NOT** ship #308 story K, or the `.claude/settings.json` PreToolUse entry, without the human's separate approval recorded in `docs/decisions.md`. Stories E, F and J were released by the human's acceptance (2026-10-05).
 - **MUST** supersede this ADR together with ADR-0001 when Issue #224's source ships.
 
 # Residual risk (disclosed)
 
 | Residual | Effect |
 |---|---|
-| Same-session content tampering | The gate reads the fixture on every call, so a well-formed in-session edit (for example adding a server entry) takes effect on the next gate call. Nothing records it: the gate writes nothing, and SessionStart records the path and source once, with no content hash. The two protections above (gate deny rules, `permissions.deny` `Edit(...)`) are the only controls, and they are not yet in place |
+| Same-session content tampering | The gate reads the fixture on every call, so a well-formed in-session edit (for example adding a server entry) takes effect on the next gate call. Nothing records it: the gate writes nothing, and SessionStart records the path and source once, with no content hash. The two protections above (gate deny rules, `permissions.deny` `Edit(...)`) are the controls for Bash, `mcp__`, PowerShell and the file-editing tools, and they are not yet in place |
+| Un-routed arbitrary-execution built-ins | The tools in the pendingHumanDecision list of the K proposal are neither gated nor covered by an `Edit(...)` entry. Whether any of them can write the fixture is unmeasured (story J, red-team 4). Owner: `mohannadrabie`, decided at K; a declined tool stays here as an accepted residual |
 | Name spoofability (INT-07) | The gate classifies by server name, which the project's `.mcp.json` chooses, so a server named like an entry inherits its class. Under default allow, nothing but the deny rules of stories E and F stops it. ADR-0001's display-name row, now on a path that grants allow |
-| The reviewed-PR trigger rests on a Manager recommendation | Until the human confirms it, ADR-0001's exemption for additions stands in `CLAUDE.md`; `master` has no branch protection or CODEOWNERS (ADR-0001 residual), so the review holds by discipline |
+| Entry-only pull requests need no fresh dated report | Every addition is allow-granting under default allow, and the merged diff is its only review (2026-09-19 exemption, kept by the human 2026-10-05). `master` has no branch protection or CODEOWNERS (ADR-0001 residual), so the review holds by discipline |
 | In-repo policy source | Unchanged from ADR-0001: a session with commit access can edit the file; the protections above narrow this for a wired gate but are not property 2 of REQUIREMENTS.md §0.4 |
 | Gate and SessionStart read the file by different locations (module-relative vs project-relative) | Two copies could disagree if the plugin is installed outside the project; the shared-inventory agreement test (story C) covers this repository only |
 | No halt-state record for a gate-side fixture failure | The only trace is stderr text and exit 2 |
@@ -109,8 +113,9 @@ constraints:
 - The no-hardcode rule has a testable reading for tests, with the existing sites triaged.
 
 ## Negative
+- Routing the PowerShell tool through K's matcher makes it unusable in gated sessions: the gate refuses any tool name other than Bash and `mcp__*`.
 - ADR-0001's accepted text no longer describes the whole rule set alone; readers must read both.
-- The standing exception now covers a control that can grant allow; every addition carries a heavier review (pending the human's confirmation) and the fixture needs two protections, one of which waits for story K.
+- The standing exception now covers a control that can grant allow; it is reviewed through the pull request diff only (the human kept the 2026-09-19 exemption), and the fixture needs two protections, one of which waits for story K.
 
 # Alternatives considered
 
@@ -124,7 +129,7 @@ constraints:
 
 - Automated (existing): `src/policy/tools/central-classification.test.ts`; `hooks/sessionstart-tool-enum-fixnow.test.ts`; `src/policy/gate/gate-structure.test.ts` (G18, no file-write API in the gate; G19, test files derive fixture names for the files it lists).
 - Required at story F (not yet built): the protected-path list names the fixture explicitly, and a mutant test that deletes the fixture's deny rule fails (`F3-mutant-drop-fixture-deny`).
-- Manual: the single-source query recorded in ADR-0001's "Compliance verification" (non-test hits only); the conformance triage above for tests; reviewers read each fixture diff and check the report requirement for additions.
+- Manual: the single-source query recorded in ADR-0001's "Compliance verification" (non-test hits only); the conformance triage above for tests; reviewers read each fixture diff.
 
 # References
 

@@ -1,9 +1,40 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-04 (#308 stories A, B, D merged via PR #400 as `a265954`; THOTH-ADR-0003 still `proposed`, the human deferred the decision; E, F, J, K held behind it)
+**Last updated:** 2026-10-05 (THOTH-ADR-0003 accepted by the human, keeping the 2026-09-19 exemption; #308 E, F, J pushed on `s308/activation-3` as a draft PR; K held)
 
-## Resume point — 2026-10-04 (newest): PR #400 merged; THOTH-ADR-0003 decision deferred by the human
+## Resume point — 2026-10-05, later (newest): THOTH-ADR-0003 accepted; E, F, J on a draft PR
+
+- **Human, 2026-10-05:** "accept ADR-0003 but keep the 2026-09-19 exemption". The ADR is `accepted`; the Manager's narrowing is removed (decisions row "THOTH-ADR-0003 accepted"). PR #407 merged by the human.
+- **Branch:** `s308/activation-3`, synced with `origin/master`, pushed by the Manager at the human's request; draft PR open. Merge is human-only.
+- **E, F, J:** the ADR hold is released (E7, F7, J7 met). Still disclosed: F has no red-team go after its round-2 no-go (see below).
+- **K stays held:** separate human approval, plus the K blockers below (#408 E0, #409, #424, #428, #429).
+- **Still open for the human:** ratify or overrule the Manager's rulings made under pre-approval; decide whether to build E0.
+
+**Single next action:** review the draft PR; mark it ready and merge once CI is green.
+
+## Prior entry (superseded above): 2026-10-05: #308 E, F, J review-complete on `s308/activation-3` (local, not pushed), HELD behind THOTH-ADR-0003
+
+- **Branch:** `s308/activation-3`, cut from `217b4c4` (the open handoff PR #407 head). Head after the handoff commit. Not pushed. MUST NOT merge before the human accepts THOTH-ADR-0003 (E7, F7, J7; agents never self-accept).
+- **Verify (Manager, quiet tree at `7f77262`):** build, typecheck, lint rc=0; every `qa:*` rc=0; QA-14 diff mode 810 citations, 0 failed; full suite 1955/1956, 0 skipped. The 1 is R4 EBUSY (#231), which passes alone 26/26.
+
+| Story | Tier | Final verdicts | Rounds |
+|---|---|---|---|
+| E: baseline class allow rule; E6 fixture-name triage | CRITICAL | red-team go, architecture and cross-domain APPROVE-WITH-CONDITIONS (fixed: #412, #413, #414) | 0 REWORK |
+| F: 47-path protected list (generated), deny rules, F4 canonical targets, F8 redirect never hides its command (#411), F9/F9b/F10 binary and flag closed sets (#420) | CRITICAL | round 1 red-team go plus Manager triage to HIGH (#420); round 2 red-team no-go (wrapper leg), fixed; round 3 red-team INCOMPLETE twice (safety classifier), Manager probe table substitutes (34 rows as hook tests); app-security and cross-domain APPROVE-WITH-CONDITIONS, all fixed | 2 REWORK (council not reached) |
+| J: live verification (39 calls, USD 0.99); K proposal: shell form, matcher `Bash|PowerShell|mcp__.*` | CRITICAL | round 1 red-team no-go (#426 PowerShell ungated), fixed; round 2 red-team go; cross-domain APPROVE-WITH-CONDITIONS, fixed | 1 REWORK |
+| THOTH-ADR-0003 write-path amendment (still `proposed`) | CRITICAL | architecture APPROVE (re-confirm) | |
+
+- **Disclosed for the human:** F has no red-team go after its round-2 no-go. Round 3 was blocked twice by a safety classifier; closure rests on code-traced review, the conditions tests, the Manager's 34-row probe table and cross-domain's ~71 independent probes.
+- **Biggest findings this session:** wiring the gate today would deny `ls`, `cat` and `git status` (#408, story E0); `rm -rf hooks > /dev/null` was allowed (#411, fixed); `node get pods/x --context=c` ran `./get` (#420, fixed); the PowerShell tool runs outside the planned matcher (#426, fixed in the K proposal).
+- **E0 (#408):** planned (`docs/plans/s308-E0-readonly-shell-plan-2026-10-04.md`) and design-challenged (go-conditional; #409, #410). Not built: the human sees the scariest unproven assumption first (git/rg config and env levers in the execution environment).
+- **K blockers (K stays held for the human):** #408 (E0), #409, #428 (HIGH: user PATH dirs are session-writable, so a planted bare `kubectl`/`sh`/`env` runs under an allowed record), #429 and SendMessage (#424 comment): every vendored tool judged exec or not; #424 the human's routing decision for 8 built-ins; #406 closes only with K. Unmeasured before K: whether the gate fires for Bash inside a subagent, a live `Edit(~/.claude/settings.json)` probe, a J5 negative control.
+- **Rulings this session (Manager, under the human's pre-approval):** decisions rows dated 2026-10-04 and 2026-10-05 at the end of `docs/decisions.md` (Q1-Q4, E4 allow list, F8, F9/F9b/F10, J9 shell form, matcher, deferrals). Human ratification requested.
+- **Housekeeping:** 10 Issues that PR #400's comma-form `Closes` line missed are closed with comments; #308 reopened (it was closed early). Local branches `review/365-post-merge-reconfirm`, `s308/activation`, `s7/closeout` deleted (`-d`, merged). The decisions archive sweep (5 rows due) is still deferred.
+
+**Single next action:** accept or decline THOTH-ADR-0003 (as amended on this branch). After acceptance, push `s308/activation-3` and open its PR; merge once CI is green.
+
+## Prior entry (superseded above): 2026-10-04: PR #400 merged; THOTH-ADR-0003 decision deferred by the human
 
 - **Merged:** PR #400 (`s308/activation-2`) merged to `master` as `a265954` on 2026-10-05 UTC. Local branch deleted. CI on its head `4fb5ef8`: green.
 - **Human, 2026-10-04:** filed #406 (the NODE_OPTIONS fail-open, the B4b finding). **Deferred** the THOTH-ADR-0003 accept/decline ("lets not do this now"). It stays `proposed`.

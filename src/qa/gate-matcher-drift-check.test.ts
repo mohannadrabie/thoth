@@ -60,3 +60,12 @@ test("checkMatcherDrift: this repo's OWN real classification catalog + real .cla
   const result = checkMatcherDrift(classificationNames, matcherNames, new Set(inventory.tools));
   assert.equal(result.ok, true, JSON.stringify(result.details));
 });
+
+// Issue #423 (narrowed, J9 ruling 2026-10-05): the exact pattern token mcp__.* is accepted; nothing looser is.
+test("computeMatcherDrift (#423): the exact token mcp__.* and a snapshot name such as PowerShell give zero drift; a mistyped or looser token is still drift", () => {
+  const vendored = new Set(["Bash", "PowerShell"]);
+  assert.deepEqual(computeMatcherDrift(["Bash", "PowerShell", "mcp__.*"], vendored), []);
+  for (const bad of ["PowerShel", "mcp__.", "mcp__*", "mcp__.*x", "mcp__github", "MCP__.*", ".*"]) {
+    assert.equal(computeMatcherDrift([bad], vendored).length, 1, bad);
+  }
+});

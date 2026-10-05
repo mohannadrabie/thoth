@@ -56,6 +56,12 @@ import type { MergedToolClassificationSet, ToolClass } from "../tools/classifica
 import { parseCentralClassificationFixture } from "../tools/central-classification.ts";
 import { stripComments } from "../../qa/kernel-purity-check.ts";
 
+import { REDIRECT_DECORATES_UNRESOLVED } from "../normalizer/shell.ts";
+// F8 (Issue #411) recorded act (SE ADR-0005): a real shell redirect record is now unresolved (POL-05 denies it before any rule).
+// These soundness checks guard the RULES against the resolved record a producer command set (story E0, #408) will emit,
+// so they model it by clearing `unresolved` on the real record.
+const resolvable = (r: ActionRecord): ActionRecord => ({ ...r, unresolved: r.unresolved.filter((u) => u !== REDIRECT_DECORATES_UNRESOLVED) });
+
 const MARKERS = Object.values(CLASS_MARKER_VERBS);
 const FIXTURE_PATH = new URL("../../../docs/qa/s5-central-classification.json", import.meta.url);
 const STANDIN_SERVERS = ["standin-ro", "standin-ws", "standin-rm"];
@@ -466,7 +472,7 @@ test("R2-17 part 1 allow-widening-is-real (Issue #335, AC-335-3): through the RE
     const commands = [`echo x > ${target}`];
     for (const v of CATALOG_VERBS) commands.push(`tool ${v} > ${target}`, `tool ${v} pods/x --context c > ${target}`, `tool ${v} x --context c > ${target}`);
     for (const command of commands) {
-      const record = normalize("shell", { command, environment: "unknown", identity: "s7c-issue-335" });
+      const record = resolvable(normalize("shell", { command, environment: "unknown", identity: "s7c-issue-335" }));
       if (record.targets.includes(target)) probes.push({ target, record });
     }
   }
@@ -834,14 +840,14 @@ function redirectRecords(): ActionRecord[] {
   };
   const targets = new Set<string>();
   for (const call of mcpRedirectCalls()) {
-    const r = normalize("shell", call);
+    const r = resolvable(normalize("shell", call));
     add(r);
     for (const t of r.targets) if (t.startsWith(MCP_TARGET_PREFIX)) targets.add(t);
   }
   for (const target of targets) {
     for (const v of CATALOG_VERBS) {
       for (const command of [`tool ${v} > ${target}`, `tool ${v} pods/x --context c > ${target}`, `tool ${v} x --context c > ${target}`, `tool ${v} ${target}`]) {
-        add(normalize("shell", { command, environment: "unknown", identity: "s338-340" }));
+        add(resolvable(normalize("shell", { command, environment: "unknown", identity: "s338-340" })));
       }
     }
   }
@@ -945,7 +951,7 @@ test("R2-24 allow-redirect-soundness-against-the-real-kernel (Issues #338, #340,
   // kernel allows against a non-mcp record is not rejected
   const first = records[0] as ActionRecord;
   assert.equal(decide({ rules: ruleSet(allow("elsewhere", undefined, [`${MCP_TARGET_PREFIX}some-other-place/`])), defaultOutcome: "deny" }, first).outcome, "deny", "a control rule aimed at another target returns the deny baseline");
-  const pathRecord = normalize("shell", { command: "echo x > src/policy/a.txt", environment: "unknown", identity: "s338-340" });
+  const pathRecord = resolvable(normalize("shell", { command: "echo x > src/policy/a.txt", environment: "unknown", identity: "s338-340" }));
   const pathRule = allow("path-control", undefined, ["src/policy/"]);
   assert.deepEqual(pathRecord.targets, ["src/policy/a.txt"]);
   assert.equal(decide({ rules: ruleSet(pathRule), defaultOutcome: "deny" }, pathRecord).outcome, "allow", "the kernel allows a real non-mcp redirect record under the path allow");

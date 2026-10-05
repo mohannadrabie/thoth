@@ -74,6 +74,29 @@
 // Anything this file cannot confidently resolve is reported via `unresolved`, never guessed at or
 // silently dropped (ADR-0021 §3.2, SUR-02's terminal fall-through is deny) — the uniform,
 // fail-closed pattern every branch below follows without exception.
+import { canonicalizePathTarget, pathFormIssue } from "./path-canonical.ts";
+
+/** F9 (Issue #420): the closed set of leading binaries the kubectl-shaped grammar resolves. The grammar reads the verb
+ * from the token after the binary, so without this set `node get pods/x --context=c` resolved as a read and ran a file
+ * named `get`. A binary counts only when the first token is EXACTLY one of these names: bare (no path, so no planted
+ * `./kubectl`) and lowercase (no `KUBECTL`, no `kubectl.exe`). Anything else is unresolved and POL-05 denies. */
+export const RESOLVABLE_BINARIES: ReadonlySet<string> = new Set(["kubectl"]);
+
+/** F10 (Issue #420, round 2): the flags the kubectl-shaped grammar reads for its decision. scanFlags consumes
+ * `flags["context"]` and nothing else (the alias table maps `-c` to it), so this is the whole closed set. Any other flag
+ * (--kubeconfig, --server, --token, --as, --insecure-skip-tls-verify, an unknown one) can change what the binary does while
+ * staying invisible to the record, so a command carrying one is unresolved. */
+export const KUBECTL_GRAMMAR_FLAGS: ReadonlySet<string> = new Set(["context"]);
+
+export const FLAG_NOT_IN_CLOSED_SET_UNRESOLVED = "command carries a flag outside the closed set the grammar reads (F10, Issue #420)";
+
+export const WRAPPER_BINARY_NOT_BARE_UNRESOLVED = "wrapper binary is not spelled as the bare lowercase name (F9b, Issue #420)";
+
+export const BINARY_NOT_RECOGNIZED_UNRESOLVED = "command binary is not one of the recognized set (F9, Issue #420)";
+
+/** F8 (Issue #411): the one unresolved cause a redirect-decorated, non-resolving command carries. */
+export const REDIRECT_DECORATES_UNRESOLVED = "redirect decorates a command that does not resolve on its own (F8, Issue #411)";
+
 import type { ActionRecord } from "../kernel/action-record.ts";
 import { resolveVerb } from "./action-catalog.ts";
 import { buildClusterTarget } from "./target-format.ts";
@@ -211,6 +234,9 @@ function scanFlags(tokens: readonly string[], isRedirectOperatorToken: readonly 
       const [, shortKey, value] = shortForm;
       const canonical = shortKey ? resolveFlagAlias(shortKey) : undefined;
       if (canonical && value) values[canonical] = value;
+      // F10 (Issue #420): an unknown short flag was silently dropped here; keep it visible as a positional token so the
+      // closed-set check sees it.
+      else positional.push(token);
       i += 1;
       continue;
     }
@@ -309,6 +335,16 @@ function buildResourceTargets(
   return targets;
 }
 
+/** Issue #416: the distinct path-form causes of the given raw redirect targets (empty for colon-free paths). */
+function pathFormIssues(rawTargets: readonly string[]): string[] {
+  const causes = new Set<string>();
+  for (const t of rawTargets) {
+    const c = pathFormIssue(t);
+    if (c !== undefined) causes.add(c);
+  }
+  return [...causes];
+}
+
 /** The existing S3-reviewed kubectl-shaped grammar (`<tool> <verb> <resourceType>/<resourceName>
  * [--flag=value ...]`), generalized to be order-independent over `positional`, plus additive
  * redirect-target extraction (SUR-08), and generalized to multiple resources/redirects (S4
@@ -320,8 +356,17 @@ function resolveKubectlShape(
   positional: readonly string[],
   flags: Record<string, string>,
   liveText: string,
+  binaryToken: string,
 ): ActionRecord {
   const unresolved: string[] = [];
+  // F9 (Issue #420): fail closed on any binary outside the closed set. Recorded, not returned early, so the verb and
+  // targets stay visible (a redirect-decorated record still says write plus its target).
+  if (!RESOLVABLE_BINARIES.has(binaryToken)) unresolved.push(BINARY_NOT_RECOGNIZED_UNRESOLVED);
+  // F10: every flag must be in the closed set. scanFlags keeps `--key=value` in `flags` and leaves every other flag-shaped
+  // token (bare, space form, short form) in `positional`; both are checked.
+  if (Object.keys(flags).some((k) => !KUBECTL_GRAMMAR_FLAGS.has(k)) || positional.some((t) => t.startsWith("-"))) {
+    unresolved.push(FLAG_NOT_IN_CLOSED_SET_UNRESOLVED);
+  }
 
   // Position, not a broader search: after scanFlags removes every flag from `positional`
   // (SUR-07's reordering criterion is about FLAGS moving, not verb/resource swapping), the verb is
@@ -332,6 +377,9 @@ function resolveKubectlShape(
   const { resourceTokens, resources, malformed: resourceMalformed } = collectResources(positional);
 
   const cluster = flags["context"];
+  // F4 (Q2, 2026-10-04): targets are recorded in canonical path form (path-canonical.ts), applied ONLY where a record
+  // carries them (after the 2-target guard): canonicalizing every extracted target made a glued ">>>>" run quadratic (the
+  // path-scaling sweep caught it).
   const redirectTargets = extractRedirectTargets(liveText);
   // Checks the RAW `resourceTokens` count (was there any resource-SHAPED candidate at all), not
   // just `resources.length` (how many parsed successfully) — a malformed resource-shaped token
@@ -351,14 +399,17 @@ function resolveKubectlShape(
     // Not a kubectl-grammar attempt at all — a plain redirect/write shape (SUR-08's own named
     // test: `cmd <<EOF > /target ... EOF` extracts `/target`).
     if (redirectTargets.length >= 2) return unresolvedRecord(raw, [multiTargetMessage(redirectTargets.length)], raw.deferred ?? false);
+    // F8 (Issue #411, decisions row 2026-10-04): a redirect never replaces the command it decorates. This branch
+    // is reached only when the command is not kubectl-shaped, i.e. it does not resolve on its own, so the record
+    // is unresolved (POL-05 denies). verbs [write] and the canonical target are KEPT so a path deny rule sees it.
     return {
       source: "parsed",
       verbs: ["write"],
-      targets: redirectTargets,
+      targets: redirectTargets.map(canonicalizePathTarget),
       environment: raw.environment,
       identity: raw.identity,
       deferred: raw.deferred ?? false,
-      unresolved: [],
+      unresolved: [REDIRECT_DECORATES_UNRESOLVED, ...pathFormIssues(redirectTargets)],
     };
   }
 
@@ -392,9 +443,10 @@ function resolveKubectlShape(
 
   const verbs = resolvedVerb ? [resolvedVerb] : [];
   const targets = [...resourceTargets];
+  unresolved.push(...pathFormIssues(redirectTargets));
   if (redirectTargets.length > 0) {
     verbs.push("write");
-    targets.push(...redirectTargets);
+    targets.push(...redirectTargets.map(canonicalizePathTarget));
   }
 
   return {
@@ -437,10 +489,15 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
 
   const toolToken = normalizeToolToken(tokens[0] ?? "");
   const wrapper = detectWrapper(toolToken, tokens, liveText, bodies);
+  // F9b (Issue #420): the dispatch above matches the path-stripped, lowercased name. A wrapper binary counts only when the
+  // RAW first token is that bare lowercase name; otherwise the OS would run a planted file, not the real wrapper.
+  if (wrapper !== undefined && (tokens[0] ?? "") !== toolToken) {
+    return unresolvedRecord(raw, [WRAPPER_BINARY_NOT_BARE_UNRESOLVED], raw.deferred ?? false);
+  }
   const wrapperResult = resolveWrapperMatch(raw, wrapper, depth);
   if (wrapperResult) return wrapperResult;
 
-  return resolveKubectlShape(raw, positional, flags, liveText);
+  return resolveKubectlShape(raw, positional, flags, liveText, tokens[0] ?? "");
 }
 
 /** The only public entry point — always starts recursion at depth 0. See `normalizeAtDepth`'s own

@@ -4,6 +4,90 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - THOTH-ADR-0003 accepted by the human (2026-10-05); hold released for #308 stories E, F and J
+
+Refs #308. Recorded on the human's words: "accept ADR-0003 but keep the 2026-09-19 exemption".
+
+- `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md`: `status: accepted`. The Manager's proposed narrowing (a fresh dated review report for every fixture entry addition) is removed; an entry-only pull request keeps the 2026-09-19 exemption, matching the `CLAUDE.md` "Policy delivery" sentence, which stays as written.
+- The hold is released for stories E, F and J. Story K and the `.claude/settings.json` PreToolUse entry still need the human's separate approval.
+- `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md`: the "Amended in part by" pointer now reads accepted.
+- `src/qa/adr0003-write-path-claim.test.ts`: the status pin moves from `proposed` to `accepted` and requires the Status line to name the human.
+
+### Fixed - Issue #308 story J review conditions (Closes #423, #426, #427) and THOTH-ADR-0003 write-path amendment (refs #424)
+
+Refs #308, #398. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance (the ADR stays `proposed`; agents do not accept it). Tests written failing first.
+
+- #426 (HIGH): K matcher amended to `Bash|PowerShell|mcp__.*`, shell form (J9 ruling: the exec form is not adopted). New `src/qa/k-matcher-covers-arbitrary-exec.test.ts` (`K-matcher-covers-arbitrary-exec`): the arbitrary-exec set is read by AST from `src/qa/arbitrary-exec-classification.test.ts`, the matcher and an explicit `pendingHumanDecision` list from `docs/plans/s308-K-proposed-entry-2026-10-05.json`; a tool neither matched nor listed fails, and a mutant dropping PowerShell fails. Pending list (one line each on what routing would break): Skill, Workflow, CronCreate, RemoteTrigger, Monitor, Task, ScheduleWakeup, SlashCommand. Plan rows J1 and K5 in `docs/plans/s308-activation-phase0-2026-10-02.md` updated (K5 gains the mutant "PowerShell missing from the matcher").
+- #423 (narrowed): `qa:gate-matcher-drift` accepts the exact token `mcp__.*`; a mistyped name or any looser pattern is still drift.
+- #427: J README rows corrected. `CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec` and `BASH_ENV` with `exit 0` stopped the Bash command too (everything stopped, not a gate-only skip); `MSYS=noglob` is the one measured shell-form fail-open; a non-shell tool under `SHELLOPTS=noexec` was not run (unmeasured, closed by settings protection per #398). Hook attribution and the "Gate env" column are described as measured (by content; in the logger's process).
+- THOTH-ADR-0003 (`proposed`, edited in place): the "every session write path" constraint and Rules for agents add the PowerShell tool (routed by K's matcher, so the gate refuses it) and state that the other arbitrary-exec built-ins are a human decision at K; amendment-history line cites #424, #426 and J3.
+
+### Fixed - Issue #308 story F round 2 conditions (#420 F9b/F10, #421, #422)
+
+Refs #308, #409. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first. Closes #421, closes #422.
+
+- F9b (#420): the wrapper dispatch applies the same bare, lowercase RAW first-token check as F9. A path-qualified, upper-case or `.exe` spelling of any wrapper binary (names derived from the wrapper table through `WRAPPER_BINARY_NAMES`) is unresolved, so `./scratch/sh -c "kubectl ..."` and `/tmp/env kubectl ...` are denied. The nested command is re-checked by the same rules. Corpus: 240 commands (the wrapper table lists 11 names; the test derives 10 of them, excluding `.` because a bare dot cannot be path-qualified, upper-cased or given an extension; 6 spellings, 4 shapes).
+- F10 (#420, instance of #409): the kubectl shape resolves only when every flag is in `KUBECTL_GRAMMAR_FLAGS` (`context`, the one flag the grammar reads; the alias `-c` maps to it). `--kubeconfig`, `--server`, `--token`, `--as`, `--insecure-skip-tls-verify`, any unknown flag, in equals, space or bare form, make the record unresolved. An unknown short flag (`-n=ns`) was silently dropped by `scanFlags`; it is now kept visible. Residuals recorded on #409 as K blockers: an ambient `~/.kube/config` or `KUBECONFIG` exec plugin, and git and rg config levers.
+- #418 residual: the generator fails closed (throws) on `module.require`, `process.mainModule.require`, `new Worker(...)` and `import.meta.resolve(...)`, one mutant per form.
+- #421: `.mcp.json` and `~/.claude.json` are protected (47 paths). The read-by-path instrument now matches `join(projectDir(), lit)` and `join(homeDir(), lit)` first arguments and finds them without naming them.
+- #422: the gate hook header names the Bash baseline allow as unmet (E0, #408); pinned by `header-names-withheld-bash-allow`.
+- Cross-domain LOW 2: a non-project hook in the gitignored local settings file is skipped and listed; the committed project settings file still throws.
+- Editorial: orphaned F8 comment moved onto its constant; the generator header states that user and managed settings hooks are not walked and that a `..` in a `CLAUDE_PROJECT_DIR` capture is developer-time input only.
+- No locked test changed this round.
+
+### Added - Issue #308 story J (live verification of the gate as it will wire) - HELD behind THOTH-ADR-0003 acceptance
+
+Evidence only; no repo behavior change, nothing written to `.claude/settings.json`. Refs #308, #398, #406, #409, #401.
+
+- `docs/qa/s308-live-spikes-J/` (new): 39 live `claude -p` calls in a scratch project, USD 0.9857 (cap 1.50), harness, scrubbed raw output and a README. `docs/plans/s308-K-proposed-entry-2026-10-05.md`: the proposed PreToolUse entry (two forms; superseded by the J9 ruling: the shell form `sh "<launcher>" "<gate>"` is kept and the exec form is not adopted) and the K plan changes.
+- Findings that change the K plan: the PowerShell tool ran un-gated after a Bash denial (add it to the matcher; the gate refuses it); a settings env block (`CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec`, `BASH_ENV`, `MSYS=noglob`) bypasses or fails open the shell-form entry; the exec form with `env -i` held against `SHELLOPTS=noexec` only (superseded by the J9 ruling: shell form kept); `qa:gate-matcher-drift` fails on an `mcp__.*` matcher and `qa:gate-command-path` cannot read the exec form; `Edit(...)` deny blocks Edit and Write incl. under bypassPermissions and matches case-insensitively on Windows; gate latency in-runtime 109 to 448 ms, local p99 at most 385 ms. K blocker added by the final cross-domain review: #428 (a binary planted on PATH).
+- #406 (`NODE_OPTIONS`) does not reproduce with the launcher wired; #409 keys reach the gate env and the command shell but do not stop the gate.
+
+### Fixed - Issue #308 story F review conditions (Closes #415, #416, #417, #418, #419, #420)
+
+Refs #308. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first.
+
+- #420 (HIGH, F9): the kubectl-shaped resolver in `src/policy/normalizer/shell.ts` no longer ignores the binary. It resolves only when the first token is exactly a member of `RESOLVABLE_BINARIES` (`kubectl`, bare and lowercase). `node get pods/x --context=c`, `python ...`, `sh ...`, `./kubectl ...`, `KUBECTL ...` are unresolved, so POL-05 denies. Corpus test `src/policy/normalizer/shell-binary-closed-set.test.ts`.
+- #418: the generator's import walk follows `require("lit")` and `createRequire(...)("lit")`; a computed `import()`, a non-literal `require()` or a stored `createRequire` throws. The F3 add-import mutant now has the static, `require` and `createRequire` forms and each must be found.
+- #419: the protected list now comes from EVERY hook wired in `.claude/settings.json` (and the local settings file), read-only: the SessionStart and UserPromptSubmit hooks and `src/policy/tools/mcp-enumeration.ts` are covered. A wired command that names no `${CLAUDE_PROJECT_DIR}` script fails the generator closed.
+- #417: `readByPathCandidates` finds data files the hook closure reads by path (join/resolve/new URL literals in modules that call a fs read function). `docs/qa/tool-inventory.json` is now protected; a synthetic new read site is a detected mutant. Disclosed limit: a path built only from a caller-supplied parameter is seen where the caller builds it, not at the read.
+- #416: the canonicalizer folds trailing dots and spaces per segment and drops a trailing slash; a redirect target with a `:` segment (alternate data stream, drive-relative) makes the record unresolved.
+- #415: move, delete and rename are denied on every parent directory of a protected path, up to but excluding the repo root (`protect-parent-*` rules). File writes inside those directories are not denied.
+- Text, per the Manager's triage: the proposed `permissions.deny` `Edit(...)` list (`docs/plans/s308-K-proposed-settings-2026-10-04.json`, shipped by K) covers the built-in file tools only. It does NOT cover Bash writes; those depend on the gate's deny rules and POL-05.
+- Recorded acts (SE ADR-0005): `shell.test.ts` SUR-07 path-qualified binary (`unresolved` `[]` to the F9 cause); `baseline-rules.test.ts` PT-2 witnesses and `PT2-mutant` (other binaries no longer resolve; the mutant is now the binary-blind normalizer, so the check keeps its teeth); the K proposal and `shipped-defaults.json` regenerated.
+
+### Fixed - Issue #308 story E review conditions (Closes #412, #413, #414)
+
+Refs #308. Tests written failing first.
+
+- #412: the E6 triage (`src/qa/fixture-name-triage.ts`) is now per hit: a verdict lists the fingerprints (hash of file and literal) it covers, so a second, different hit in an already-triaged file is untriaged, and a fingerprint that no longer hits is stale. Unquoted object keys equal to an identifier-shaped fixture name are scanned too. Other spellings stay disclosed in the script header.
+- #413: the fixture `notes` and the `hooks/pretooluse-kernel-gate.mjs` header no longer say no shipped rule matches a class. They name `baseline-allow-class-read-only` and say it matches none of the committed entries today (all remote-mutating). Test `fixture-notes-do-not-claim-no-shipped-class-rule` derives "matches none" from the fixture and shipped rules.
+- #414: PT-2 witnesses and `PT2-mutant` are per non-mutating verb, derived from `KNOWN_VERBS` through the kernel, with stand-in binaries; a verb-only allow on `read` alone is now flagged.
+
+### Added - Issue #308 story F (AP-10: deny rules, F4 canonical redirect targets, F8 redirect never replaces its command) - HELD behind THOTH-ADR-0003 acceptance
+
+CRITICAL tier (self-protection of the gate; shell normalizer). Not wired (story K); merge held until the human accepts THOTH-ADR-0003. Refs #308, #411, #408, #406, #401.
+
+- `src/qa/protected-path-list.ts` (new, `npm run qa:protected-path-list`, `--write` regenerates): the protected list is the hook's import graph (AST walk) plus a named list (classification fixture via the single-source funnel, `shipped-defaults.json`, `.thoth/policy.json`, `hooks/launch-gate.sh`, `src/qa/gate-launcher-pin-check.ts`, project and local and user settings files, `.thoth/halt-state/`). One deny rule per path (verbs write, create, modify, delete, move, rename; reads and execute stay free) is written into `src/policy/config/shipped-defaults.json`; the proposed `permissions.deny` `Edit(...)` text is `docs/plans/s308-K-proposed-settings-2026-10-04.json` (proposal only, K ships it).
+- `src/policy/config/activation-preconditions.test.ts` (new): F1, F1a, F1b, F2, F3 mutants (drop any one rule; add an import), F3a `F3-mutant-drop-fixture-deny`, F4, F5 `F5-ap10-paths-edit-deny`, policy-file protection, read-free.
+- Disclosure: `mandatory: true` is INERT outside the central layer. The only override path for these shipped rules is a same-id project rule in `.thoth/policy.json`, which F protects (and K's `Edit(...)` deny will); test `F-override-documented` pins the dependency.
+- F8 (Issue #411): `src/policy/normalizer/shell.ts`. A redirect never replaces the command it decorates; `<cmd> > path` resolves only if `<cmd>` resolves alone, otherwise the record is unresolved (POL-05 denies). The record still carries verb `write` and the target. `echo x > file` is now denied (accepted; a producer command set is E0 follow-up, #408). Consequence: since POL-05 runs first, the F path rules fire today only on a record a future producer set makes resolvable; they are defense in depth until E0.
+- F4: `src/policy/normalizer/path-canonical.ts` (new). Redirect targets are recorded lexically canonical (lowercase, `\` to `/`, `.`/`..`/`//` collapsed). Not handled, disclosed: absolute and drive forms, `$VAR`, `~user`, symlinks, 8.3 names, and a backslash path inside a quoted shell word (the scanner dequotes the backslash).
+- Recorded acts (SE ADR-0005), tests whose expectation changed with F8: `shell.test.ts` (9 assertions `unresolved` `[]` to the F8 cause: Issues #80, #81, #83, #84, SUR-08), `tool-class.test.ts` N9 (the target-only allow is now denied on the real record; the documenting assertion moved to a resolved record), `loader-reachability.test.ts` R2-13 and `rule-reachability.test.ts` R2-17/R2-24 (soundness checks model the resolvable record by dropping only the F8 cause).
+- Performance: canonicalization is applied only where a record carries the target; applying it to every extracted target made a glued `>>>>` run quadratic (caught by `qa:gate-path-scaling-sweep`).
+- Comment in `src/policy/tools/central-classification.ts` corrected (a shipped rule now matches the read-only class); AC-3j pin test stays green.
+- Not in F (go with E0): `.git/config`, `.git/hooks/`, `.gitattributes`. #406 closes only when K ships the settings protection.
+
+### Added - Issue #308 story E (AP-1: baseline rules) - HELD behind THOTH-ADR-0003 acceptance
+
+CRITICAL tier (guard content, policy delivery). Not wired (story K); merge held until the human accepts THOTH-ADR-0003 (rule: E, F, J, K MUST NOT ship before). Refs #308, #306, #329, #408.
+
+- `src/policy/config/shipped-defaults.json`: one rule, `baseline-allow-class-read-only` (allow, verb `tool-class:read-only`, no target). `defaultOutcome` stays undeclared (resolved `allow`, source `bootstrap`).
+- Deviation from the ratified two-rule list: `baseline-allow-read-verbs` is withheld. PT-2 fails for it: the shell normalizer's verb resolution is tool-blind (`rm get pods/x --context=c` normalizes to verbs `[get]`). It returns with story E0 (#408).
+- Bash consequence, measured 2026-10-04: with the gate wired, ordinary reads (`ls`, `cat`, `git status`) are denied by POL-05 (unresolved) before any rule runs; no allow rule can change that. Story E0 (#408) addresses it.
+- `src/policy/config/baseline-rules.test.ts` (new): `E-shape`, `PT-1`, `PT-2`, `PT2-mutant`, `PT-12`, `PT-12b`, `E3`, against the real shipped file. Red run recorded before the rule data (3 failing).
+- `src/qa/fixture-name-triage.ts` (+ test, `npm run qa:fixture-name-triage`): E6, fixture names read at run time via the single-source funnel; every hit file needs a verdict; an untriaged hit, a stale verdict or a violation fails.
+
 ### Added - Issue #308 story D (AP-13: launcher `hooks/launch-gate.sh`)
 
 CRITICAL tier (session gate). Nothing is wired into `.claude/settings.json` (story J). Refs #308, #397, #398, #399, #401, #402, #403.
