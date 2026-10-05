@@ -10,9 +10,8 @@
 //     classified name is removed from SUR-03's unclassified/halt set) and, since S7 (GitHub Issue
 //     #93), the tool-class normalizer (src/policy/normalizer/tool-class.ts), which turns an entry's
 //     `class` into a rule-matchable marker verb on the Action record of an MCP tool call. The
-//     kernel-gate hook that runs that normalizer is BUILT BUT NOT WIRED (no PreToolUse entry), and no
-//     shipped policy rule matches a class yet (baseline allow content is an activation precondition,
-//     plan AP-1), so today a `class` value drives no live enforcement decision. Only server names
+//     kernel-gate hook that runs that normalizer is BUILT BUT NOT WIRED (no PreToolUse entry);
+//     the only shipped rule that matches a class is the read-only allow (story E, #308), so today a `class` value drives no live enforcement decision. Only server names
 //     consisting solely of [A-Za-z0-9-] are admitted to the class path (tool-class-format.ts).
 //
 // (2) `knownConnectors` -- a claude.ai account-connector display-name allowlist, a KNOWN, SPOOFABLE

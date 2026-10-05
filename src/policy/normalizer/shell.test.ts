@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeShellCall } from "./shell.ts";
+import { normalizeShellCall, REDIRECT_DECORATES_UNRESOLVED } from "./shell.ts";
 import {
   shellAbbreviatedFlagCall,
   shellAmpersandChainedCall,
@@ -211,7 +211,7 @@ test("SUR-08 (named test): a heredoc marker's line carrying a trailing redirect 
   const record = normalizeShellCall(shellHeredocRedirectCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/etc/app/config"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #82 (council round 3, superseding the prior 'additive' expectation): a resolved kubectl call that ALSO redirects assembles 2 targets — denies wholesale, never a multi-target resolve", () => {
@@ -393,7 +393,7 @@ test("Issue #80/N3 side effect: a no-space redirect ('cmd>/path') does not eat a
   const record = normalizeShellCall(shellNoSpaceRedirectCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/etc/cron.d/pwn"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 // --- Issue #81 (red-team round-2, N2): fd-dup ampersand idiom must not be read as a separator ---
@@ -402,14 +402,14 @@ test("Issue #81 (review's own repro): 'cmd > /tmp/ok 2>&1' resolves as a write, 
   const record = normalizeShellCall(shellFdDupAmpersandCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #81, '&>' spelling: same guarantee", () => {
   const record = normalizeShellCall(shellFdDupAmpersandRedirectCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #81 regression pin: a genuinely separating, non-fd-dup '&' still denies after the exclusion clause", () => {
@@ -476,7 +476,7 @@ test("Issue #83 regression pin: a genuine fd-dup ('2>&1') still resolves cleanly
   const record = normalizeShellCall(shellFdDupAmpersandCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 // ============================================================================================
@@ -508,28 +508,28 @@ test("Issue #84, isolated at the plain-write shape (no kubectl resource, so Issu
   const record = normalizeShellCall(shellFdDupWordRedirectPlainWriteCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["out"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #84 regression pin: 'cat payload > /tmp/ok >&-' resolves as a clean write to the ONE real target — the trailing '>&-' (close-the-descriptor form) contributes no target of its own, unaffected by the fix", () => {
   const record = normalizeShellCall(shellFdDupCloseFdCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #84 regression pin: '&>' (both-streams, ampersand LEADING) still resolves cleanly, unaffected by the trailing-ampersand fix", () => {
   const record = normalizeShellCall(shellFdDupAmpersandRedirectCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 test("Issue #84 regression pin: bare digit fd-dup ('2>&1') still resolves cleanly, unaffected by the fix", () => {
   const record = normalizeShellCall(shellFdDupAmpersandCall);
   assert.deepEqual(record.verbs, ["write"]);
   assert.deepEqual(record.targets, ["/tmp/ok"]);
-  assert.deepEqual(record.unresolved, []);
+  assert.deepEqual(record.unresolved, [REDIRECT_DECORATES_UNRESOLVED]); // F8 (#411) recorded act (SE ADR-0005): was []
 });
 
 // ============================================================================================

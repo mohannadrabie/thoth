@@ -108,7 +108,8 @@ function pt2Violations(rules: Rule[]): string[] {
 
 test("E-shape: the shipped baseline is exactly the ratified allow rule(s): class-only read-only allow, no target, no deny, no declared defaultOutcome", () => {
   const r = loadedOk();
-  const rules = r.merged.rules as Rule[];
+  // Story F adds protect-* deny rules to the same file (activation-preconditions.test.ts owns them); E's baseline is the rest.
+  const rules = (r.merged.rules as Rule[]).filter((x) => !x.id.startsWith("protect-"));
   assert.deepEqual(
     rules.map((x) => x.id),
     ["baseline-allow-class-read-only"],
@@ -145,7 +146,7 @@ test("PT2-mutant: a verb-only read allow rule IS flagged by the PT-2 check (the 
 });
 
 test("PT-12: every shipped rule matches a witness record (none is silently inert); a shipped rule set that matches nothing fails", () => {
-  const rules = shippedRules();
+  const rules = shippedRules().filter((x) => x.effect === "allow");
   assert.ok(rules.length > 0, "the shipped baseline is not empty");
   const witness = toolRecord(`mcp__${SERVER}__x`, "read-only");
   for (const rule of rules) {

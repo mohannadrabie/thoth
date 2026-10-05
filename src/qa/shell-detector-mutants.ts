@@ -310,7 +310,7 @@ const MUTANTS: Mutant[] = [
     "redirect-target-additive-extraction-disabled",
     "SUR-08: disabling the additive redirect-target branch would drop the redirect target(s) when a kubectl-shaped call ALSO carries a live redirect",
     SHELL,
-    "const verbs = resolvedVerb ? [resolvedVerb] : [];\n  const targets = [...resourceTargets];\n  if (redirectTargets.length > 0) {\n    verbs.push(\"write\");\n    targets.push(...redirectTargets);\n  }",
+    "const verbs = resolvedVerb ? [resolvedVerb] : [];\n  const targets = [...resourceTargets];\n  if (redirectTargets.length > 0) {\n    verbs.push(\"write\");\n    targets.push(...redirectTargets.map(canonicalizePathTarget));\n  }",
     "const verbs = resolvedVerb ? [resolvedVerb] : [];\n  const targets = [...resourceTargets];",
   ),
   // --- resource-token exact-2-segment validation, as composed by S4's own resolveKubectlShape

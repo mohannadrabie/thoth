@@ -74,6 +74,11 @@
 // Anything this file cannot confidently resolve is reported via `unresolved`, never guessed at or
 // silently dropped (ADR-0021 §3.2, SUR-02's terminal fall-through is deny) — the uniform,
 // fail-closed pattern every branch below follows without exception.
+import { canonicalizePathTarget } from "./path-canonical.ts";
+
+/** F8 (Issue #411): the one unresolved cause a redirect-decorated, non-resolving command carries. */
+export const REDIRECT_DECORATES_UNRESOLVED = "redirect decorates a command that does not resolve on its own (F8, Issue #411)";
+
 import type { ActionRecord } from "../kernel/action-record.ts";
 import { resolveVerb } from "./action-catalog.ts";
 import { buildClusterTarget } from "./target-format.ts";
@@ -332,6 +337,9 @@ function resolveKubectlShape(
   const { resourceTokens, resources, malformed: resourceMalformed } = collectResources(positional);
 
   const cluster = flags["context"];
+  // F4 (Q2, 2026-10-04): targets are recorded in canonical path form (path-canonical.ts), applied ONLY where a record
+  // carries them (after the 2-target guard): canonicalizing every extracted target made a glued ">>>>" run quadratic (the
+  // path-scaling sweep caught it).
   const redirectTargets = extractRedirectTargets(liveText);
   // Checks the RAW `resourceTokens` count (was there any resource-SHAPED candidate at all), not
   // just `resources.length` (how many parsed successfully) — a malformed resource-shaped token
@@ -351,14 +359,17 @@ function resolveKubectlShape(
     // Not a kubectl-grammar attempt at all — a plain redirect/write shape (SUR-08's own named
     // test: `cmd <<EOF > /target ... EOF` extracts `/target`).
     if (redirectTargets.length >= 2) return unresolvedRecord(raw, [multiTargetMessage(redirectTargets.length)], raw.deferred ?? false);
+    // F8 (Issue #411, decisions row 2026-10-04): a redirect never replaces the command it decorates. This branch
+    // is reached only when the command is not kubectl-shaped, i.e. it does not resolve on its own, so the record
+    // is unresolved (POL-05 denies). verbs [write] and the canonical target are KEPT so a path deny rule sees it.
     return {
       source: "parsed",
       verbs: ["write"],
-      targets: redirectTargets,
+      targets: redirectTargets.map(canonicalizePathTarget),
       environment: raw.environment,
       identity: raw.identity,
       deferred: raw.deferred ?? false,
-      unresolved: [],
+      unresolved: [REDIRECT_DECORATES_UNRESOLVED],
     };
   }
 
@@ -394,7 +405,7 @@ function resolveKubectlShape(
   const targets = [...resourceTargets];
   if (redirectTargets.length > 0) {
     verbs.push("write");
-    targets.push(...redirectTargets);
+    targets.push(...redirectTargets.map(canonicalizePathTarget));
   }
 
   return {

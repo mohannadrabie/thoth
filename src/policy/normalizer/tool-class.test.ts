@@ -251,7 +251,10 @@ test("N9: forgery on the shipped normalizer and kernel, path-scoped rule: under 
   const genuine = callTool("mcp__docs__x", catalogOf([["docs", "read-only"]]));
   assert.equal(decide(worldOf(scoped, "deny"), genuine).outcome, "allow", "control: the genuine record is reachable by the rule");
   const targetOnly: Rule[] = [{ id: "allow-docs-target-only", effect: "allow", targets: ["mcp/docs/"] }];
-  assert.equal(decide(worldOf(targetOnly, "deny"), shellRecord("echo x > mcp/docs/x")).outcome, "allow", "DOCUMENTING: an allow rule keyed on an identity target alone is forgeable by a shell redirect; authors MUST pair it with the marker verb");
+  // F8 (Issue #411) recorded act (SE ADR-0005): the real shell record is now unresolved, so it is denied before any rule. The
+  // rule-author constraint below is unchanged for a resolved write record (what a future producer set, story E0, would emit).
+  assert.equal(decide(worldOf(targetOnly, "deny"), shellRecord("echo x > mcp/docs/x")).outcome, "deny", "F8: the redirect-decorated command no longer resolves");
+  assert.equal(decide(worldOf(targetOnly, "deny"), { ...shellRecord("echo x > mcp/docs/x"), unresolved: [] }).outcome, "allow", "DOCUMENTING: an allow rule keyed on an identity target alone is forgeable by a shell redirect; authors MUST pair it with the marker verb");
   const denyTargetOnly: Rule[] = [{ id: "deny-docs-target-only", effect: "deny", targets: ["mcp/docs/"] }];
   assert.equal(decide(worldOf(denyTargetOnly, "allow"), shellRecord("echo x > mcp/docs/x")).outcome, "deny", "a forged match on a deny rule only denies");
 });

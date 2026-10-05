@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - Issue #308 story F (AP-10: deny rules, F4 canonical redirect targets, F8 redirect never replaces its command) - HELD behind THOTH-ADR-0003 acceptance
+
+CRITICAL tier (self-protection of the gate; shell normalizer). Not wired (story K); merge held until the human accepts THOTH-ADR-0003. Refs #308, #411, #408, #406, #401.
+
+- `src/qa/protected-path-list.ts` (new, `npm run qa:protected-path-list`, `--write` regenerates): the protected list is the hook's import graph (AST walk) plus a named list (classification fixture via the single-source funnel, `shipped-defaults.json`, `.thoth/policy.json`, `hooks/launch-gate.sh`, `src/qa/gate-launcher-pin-check.ts`, project and local and user settings files, `.thoth/halt-state/`). One deny rule per path (verbs write, create, modify, delete, move, rename; reads and execute stay free) is written into `src/policy/config/shipped-defaults.json`; the proposed `permissions.deny` `Edit(...)` text is `docs/plans/s308-K-proposed-settings-2026-10-04.json` (proposal only, K ships it).
+- `src/policy/config/activation-preconditions.test.ts` (new): F1, F1a, F1b, F2, F3 mutants (drop any one rule; add an import), F3a `F3-mutant-drop-fixture-deny`, F4, F5 `F5-ap10-paths-edit-deny`, policy-file protection, read-free.
+- Disclosure: `mandatory: true` is INERT outside the central layer. The only override path for these shipped rules is a same-id project rule in `.thoth/policy.json`, which F protects (and K's `Edit(...)` deny will); test `F-override-documented` pins the dependency.
+- F8 (Issue #411): `src/policy/normalizer/shell.ts`. A redirect never replaces the command it decorates; `<cmd> > path` resolves only if `<cmd>` resolves alone, otherwise the record is unresolved (POL-05 denies). The record still carries verb `write` and the target. `echo x > file` is now denied (accepted; a producer command set is E0 follow-up, #408). Consequence: since POL-05 runs first, the F path rules fire today only on a record a future producer set makes resolvable; they are defense in depth until E0.
+- F4: `src/policy/normalizer/path-canonical.ts` (new). Redirect targets are recorded lexically canonical (lowercase, `\` to `/`, `.`/`..`/`//` collapsed). Not handled, disclosed: absolute and drive forms, `$VAR`, `~user`, symlinks, 8.3 names, and a backslash path inside a quoted shell word (the scanner dequotes the backslash).
+- Recorded acts (SE ADR-0005), tests whose expectation changed with F8: `shell.test.ts` (9 assertions `unresolved` `[]` to the F8 cause: Issues #80, #81, #83, #84, SUR-08), `tool-class.test.ts` N9 (the target-only allow is now denied on the real record; the documenting assertion moved to a resolved record), `loader-reachability.test.ts` R2-13 and `rule-reachability.test.ts` R2-17/R2-24 (soundness checks model the resolvable record by dropping only the F8 cause).
+- Performance: canonicalization is applied only where a record carries the target; applying it to every extracted target made a glued `>>>>` run quadratic (caught by `qa:gate-path-scaling-sweep`).
+- Comment in `src/policy/tools/central-classification.ts` corrected (a shipped rule now matches the read-only class); AC-3j pin test stays green.
+- Not in F (go with E0): `.git/config`, `.git/hooks/`, `.gitattributes`. #406 closes only when K ships the settings protection.
+
 ### Added - Issue #308 story E (AP-1: baseline rules) - HELD behind THOTH-ADR-0003 acceptance
 
 CRITICAL tier (guard content, policy delivery). Not wired (story K); merge held until the human accepts THOTH-ADR-0003 (rule: E, F, J, K MUST NOT ship before). Refs #308, #306, #329, #408.
