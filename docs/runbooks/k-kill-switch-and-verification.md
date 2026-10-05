@@ -38,7 +38,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=relative
 node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 ```
 
-`--form` is required (without it the command exits nonzero and prints nothing). A main checkout prints nothing and says so on stderr. Which form Claude Code honors for a path outside the project root is settled by stage 1 probe P-K4; until then, paste the chosen form's lines into that worktree's `.claude/settings.local.json` `permissions.deny` array yourself. That file is gitignored and protected, so a session must not write it.
+`--form` is required (without it the command exits nonzero and prints nothing). A main checkout prints nothing and says so on stderr. Which form Claude Code honors for a path outside the project root is settled by stage 1 probe P-K4; until then, paste the chosen form's lines into the `permissions.deny` array of that worktree's local settings file (named settings.local.json, in its .claude directory) yourself. That file is gitignored and protected, so a session must not write it.
 
 ## 5. Kill switch (rollback)
 
