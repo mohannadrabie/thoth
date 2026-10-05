@@ -31,6 +31,7 @@ import type { ActionRecord } from "../kernel/action-record.ts";
 import { normalize } from "../normalizer/registry.ts";
 import "../normalizer/shell.ts";
 import "../normalizer/tool-class.ts";
+import { KNOWN_VERBS } from "../normalizer/action-catalog.ts";
 import { CLASS_MARKER_VERBS } from "../normalizer/tool-class-format.ts";
 import type { MergedToolClassificationSet, ToolClass } from "../tools/classification.ts";
 
@@ -88,20 +89,18 @@ const FORGERIES = [
   `python evil.py > ${RO}`,
 ];
 
-/** Shell commands whose record carries a bare read verb with some OTHER binary in the tool position. */
-const OTHER_BINARY_READS = [
-  "rm get pods/x --context=c",
-  "curl get pods/x --context=c",
-  "python list pods/x --context=c",
-  "deltool describe pods/x --context=c",
-];
+/** Binaries other than the kubectl-shaped tool, placed in the tool position (Issue #414: witnesses per derived verb).
+ * Stand-in names; none is a fixture entry. */
+const OTHER_BINARIES = ["rm", "curl", "python", "deltool"];
 
 /** PT-2 as a function so the real rules and a seeded mutant are judged by the same check. */
 function pt2Violations(rules: Rule[]): string[] {
   const bad: string[] = [];
-  for (const cmd of OTHER_BINARY_READS) {
-    const rec = shellRecord(cmd);
-    if (decide(world(rules, "deny"), rec).outcome === "allow") bad.push(cmd);
+  for (const verb of nonMutatingVerbs()) {
+    for (const binary of OTHER_BINARIES) {
+      const cmd = `${binary} ${verb} pods/x --context=c`;
+      if (decide(world(rules, "deny"), shellRecord(cmd)).outcome === "allow") bad.push(cmd);
+    }
   }
   return bad;
 }
@@ -140,9 +139,26 @@ test("PT-2: with the shipped rules under posture deny, a read verb in another bi
   assert.deepEqual(pt2Violations(shippedRules()), []);
 });
 
-test("PT2-mutant: a verb-only read allow rule IS flagged by the PT-2 check (the check has teeth; this is the rule E4 withdrew)", () => {
-  const mutant: Rule[] = [{ id: "mutant-allow-read-verbs", effect: "allow", verbs: ["read", "list", "describe", "get"] }];
-  assert.ok(pt2Violations(mutant).length > 0);
+/** Non-mutating verbs, derived (Issue #414): the verbs of KNOWN_VERBS the kernel itself does not treat as mutating
+ * (an opaque record is denied by POL-05 only when a verb is mutating). Nothing is typed here. */
+function nonMutatingVerbs(): string[] {
+  return [...KNOWN_VERBS].filter((v) => {
+    const rec: ActionRecord = { source: "opaque", verbs: [v], targets: [], environment: "e", identity: "i", deferred: false, unresolved: [] };
+    return decide(world([], "allow"), rec).outcome === "allow";
+  });
+}
+
+test("PT2-mutant: for EACH non-mutating verb, a verb-only allow on that verb alone is flagged by the PT-2 check (the check has teeth per verb; Issue #414)", () => {
+  const verbs = nonMutatingVerbs();
+  assert.ok(verbs.includes("read") && verbs.length >= 2, `derived non-mutating verbs: ${verbs.join(",")}`);
+  const missed: string[] = [];
+  for (const v of verbs) {
+    const mutant: Rule[] = [{ id: `mutant-allow-only-${v}`, effect: "allow", verbs: [v] }];
+    if (pt2Violations(mutant).length === 0) missed.push(v);
+  }
+  assert.deepEqual(missed, [], "a verb-only allow on one verb authorizes another binary's command and PT-2 must see it");
+  const all: Rule[] = [{ id: "mutant-allow-read-verbs", effect: "allow", verbs: verbs }];
+  assert.ok(pt2Violations(all).length > 0);
 });
 
 test("PT-12: every shipped rule matches a witness record (none is silently inert); a shipped rule set that matches nothing fails", () => {

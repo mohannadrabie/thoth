@@ -16,6 +16,7 @@
 // A verdict is a human judgement recorded here ("violation" fails the run too); this script finds the
 // candidates, a reviewer owns the judgement. Not violations per ADR-0003: an unrelated use of the same string,
 // a synthetic name in a test's own temporary fixture, the SUR-04 settings fixture.
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,16 +34,18 @@ export type Verdict = "not-violation" | "violation";
 export interface Triage {
   verdict: Verdict;
   reason: string;
+  /** Fingerprints (fingerprintOf) of the hits this verdict covers. Any other hit in the file is untriaged. */
+  fingerprints: string[];
 }
 
 /** Verdicts keyed by repo-relative path (forward slashes). Seeded from the ADR-0003 conformance table. */
 export const TRIAGE: Readonly<Record<string, Triage>> = {
-  "src/policy/fixtures/allowlist-settings.ts": { verdict: "not-violation", reason: "the SUR-04 settings fixture (named carve-out in THOTH-ADR-0003 rule 4)" },
-  "src/policy/tools/mcp-enumeration.test.ts": { verdict: "not-violation", reason: "synthetic .mcp.json fed to name extraction; asserts extraction, not classification" },
-  "src/policy/verification/allowlist.test.ts": { verdict: "not-violation", reason: "the SUR-04 managed-MCP allowlist, a different allowlist" },
-  "src/qa/vendor-tool-inventory.test.ts": { verdict: "not-violation", reason: "synthetic init event fed to the scrubber; never asserted against the fixture" },
-  "src/secret-scan/history-scan.test.ts": { verdict: "not-violation", reason: "unrelated string: the github_pat_ token prefix" },
-  "src/secret-scan/patterns.test.ts": { verdict: "not-violation", reason: "unrelated string: the github_pat_ token prefix" },
+  "src/policy/fixtures/allowlist-settings.ts": { verdict: "not-violation", reason: "the SUR-04 settings fixture (named carve-out in THOTH-ADR-0003 rule 4)", fingerprints: ["56ee26ef6c16"] },
+  "src/policy/tools/mcp-enumeration.test.ts": { verdict: "not-violation", reason: "synthetic .mcp.json fed to name extraction; asserts extraction, not classification", fingerprints: ["2e666783e6cd", "03c087365967"] },
+  "src/policy/verification/allowlist.test.ts": { verdict: "not-violation", reason: "the SUR-04 managed-MCP allowlist, a different allowlist", fingerprints: ["b1265f59c561"] },
+  "src/qa/vendor-tool-inventory.test.ts": { verdict: "not-violation", reason: "synthetic init event fed to the scrubber; never asserted against the fixture", fingerprints: ["6cdf50b18954"] },
+  "src/secret-scan/history-scan.test.ts": { verdict: "not-violation", reason: "unrelated string: the github_pat_ token prefix", fingerprints: ["4b0cb7f95fe9"] },
+  "src/secret-scan/patterns.test.ts": { verdict: "not-violation", reason: "unrelated string: the github_pat_ token prefix", fingerprints: ["d54e21ff5a59"] },
 };
 
 export function fixtureNames(fixtureText: string): string[] {
@@ -61,20 +64,39 @@ export interface Hit {
   line: number;
   literal: string;
   name: string;
+  fingerprint: string;
 }
+
+/** Stable id of one hit: hash of the file and the full literal (or `key:<text>` for an unquoted key). The line number
+ * is not part of it, so moving code does not invalidate a verdict; a different literal in the same file does. */
+export function fingerprintOf(file: string, literal: string): string {
+  return createHash("sha256").update(`${file}\0${literal}`).digest("hex").slice(0, 12);
+}
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function scanText(file: string, text: string, names: readonly string[]): Hit[] {
   const hits: Hit[] = [];
   const lower = names.map((n) => n.toLowerCase());
+  // Unquoted object keys (Issue #412, red-team LOW 4): only a name that is a valid identifier can be one. A key that
+  // sits inside a string literal on the same line is also reported (over-report, errs toward triage).
+  const keyRes = names.map((n) => (IDENTIFIER.test(n) ? new RegExp(`(?<![\\w$.\\-"'/])${escapeRe(n)}\\s*:(?!:)`, "i") : undefined));
   text.split(/\r?\n/).forEach((lineText, i) => {
     for (const m of lineText.matchAll(LITERAL)) {
       const lit = m[2] ?? "";
       const l = lit.toLowerCase();
       const t = l.trim();
       lower.forEach((n, k) => {
-        if (t === n || l.includes(`mcp__${n}__`) || l.includes(`mcp/${n}/`)) hits.push({ file, line: i + 1, literal: lit.length > 60 ? `${lit.slice(0, 57)}...` : lit, name: names[k]! });
+        if (t === n || l.includes(`mcp__${n}__`) || l.includes(`mcp/${n}/`)) {
+          hits.push({ file, line: i + 1, literal: lit.length > 60 ? `${lit.slice(0, 57)}...` : lit, name: names[k]!, fingerprint: fingerprintOf(file, lit) });
+        }
       });
     }
+    keyRes.forEach((re, k) => {
+      const m = re?.exec(lineText);
+      if (m) hits.push({ file, line: i + 1, literal: `key ${m[0]}`, name: names[k]!, fingerprint: fingerprintOf(file, `key:${m[0].toLowerCase()}`) });
+    });
   });
   return hits;
 }
@@ -115,8 +137,12 @@ export function buildReport(hits: readonly Hit[], names: string[], triage: Reado
     names,
     hits: [...hits],
     files,
-    untriaged: files.filter((f) => !(f in triage)),
-    stale: Object.keys(triage).filter((f) => !files.includes(f)).sort(),
+    // Per hit (Issue #412): a hit is triaged only if the file's verdict lists its fingerprint.
+    untriaged: hits.filter((h) => !(triage[h.file]?.fingerprints ?? []).includes(h.fingerprint)).map((h) => `${h.file}:${String(h.line)}`),
+    // Stale: a verdict file with no hits, or one whose listed fingerprint no longer matches any hit.
+    stale: Object.keys(triage)
+      .filter((f) => triage[f]!.fingerprints.some((fp) => !hits.some((h) => h.file === f && h.fingerprint === fp)))
+      .sort(),
     violations: files.filter((f) => triage[f]?.verdict === "violation"),
   };
 }
@@ -127,8 +153,11 @@ export function formatReport(r: Report, triage: Readonly<Record<string, Triage>>
   ];
   for (const f of r.files) {
     const t = triage[f];
-    lines.push(`${f}  [${t ? t.verdict : "UNTRIAGED"}]${t ? `  ${t.reason}` : ""}`);
-    for (const h of r.hits.filter((x) => x.file === f)) lines.push(`    line ${String(h.line)}: ${JSON.stringify(h.literal)}  (is or spells an entry name)`);
+    lines.push(`${f}  [${t ? t.verdict : "no verdict"}]${t ? `  ${t.reason}` : ""}`);
+    for (const h of r.hits.filter((x) => x.file === f)) {
+      const open = r.untriaged.includes(`${h.file}:${String(h.line)}`) ? "  UNTRIAGED" : "";
+      lines.push(`    line ${String(h.line)}: ${JSON.stringify(h.literal)}  (is or spells an entry name)${open}`);
+    }
   }
   if (r.untriaged.length) lines.push(`UNTRIAGED: ${r.untriaged.join(", ")}`);
   if (r.stale.length) lines.push(`STALE verdict (file no longer hits): ${r.stale.join(", ")}`);

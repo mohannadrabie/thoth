@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #308 story E review conditions (Closes #412, #413, #414)
+
+Refs #308. Tests written failing first.
+
+- #412: the E6 triage (`src/qa/fixture-name-triage.ts`) is now per hit: a verdict lists the fingerprints (hash of file and literal) it covers, so a second, different hit in an already-triaged file is untriaged, and a fingerprint that no longer hits is stale. Unquoted object keys equal to an identifier-shaped fixture name are scanned too. Other spellings stay disclosed in the script header.
+- #413: the fixture `notes` and the `hooks/pretooluse-kernel-gate.mjs` header no longer say no shipped rule matches a class. They name `baseline-allow-class-read-only` and say it matches none of the committed entries today (all remote-mutating). Test `fixture-notes-do-not-claim-no-shipped-class-rule` derives "matches none" from the fixture and shipped rules.
+- #414: PT-2 witnesses and `PT2-mutant` are per non-mutating verb, derived from `KNOWN_VERBS` through the kernel, with stand-in binaries; a verb-only allow on `read` alone is now flagged.
+
 ### Added - Issue #308 story F (AP-10: deny rules, F4 canonical redirect targets, F8 redirect never replaces its command) - HELD behind THOTH-ADR-0003 acceptance
 
 CRITICAL tier (self-protection of the gate; shell normalizer). Not wired (story K); merge held until the human accepts THOTH-ADR-0003. Refs #308, #411, #408, #406, #401.
