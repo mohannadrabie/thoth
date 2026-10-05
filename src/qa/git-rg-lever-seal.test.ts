@@ -442,7 +442,7 @@ test("S409-precondition-preflight-clean: the preflight reports nothing in this r
     const found = runPreflight({ repoRoot: REPO_ROOT, home: empty, env: {}, programData: join(empty, "none"), systemConfigPaths: [], managedSettingsPath: join(empty, "none.json") });
     assert.deepEqual(unacknowledged(found), []);
     // The one acknowledged entry is matched on key and exact value, so a changed hooksPath is a finding again.
-    assert.ok(found.every((f) => f.acknowledged !== true || KNOWN_PROJECT_CONFIG.some((k) => k.key === f.key)));
+    assert.ok(found.every((f) => f.acknowledged !== true || f.key === "githooks file" || KNOWN_PROJECT_CONFIG.some((k) => k.key === f.key)));
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }

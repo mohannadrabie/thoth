@@ -23,10 +23,11 @@
 // project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
 // developer-time input only (the settings file is itself a protected path).
 //
+// `--print-worktree-targets` lists the extra targets a linked worktree needs (worktreeExtraPaths).
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { canonicalizePathTarget } from "../policy/normalizer/path-canonical.ts";
@@ -231,8 +232,15 @@ function namedPaths(root: string): string[] {
     ".thoth/halt-state/", // named sensitive area: session-readable, secrets-adjacent derivation
     // #409 (S7): the config, attribute and hook files git reads, each able to name a program git then runs (core.fsmonitor,
     // diff/filter drivers, hooks). Deny-rule targets are exact or directory-prefix (no globs, rule-types.ts), so nested
-    // .gitattributes files are not listed: an attribute can only select a driver that config defines, and config is sealed.
+    // .gitattributes files are not listed: an attribute can only select a driver that config defines.
+    // What this seals: the project-relative git dir of a MAIN checkout (.git/config, .git/config.worktree, .git/hooks/,
+    // .git/info/attributes, .git/modules/ for submodule git dirs, .git/worktrees/), the root .gitattributes, .githooks/ and
+    // the user-level files. It does NOT seal the common dir of a LINKED worktree (outside the project root): see
+    // worktreeExtraPaths, which derives those targets per checkout.
     ".git/config",
+    ".git/config.worktree",
+    ".git/modules/",
+    ".git/worktrees/",
     ".git/hooks/",
     ".githooks/", // this repo's own core.hooksPath target (src/lib/git-hooks-install.ts): the hooks git actually runs here
     ".git/info/attributes",
@@ -243,8 +251,25 @@ function namedPaths(root: string): string[] {
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
-/** RED-commit stub: extra protected targets for a linked worktree. */
-export const worktreeExtraPaths = (_root: string): string[] => [];
+/** Extra protected targets for a LINKED worktree (#442). There .git is a file (gitdir: <common>/worktrees/<name>) and git
+ * reads config, hooks and attributes from the COMMON dir, outside the project root, plus <gitdir>/config.worktree.
+ * Returns targets relative to the project root (e.g. ../main/.git/config), empty in a main checkout. NOT part of the
+ * committed rules (they would differ per checkout layout and fail the F-committed drift check): the activation story (K)
+ * and the preflight use this per checkout. A common dir on another drive has no relative form and is skipped. */
+export function worktreeExtraPaths(root: string, read: Reader = readReal): string[] {
+  const dot = resolve(root, ".git");
+  if (!existsSync(dot) || statSync(dot).isDirectory()) return [];
+  const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(read(dot) ?? "");
+  if (pointer === null) return [];
+  const gitDir = resolve(root, pointer[1]!);
+  const commonText = read(join(gitDir, "commondir"));
+  const common = commonText === undefined ? gitDir : resolve(gitDir, commonText.trim());
+  const base = toRel(root, common);
+  const own = toRel(root, gitDir);
+  if (isAbsolute(base) || isAbsolute(own)) return [];
+  const targets = [`${base}/config`, `${base}/config.worktree`, `${base}/hooks/`, `${base}/info/attributes`, `${base}/modules/`, `${base}/worktrees/`, `${own}/config.worktree`];
+  return [...new Set(targets.map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : "")))].sort();
+}
 
 /** Named paths that must exist on disk (the others may legitimately be absent). */
 const MUST_EXIST = [SHIPPED_REL, "hooks/launch-gate.sh", "src/qa/gate-launcher-pin-check.ts"];
@@ -364,6 +389,10 @@ export function renderShippedDefaults(existingText: string, paths: readonly stri
 }
 
 export function main(argv: readonly string[]): number {
+  if (argv.includes("--print-worktree-targets")) {
+    for (const p of worktreeExtraPaths(REPO_ROOT)) console.log(p);
+    return 0;
+  }
   const write = argv.includes("--write");
   const { all } = protectedPaths(REPO_ROOT);
   const skipped = wiredHookScan(REPO_ROOT).skipped;

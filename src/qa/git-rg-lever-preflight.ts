@@ -30,11 +30,13 @@ export interface Finding {
   detail: string;
   /** True for a finding that matches KNOWN_PROJECT_CONFIG: reported, not counted. */
   acknowledged?: true;
+  /** Who can write the source: a session (repo files, user-home files, settings files, ProgramData) or only the ambient
+   * machine (system gitconfig, process env, managed settings). Ambient findings are printed, never counted (#443). */
   scope?: "session-writable" | "ambient";
 }
 
-/** RED-commit stub. */
-export const exitCodeFor = (findings: readonly Finding[]): number => (findings.length === 0 ? 0 : 1);
+/** The process exit code: 1 when any counted finding exists, else 0. */
+export const exitCodeFor = (findings: readonly Finding[]): number => (unacknowledged(findings).length === 0 ? 0 : 1);
 
 export interface PreflightInput {
   repoRoot: string;
@@ -61,17 +63,21 @@ export const KNOWN_PROJECT_CONFIG: readonly { key: string; value: string; reason
   { key: "core.hookspath", value: ".githooks", reason: "installed by src/lib/git-hooks-install.ts; .githooks/ is protected" },
 ];
 
-/** Findings that count: everything except acknowledged project config. */
-export const unacknowledged = (findings: readonly Finding[]): Finding[] => findings.filter((f) => f.acknowledged !== true);
+/** Findings that count: session-writable scope, and not acknowledged project config. */
+export const unacknowledged = (findings: readonly Finding[]): Finding[] => findings.filter((f) => f.acknowledged !== true && f.scope !== "ambient");
 
 const DEFAULT_SYSTEM_CONFIGS = ["/etc/gitconfig", "C:/Program Files/Git/etc/gitconfig", "C:/Program Files/Git/mingw64/etc/gitconfig"];
 const MAX_INCLUDE_DEPTH = 5;
 
 type Read = { ok: true; text: string } | { ok: false; error: string } | undefined;
 
+/** Reads a regular file only. A UNC path (an SMB authentication attempt on open) and a non-regular file (a FIFO could hang)
+ * are skipped: some paths here are steered by data this command checks (env vars, include.path). */
 function tryRead(path: string): Read {
+  if (path.startsWith("//") || path.startsWith("\\\\")) return undefined;
   if (!existsSync(path)) return undefined;
   try {
+    if (!statSync(path).isFile()) return undefined;
     return { ok: true, text: readFileSync(path, "utf8") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -83,8 +89,13 @@ const unreadable = (where: string, error: string): Finding => ({ where, key: "un
 // ---- git config -------------------------------------------------------------------------------------------------------
 
 /** Is this git config key one that runs a program, or pulls in another file? */
+// Default-deny by key shape (#441): any key ending in one of these runs, or names, a program. Explicit cases follow.
+const EXEC_KEY_SUFFIX = /(cmd|command|program|helper|editor|pager|askpass|browser)$/;
+
 function executingKey(section: string, sub: string | undefined, key: string, value: string): boolean {
   const v = value.replace(/^"/, "").trim();
+  if (EXEC_KEY_SUFFIX.test(key)) return true;
+  if (section === "submodule" && key === "update" && v.startsWith("!")) return true;
   switch (section) {
     case "core":
       return ["fsmonitor", "hookspath", "pager", "sshcommand", "editor", "askpass", "gitproxy"].includes(key);
@@ -223,6 +234,35 @@ function scanHooks(dir: string, findings: Finding[]): void {
   }
 }
 
+/** One git dir's own config, per-worktree config, hooks and attributes, then the submodule git dirs under modules/ (nested) and
+ * the per-worktree config of each linked worktree under worktrees/ (#440). */
+function scanGitDir(dir: string, home: string, findings: Finding[], seen: Set<string>, known: typeof KNOWN_PROJECT_CONFIG, depth: number): void {
+  scanGitConfig(join(dir, "config"), home, findings, seen, 0, known);
+  scanGitConfig(join(dir, "config.worktree"), home, findings, seen, 0, known);
+  scanHooks(join(dir, "hooks"), findings);
+  scanAttributes(join(dir, "info", "attributes"), findings);
+  if (depth >= MAX_INCLUDE_DEPTH) return;
+  for (const sub of listDirs(join(dir, "modules"))) scanGitDir(sub, home, findings, seen, [], depth + 1);
+  for (const wt of listDirs(join(dir, "worktrees"))) scanGitConfig(join(wt, "config.worktree"), home, findings, seen, 0);
+}
+
+function listDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir).sort().map((n) => join(dir, n)).filter((p) => statSync(p).isDirectory());
+  } catch {
+    return [];
+  }
+}
+
+/** Each file in the project's own hooks dir (core.hooksPath target) is listed by name as a NOTE, never counted: its content is the
+ * secret-scan hook, protected from session writes, but pre-existing content is outside the seal (R3) and is not inspected. */
+function scanGithooksDir(dir: string, findings: Finding[]): void {
+  for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
+    const p = join(dir, name);
+    if (statSync(p).isFile()) findings.push({ where: p, key: "githooks file", detail: "project hook file listed for the human to review; content not inspected", acknowledged: true });
+  }
+}
+
 /** The .git directory and the common directory (they differ in a linked worktree, where .git is a file). */
 function gitDirs(repoRoot: string): { gitDir: string; commonDir: string } | undefined {
   const dot = join(repoRoot, ".git");
@@ -286,48 +326,62 @@ export function runPreflight(input: PreflightInput): Finding[] {
   const { repoRoot, home, env } = input;
   const findings: Finding[] = [];
   const seen = new Set<string>();
+  /** Runs a scan group and tags what it finds with the scope of its source. */
+  const group = (scope: "session-writable" | "ambient", run: (out: Finding[]) => void): void => {
+    const out: Finding[] = [];
+    run(out);
+    for (const f of out) findings.push({ ...f, scope });
+  };
 
-  const dirs = gitDirs(repoRoot);
-  if (dirs !== undefined) {
-    scanGitConfig(join(dirs.commonDir, "config"), home, findings, seen, 0, KNOWN_PROJECT_CONFIG);
-    scanGitConfig(join(dirs.gitDir, "config.worktree"), home, findings, seen, 0);
-    scanHooks(join(dirs.commonDir, "hooks"), findings);
-    scanAttributes(join(dirs.commonDir, "info", "attributes"), findings);
-  }
-  scanAttributes(join(repoRoot, ".gitattributes"), findings);
+  // Session-writable: repo files (a session writes the working tree), user-home files, the settings files, and
+  // %PROGRAMDATA%Git (measured on this machine: BUILTINUsers may create subdirectories under C:ProgramData, so a
+  // standard-user session can create C:ProgramDataGitconfig).
+  group("session-writable", (out) => {
+    const dirs = gitDirs(repoRoot);
+    if (dirs !== undefined) {
+      scanGitDir(dirs.commonDir, home, out, seen, KNOWN_PROJECT_CONFIG, 0);
+      if (dirs.gitDir !== dirs.commonDir) scanGitConfig(join(dirs.gitDir, "config.worktree"), home, out, seen, 0);
+    }
+    scanAttributes(join(repoRoot, ".gitattributes"), out);
+    scanGithooksDir(join(repoRoot, ".githooks"), out);
+    const xdg = env["XDG_CONFIG_HOME"];
+    for (const f of [join(home, ".gitconfig"), join(home, ".config", "git", "config"), ...(xdg === undefined || xdg === "" ? [] : [join(xdg, "git", "config")])]) scanGitConfig(f, home, out, seen, 0);
+    scanAttributes(join(home, ".config", "git", "attributes"), out);
+    if (input.programData !== undefined) scanGitConfig(join(input.programData, "Git", "config"), home, out, seen, 0);
+    const rg = env["RIPGREP_CONFIG_PATH"];
+    if (rg !== undefined && rg !== "") scanRgConfig(rg, out);
+    const kube = (env["KUBECONFIG"] ?? "").split(delimiter).filter((p) => p !== "");
+    for (const f of new Set([join(home, ".kube", "config"), ...kube])) scanKubeconfig(f, out);
+    scanSettingsFile("project", join(repoRoot, ".claude", "settings.json"), out);
+    scanSettingsFile("local", join(repoRoot, ".claude", "settings.local.json"), out);
+    scanSettingsFile("user", join(home, ".claude", "settings.json"), out);
+  });
 
-  const xdg = env["XDG_CONFIG_HOME"];
-  for (const f of [join(home, ".gitconfig"), join(home, ".config", "git", "config"), ...(xdg === undefined || xdg === "" ? [] : [join(xdg, "git", "config")])]) scanGitConfig(f, home, findings, seen, 0);
-  scanAttributes(join(home, ".config", "git", "attributes"), findings);
-  for (const f of input.systemConfigPaths ?? DEFAULT_SYSTEM_CONFIGS) scanGitConfig(f, home, findings, seen, 0);
-  if (input.programData !== undefined) scanGitConfig(join(input.programData, "Git", "config"), home, findings, seen, 0);
-
-  for (const key of Object.keys(env).sort()) {
-    if (env[key] === undefined || !isLeverKey(key) || isAmbientCommon(key)) continue;
-    findings.push({ where: "process env", key, detail: "an exec-lever key is set in the process environment; value not shown" });
-  }
-  const rg = env["RIPGREP_CONFIG_PATH"];
-  if (rg !== undefined && rg !== "") scanRgConfig(rg, findings);
-
-  const kube = (env["KUBECONFIG"] ?? "").split(delimiter).filter((p) => p !== "");
-  for (const f of new Set([join(home, ".kube", "config"), ...kube])) scanKubeconfig(f, findings);
-
-  scanSettingsFile("project", join(repoRoot, ".claude", "settings.json"), findings);
-  scanSettingsFile("local", join(repoRoot, ".claude", "settings.local.json"), findings);
-  scanSettingsFile("user", join(home, ".claude", "settings.json"), findings);
-  scanSettingsFile("managed", input.managedSettingsPath ?? defaultManagedSettings(env), findings);
+  // Ambient: only the machine's administrator or the launching environment can set these; printed, never counted.
+  group("ambient", (out) => {
+    for (const f of input.systemConfigPaths ?? DEFAULT_SYSTEM_CONFIGS) scanGitConfig(f, home, out, seen, 0);
+    for (const key of Object.keys(env).sort()) {
+      if (env[key] === undefined || !isLeverKey(key) || isAmbientCommon(key)) continue;
+      out.push({ where: "process env", key, detail: "an exec-lever key is set in the process environment; value not shown" });
+    }
+    scanSettingsFile("managed", input.managedSettingsPath ?? defaultManagedSettings(env), out);
+  });
   return findings;
 }
 
 export function main(): number {
   const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
   const findings = runPreflight({ repoRoot, home: homedir(), env: process.env, programData: process.env["ProgramData"] ?? process.env["PROGRAMDATA"] });
-  for (const f of findings) console.log(`${f.acknowledged === true ? "NOTE   " : "FINDING"} ${f.key} | ${f.where} | ${f.detail}`);
+  for (const f of findings) {
+    const label = f.acknowledged === true ? "NOTE   " : f.scope === "ambient" ? "AMBIENT" : "FINDING";
+    console.log(`${label} ${f.key} | ${f.where} | ${f.detail}`);
+  }
   const counted = unacknowledged(findings);
-  console.log(`git-rg-lever-preflight: ${counted.length === 0 ? "PASS, no findings" : `${String(counted.length)} finding(s); clear them before activation and before git or rg is re-added`}`);
+  const ambient = findings.filter((f) => f.scope === "ambient").length;
+  console.log(`git-rg-lever-preflight: ${counted.length === 0 ? "PASS, no session-writable findings" : `${String(counted.length)} session-writable finding(s); clear them before activation and before git or rg is re-added`}; ${String(ambient)} ambient line(s) printed, not counted`);
   console.log("Not closed by the seal (disclosed):");
   for (const [k, v] of Object.entries(RESIDUALS)) console.log(`  ${k}: ${v}`);
-  return counted.length === 0 ? 0 : 1;
+  return exitCodeFor(findings);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exitCode = main();
