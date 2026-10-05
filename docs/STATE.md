@@ -1,9 +1,19 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-05 (#308 stories E, F, J built and reviewed on local branch `s308/activation-3`, HELD: THOTH-ADR-0003 still `proposed`; K held; E0 planned and challenged, not built)
+**Last updated:** 2026-10-05 (THOTH-ADR-0003 accepted by the human, keeping the 2026-09-19 exemption; #308 E, F, J pushed on `s308/activation-3` as a draft PR; K held)
 
-## Resume point — 2026-10-05 (newest): #308 E, F, J review-complete on `s308/activation-3` (local, not pushed), HELD behind THOTH-ADR-0003
+## Resume point — 2026-10-05, later (newest): THOTH-ADR-0003 accepted; E, F, J on a draft PR
+
+- **Human, 2026-10-05:** "accept ADR-0003 but keep the 2026-09-19 exemption". The ADR is `accepted`; the Manager's narrowing is removed (decisions row "THOTH-ADR-0003 accepted"). PR #407 merged by the human.
+- **Branch:** `s308/activation-3`, synced with `origin/master`, pushed by the Manager at the human's request; draft PR open. Merge is human-only.
+- **E, F, J:** the ADR hold is released (E7, F7, J7 met). Still disclosed: F has no red-team go after its round-2 no-go (see below).
+- **K stays held:** separate human approval, plus the K blockers below (#408 E0, #409, #424, #428, #429).
+- **Still open for the human:** ratify or overrule the Manager's rulings made under pre-approval; decide whether to build E0.
+
+**Single next action:** review the draft PR; mark it ready and merge once CI is green.
+
+## Prior entry (superseded above): 2026-10-05: #308 E, F, J review-complete on `s308/activation-3` (local, not pushed), HELD behind THOTH-ADR-0003
 
 - **Branch:** `s308/activation-3`, cut from `217b4c4` (the open handoff PR #407 head). Head after the handoff commit. Not pushed. MUST NOT merge before the human accepts THOTH-ADR-0003 (E7, F7, J7; agents never self-accept).
 - **Verify (Manager, quiet tree at `7f77262`):** build, typecheck, lint rc=0; every `qa:*` rc=0; QA-14 diff mode 810 citations, 0 failed; full suite 1955/1956, 0 skipped. The 1 is R4 EBUSY (#231), which passes alone 26/26.
