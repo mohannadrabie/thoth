@@ -173,3 +173,17 @@ test("RO-B22-length: a 100 KB operand and 10k tokens are unresolved (no clean re
   assert.equal(isCleanReadOrList(call(`cat ${"a".repeat(100_000)}`)), false);
   assert.equal(isCleanReadOrList(call(`cat ${Array.from({ length: 10_000 }, () => "a").join(" ")}`)), false);
 });
+
+// --- Issue #436: UNC operands ---------------------------------------------------------------------------------------------
+
+test("RO-unc-operand-unresolved (Issue #436): an operand starting with // (or two backslashes) is never a clean read or list for any table command", () => {
+  const operands = ["//h/s/x", "//h/s", "//h", "//", String.raw`\\h\s\x`];
+  for (const cmd of ["cat", "ls", "head -n 1", "tail -n 1", "wc -l", "grep -r p", "grep p"]) {
+    for (const o of operands) {
+      const r = call(`${cmd} ${o}`);
+      assert.equal(isCleanReadOrList(r), false, `${cmd} ${o}: ${JSON.stringify(r)}`);
+      assert.ok(r.unresolved.length > 0, `${cmd} ${o}`);
+    }
+  }
+  assert.equal(isCleanReadOrList(call("cat /h/s/x")), true, "control: a single-slash absolute path is not a UNC path");
+});

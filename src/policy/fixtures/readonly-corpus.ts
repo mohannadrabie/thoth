@@ -91,6 +91,8 @@ export const DENY_GROUPS: Readonly<Record<string, readonly string[]>> = {
   ],
   "B-18b-grep-pattern-slot": ["grep * README.md", "grep [0-9] README.md", 'grep "$x" README.md', 'grep "a.*b" README.md', "grep '-x' README.md", "grep '' README.md", "grep -e '' README.md", "grep 'caf\u00e9' README.md"],
   "B-19-unterminated-quote": ["ls 'x", 'cat "x', "grep 'x README.md"],
+  // Issue #436: a leading "//" is a UNC path on Windows (an SMB authentication vector); canonicalization would fold it to "/host/share".
+  "B-21-unc-operands": ["cat //h/s/x", "cat //h", "cat //", "ls //h/s", "grep -r p //h/s", "grep p //h/s/x", "head -n 1 //h/s/x", "tail -n 1 //h/s/x", "wc -l //h/s/x", "cat \\\\h\\s\\x", "ls \\\\h\\s"],
   "B-20-colon-and-drive-forms": ["cat a:b", "cat c:x", "cat c:/x", "cat policy.json::data", "ls c:"],
 };
 

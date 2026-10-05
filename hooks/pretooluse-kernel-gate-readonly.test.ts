@@ -74,3 +74,10 @@ test("RO-protected-write-denied: every write form to a protected path stays deni
     }
   }
 });
+
+test("RO-unc-operand-unresolved (Issue #436): UNC operands are a strict policy deny through the real hook", () => {
+  for (const command of ["cat //h/s/x", "ls //h/s", "grep -r p //h/s", "head -n 1 //h/s/x", "tail -n 1 //h/s/x", "wc -l //h/s/x", String.raw`cat \\h\s\x`]) {
+    const run = sb().bash(command);
+    assert.ok(wasPolicyDenied(run), `${command}: ${describeRun(run)}`);
+  }
+});
