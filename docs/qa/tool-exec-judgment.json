@@ -1,0 +1,234 @@
+{
+  "version": "2026-10-05",
+  "note": "Hand-judged. Each vendored tool in docs/qa/tool-inventory.json is judged exec-routed (matcher includes it, the gate refuses it), exec-residual (conditional on residualCondition) or not-exec. An aliasOf entry is a call-time name absent from the vendored inventory. mcp__* names are matched by the pattern token and judged by the tool-class normalizer, not here. Checked by src/qa/tool-exec-judgment.test.ts; do not run the vendor script over this file.",
+  "judgments": [
+    {
+      "tool": "Bash",
+      "judgment": "exec-routed",
+      "reason": "Runs a command string; routed to the gate, which evaluates it (the only built-in the gate understands)."
+    },
+    {
+      "tool": "PowerShell",
+      "judgment": "exec-routed",
+      "reason": "Runs a command string; J3 measured it running un-gated after a Bash denial; routed so the gate refuses it."
+    },
+    {
+      "tool": "Monitor",
+      "judgment": "exec-routed",
+      "reason": "Takes a raw shell command and streams its output (Manager ruling 3, 2026-10-05); routed so the gate refuses it."
+    },
+    {
+      "tool": "RemoteTrigger",
+      "judgment": "exec-routed",
+      "reason": "Creates and runs cloud routines outside the local gate (Manager ruling 3, 2026-10-05); routed so the gate refuses it."
+    },
+    {
+      "tool": "Task",
+      "judgment": "exec-residual",
+      "reason": "Delegates to a subagent; effects only through the subagent's own tool calls. Evidence s7-live-probes P1: the gate fires for Bash inside a subagent and the deny holds (background and foreground); K release gate re-runs it. Init-list name; the call-time name is Agent (alias entry below).",
+      "residualCondition": "inner-calls-gated",
+      "evidence": "docs/qa/s7-live-probes/README.md"
+    },
+    {
+      "tool": "Agent",
+      "judgment": "exec-residual",
+      "reason": "Call-time name of Task: the init list says Task, but the tool call and PreToolUse hook use tool_name Agent (P1). Alias entry, not in the vendored inventory.",
+      "residualCondition": "inner-calls-gated",
+      "evidence": "docs/qa/s7-live-probes/README.md",
+      "aliasOf": "Task"
+    },
+    {
+      "tool": "SendMessage",
+      "judgment": "exec-residual",
+      "reason": "Resumes subagents and messages teammates, same class as Task. P1 measured a general-purpose subagent's Bash only, not a SendMessage-resumed one.",
+      "residualCondition": "inner-calls-gated",
+      "evidence": "docs/qa/s7-live-probes/README.md"
+    },
+    {
+      "tool": "Workflow",
+      "judgment": "exec-residual",
+      "reason": "Multi-step agent work through subagents. P1 did not run a workflow.",
+      "residualCondition": "inner-calls-gated",
+      "evidence": "docs/qa/s7-live-probes/README.md"
+    },
+    {
+      "tool": "CronCreate",
+      "judgment": "exec-residual",
+      "reason": "Schedules a later prompt; that prompt's tool calls are gated like any other (Manager ruling 3).",
+      "residualCondition": "none"
+    },
+    {
+      "tool": "ScheduleWakeup",
+      "judgment": "exec-residual",
+      "reason": "Schedules the session's own later prompt; same as CronCreate.",
+      "residualCondition": "none"
+    },
+    {
+      "tool": "Skill",
+      "judgment": "exec-residual",
+      "reason": "Runs skill content that can carry shell preprocessing. Conditional on the session being unable to author that content: the skill, command, agent and plugin directories are write-protected. Limit: this does not make installed plugin or marketplace content trusted, and does not cover a directory named through --plugin-dir or a setting pointing outside those roots (not enumerable, unmeasured).",
+      "residualCondition": "authorable-content-protected"
+    },
+    {
+      "tool": "SlashCommand",
+      "judgment": "exec-residual",
+      "reason": "Same as Skill, for command files; same protected directories and same limit.",
+      "residualCondition": "authorable-content-protected"
+    },
+    {
+      "tool": "Read",
+      "judgment": "not-exec",
+      "reason": "Reads a file."
+    },
+    {
+      "tool": "Glob",
+      "judgment": "not-exec",
+      "reason": "Lists paths by pattern."
+    },
+    {
+      "tool": "Grep",
+      "judgment": "not-exec",
+      "reason": "Searches content with the runtime's own search; no user command string."
+    },
+    {
+      "tool": "Edit",
+      "judgment": "not-exec",
+      "reason": "Writes a file; protected-path writes are the Edit-deny list's job (F5)."
+    },
+    {
+      "tool": "Write",
+      "judgment": "not-exec",
+      "reason": "Writes a file; same as Edit."
+    },
+    {
+      "tool": "MultiEdit",
+      "judgment": "not-exec",
+      "reason": "Writes a file; same as Edit (carried forward, not measured in 2.1.267). Whether the generated Edit-deny entries cover it is unmeasured: K-time live spike."
+    },
+    {
+      "tool": "NotebookEdit",
+      "judgment": "not-exec",
+      "reason": "Edits a notebook's JSON cells on disk; does not execute cells or start a kernel. A write, same footing as Edit. Edit-deny coverage unmeasured: K-time live spike."
+    },
+    {
+      "tool": "WebFetch",
+      "judgment": "not-exec",
+      "reason": "Network read through the runtime; no local execution."
+    },
+    {
+      "tool": "WebSearch",
+      "judgment": "not-exec",
+      "reason": "Network read through the runtime; no local execution."
+    },
+    {
+      "tool": "EnterWorktree",
+      "judgment": "not-exec",
+      "reason": "Runs git worktree internally and accepts no command string; a git hook it triggers must first be authored by another gated call (.git/hooks/ and .githooks/ are protected, #409)."
+    },
+    {
+      "tool": "ExitWorktree",
+      "judgment": "not-exec",
+      "reason": "Same as EnterWorktree."
+    },
+    {
+      "tool": "TaskStop",
+      "judgment": "not-exec",
+      "reason": "Stops an existing task by id; starts nothing."
+    },
+    {
+      "tool": "KillShell",
+      "judgment": "not-exec",
+      "reason": "Stops an existing shell by id; starts nothing (carried forward)."
+    },
+    {
+      "tool": "TaskOutput",
+      "judgment": "not-exec",
+      "reason": "Reads a background task's output."
+    },
+    {
+      "tool": "BashOutput",
+      "judgment": "not-exec",
+      "reason": "Reads a background shell's output (carried forward)."
+    },
+    {
+      "tool": "CronDelete",
+      "judgment": "not-exec",
+      "reason": "Removes a schedule; runs nothing."
+    },
+    {
+      "tool": "CronList",
+      "judgment": "not-exec",
+      "reason": "Lists schedules."
+    },
+    {
+      "tool": "ListAgents",
+      "judgment": "not-exec",
+      "reason": "Lists agents."
+    },
+    {
+      "tool": "ToolSearch",
+      "judgment": "not-exec",
+      "reason": "Returns schemas of deferred tools; the tools it exposes are judged by their own names."
+    },
+    {
+      "tool": "PushNotification",
+      "judgment": "not-exec",
+      "reason": "Sends a notification; no execution."
+    },
+    {
+      "tool": "Artifact",
+      "judgment": "not-exec",
+      "reason": "Creates or edits a hosted artifact; no local execution."
+    },
+    {
+      "tool": "DesignSync",
+      "judgment": "not-exec",
+      "reason": "Syncs designs to a remote service; semantics unverified (name from the init event only); re-judge if its schema shows a command field."
+    },
+    {
+      "tool": "ReportFindings",
+      "judgment": "not-exec",
+      "reason": "Reports findings to a destination; semantics unverified (name from the init event only)."
+    },
+    {
+      "tool": "AskUserQuestion",
+      "judgment": "not-exec",
+      "reason": "Prompts the human."
+    },
+    {
+      "tool": "ExitPlanMode",
+      "judgment": "not-exec",
+      "reason": "Mode switch."
+    },
+    {
+      "tool": "TodoWrite",
+      "judgment": "not-exec",
+      "reason": "Edits session task state."
+    },
+    {
+      "tool": "ListMcpResources",
+      "judgment": "not-exec",
+      "reason": "Lists MCP resources (carried forward)."
+    },
+    {
+      "tool": "ListMcpResourcesTool",
+      "judgment": "not-exec",
+      "reason": "Runtime spelling of ListMcpResources."
+    },
+    {
+      "tool": "ReadMcpResource",
+      "judgment": "not-exec",
+      "reason": "Reads an MCP resource (carried forward)."
+    },
+    {
+      "tool": "ReadMcpResourceTool",
+      "judgment": "not-exec",
+      "reason": "Runtime spelling of ReadMcpResource."
+    },
+    {
+      "tool": "ReadMcpResourceDirTool",
+      "judgment": "not-exec",
+      "reason": "Directory form of the MCP resource read."
+    }
+  ]
+}

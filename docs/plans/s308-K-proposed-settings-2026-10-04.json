@@ -1,8 +1,11 @@
 {
   "permissions": {
     "deny": [
+      "Edit(/.claude/agents/**)",
+      "Edit(/.claude/commands/**)",
       "Edit(/.claude/settings.json)",
       "Edit(/.claude/settings.local.json)",
+      "Edit(/.claude/skills/**)",
       "Edit(/.git/config)",
       "Edit(/.git/hooks/**)",
       "Edit(/.git/info/attributes)",
@@ -53,7 +56,11 @@
       "Edit(/src/policy/tools/mcp-enumeration.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
       "Edit(~/.claude.json)",
+      "Edit(~/.claude/agents/**)",
+      "Edit(~/.claude/commands/**)",
+      "Edit(~/.claude/plugins/**)",
       "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/skills/**)",
       "Edit(~/.config/git/attributes)",
       "Edit(~/.config/git/config)",
       "Edit(~/.gitconfig)"

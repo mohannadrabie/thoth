@@ -240,6 +240,15 @@ function namedPaths(root: string): string[] {
     "~/.gitconfig",
     "~/.config/git/config",
     "~/.config/git/attributes",
+    // #429 (S7): content the Skill and SlashCommand tools run (it can carry shell preprocessing). Residual-with-condition in
+    // docs/qa/tool-exec-judgment.json: the session must not author it. .claude/worktrees/ is deliberately NOT listed.
+    ".claude/commands/",
+    ".claude/skills/",
+    ".claude/agents/",
+    "~/.claude/commands/",
+    "~/.claude/skills/",
+    "~/.claude/agents/",
+    "~/.claude/plugins/", // plugin skills and commands load from here
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
