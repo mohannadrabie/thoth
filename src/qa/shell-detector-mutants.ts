@@ -41,6 +41,8 @@ const TEST_FILES = [
   "policy/normalizer/shell-scanner-work.test.ts",
   "policy/normalizer/flag-catalog.test.ts",
   "policy/normalizer/wrapper-catalog.test.ts",
+  "policy/normalizer/readonly-catalog.test.ts",
+  "policy/normalizer/readonly-fixture-snapshot.test.ts",
   "policy/normalizer/registry.test.ts",
 ];
 
@@ -95,6 +97,7 @@ const SHELL = "policy/normalizer/shell.ts";
 const SCANNER = "policy/normalizer/shell-scanner.ts";
 const FLAGS = "policy/normalizer/flag-catalog.ts";
 const WRAPPERS = "policy/normalizer/wrapper-catalog.ts";
+const READONLY = "policy/normalizer/readonly-catalog.ts";
 
 const MUTANTS: Mutant[] = [
   // --- SUR-06a/06b: chaining + quote preservation (shell-scanner.ts) -----------------------
@@ -279,8 +282,8 @@ const MUTANTS: Mutant[] = [
     "inner-unresolved-propagation-broken",
     "ADR-0021 'exactly one Action record': dropping the inner record's own unresolved array on the way back out would hide a genuinely unresolved inner command behind a clean-looking outer one",
     SHELL,
-    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);\n  return { ...inner, deferred: true };",
-    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);\n  return { ...inner, deferred: true, unresolved: [] };",
+    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);\n  return { ...inner, deferred: true };",
+    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);\n  return { ...inner, deferred: true, unresolved: [] };",
   ),
   // --- regression guards: real bugs found and fixed during this story's own build (both S4
   // Stage-3 fix-now round self-discoveries, not reviewer findings) ---------------------------
@@ -579,6 +582,70 @@ const MUTANTS: Mutant[] = [
     SHELL,
     "if (redirectTargets.length >= 2) return unresolvedRecord(raw, [multiTargetMessage(redirectTargets.length)], raw.deferred ?? false);",
     "",
+  ),
+  // --- #308 story E0 (Issue #408): the closed read-only command set (readonly-catalog.ts plus shell.ts's call site) ---
+  textMutant(
+    "ro-claim-inside-wrapper-depth-guard-dropped",
+    "E0, ruling 2: dropping the depth-0 guard lets a wrapper's inner read (bash -c 'cat x', env ls) resolve through the recursion as a deferred read, which pol05Rule does not special-case, so an allow rule would authorize it",
+    SHELL,
+    "if (depth === 0 && wrapper === undefined) {",
+    "if (wrapper === undefined) {",
+  ),
+  textMutant(
+    "ro-multitarget-cap-lifted",
+    "E0, ruling 2 / Issue #410: lifting the multi-target cap for reads lets 'cat docs/ok.md /etc/shadow' resolve as one 2-target read record, which kernel.ts's OR-across-targets match would let a single-path read allow authorize whole (Issue #82 reopened for reads)",
+    SHELL,
+    "if (match.operands.length >= 2) return unresolvedRecord(raw, [multiTargetMessage(match.operands.length)], raw.deferred ?? false);",
+    "",
+  ),
+  textMutant(
+    "ro-binary-identity-quoting-check-dropped",
+    "E0 criterion 5: accepting a quoted or backslashed first token whose dequoted value is a table name ('c'at) claims a command whose real binary the shell may resolve differently",
+    READONLY,
+    "return token !== undefined && token.raw === token.value && SPECS.has(token.value);",
+    "return token !== undefined && SPECS.has(token.value);",
+  ),
+  textMutant(
+    "ro-bare-path-check-dropped",
+    "E0 criterion 9: dropping the raw-equals-dequoted check lets a quoted or escaped operand ('x', a\"b\"c) be recorded as a target string that differs from what was screened",
+    READONLY,
+    "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
+    "return t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
+  ),
+  textMutant(
+    "ro-unc-operand-check-dropped",
+    "E0 Issue #436: dropping the leading-// refusal lets a UNC operand (cat //host/share/x, an SMB authentication vector) resolve to a clean read that canonicalization folds to /host/share/x",
+    READONLY,
+    "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\") && !t.value.startsWith(\"//\");",
+    "return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith(\"-\");",
+  ),
+  textMutant(
+    "ro-pattern-single-quote-check-dropped",
+    "E0 criterion 10: accepting any quoted span as a grep pattern lets a double-quoted pattern with an expansion ($x) through",
+    READONLY,
+    "if (!t.raw.startsWith(\"'\") || !t.raw.endsWith(\"'\") || t.raw.slice(1, -1) !== t.value) return false;",
+    "if (t.raw.slice(1, -1) !== t.value) return false;",
+  ),
+  textMutant(
+    "ro-int-width-cap-dropped",
+    "E0 criterion 11: an unbounded integer value (head -n 99999999999) is no longer refused",
+    READONLY,
+    "const INT_VALUE = /^[0-9]{1,6}$/;",
+    "const INT_VALUE = /^[0-9]+$/;",
+  ),
+  textMutant(
+    "ro-git-added-to-table",
+    "E0, ruling 2 / Issue #409: adding git to the table (any shape) resolves 'git status' to a read although core.fsmonitor runs a config-named program on it",
+    READONLY,
+    '  ["cat", { verb: "read",',
+    '  ["git", { verb: "read", boolFlags: "", intFlags: "", patternSlot: false, pathless: "always", recursiveFlags: "" }],\n  ["cat", { verb: "read",',
+  ),
+  textMutant(
+    "ro-kubectl-binary-set-widened-to-ls",
+    "E0 / F9: widening the kubectl grammar's own binary set to include a read command lets 'ls get pods/x --context=c' resolve through the kubectl-shaped path",
+    SHELL,
+    'export const RESOLVABLE_BINARIES: ReadonlySet<string> = new Set(["kubectl"]);',
+    'export const RESOLVABLE_BINARIES: ReadonlySet<string> = new Set(["kubectl", "ls"]);',
   ),
 ];
 

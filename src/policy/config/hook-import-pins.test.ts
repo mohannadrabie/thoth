@@ -71,6 +71,11 @@ const PINNED_PAIRS: ReadonlySet<string> = new Set([
  *  - loader.ts, builtin-tool-inventory.ts, central-classification.ts and classification-catalog.ts import node:fs
  *    to read the local policy / fixture / inventory files they are named for (pinned so a NEW fs importer in the
  *    graph is a reviewed change). The `|xN` suffix is the occurrence count of that site in that scope.
+ *  - path-trust-check.ts (Issue #428, the binary-trust port's real adapter, loaded by a separate import() after the
+ *    Promise.all) reads PATH, SYSTEMROOT and windir, the process cwd and the home directory (node:os), and lists
+ *    directories (node:fs), BY DESIGN: the gate must see the PATH the shell will use to decide whether a bare command name
+ *    can be shadowed. Every call only reads (readdir, realpath, lstat). The pure check (gate/bare-binary-trust.ts) takes
+ *    these as ports and names exactly those three variables (test TRUST-12). Accepted, disclosed.
  *  - classification-catalog.ts projectDir reads CLAUDE_PROJECT_DIR / cwd. It is exported but the hook uses
  *    none of the pinned pairs that reach it; a separate test proves nothing in the graph references it. */
 const PINNED_ENV_SITES: ReadonlySet<string> = new Set([
@@ -78,6 +83,13 @@ const PINNED_ENV_SITES: ReadonlySet<string> = new Set([
   "src/policy/config/central-source.ts|resolveSystemRegExePath|process.env|x1",
   "src/policy/config/central-source.ts|resolveSystemRegExePath|env.SystemRoot|x1",
   "src/policy/config/central-source.ts|resolveSystemRegExePath|env.windir|x1",
+  "src/policy/config/path-trust-check.ts|<module>|import node:fs|x1",
+  "src/policy/config/path-trust-check.ts|<module>|import node:os|x1",
+  "src/policy/config/path-trust-check.ts|createRealTrustPorts|process.cwd|x1",
+  "src/policy/config/path-trust-check.ts|env|process.env|x3",
+  "src/policy/config/path-trust-check.ts|env|process.env.PATH|x1",
+  "src/policy/config/path-trust-check.ts|env|process.env.SYSTEMROOT|x1",
+  "src/policy/config/path-trust-check.ts|env|process.env.windir|x1",
   "src/policy/tools/classification-catalog.ts|projectDir|process.cwd|x1",
   "src/policy/tools/classification-catalog.ts|projectDir|process.env|x1",
   "src/policy/tools/classification-catalog.ts|projectDir|env.CLAUDE_PROJECT_DIR|x1",
@@ -300,7 +312,9 @@ const readReal = (abs: string): string | undefined => (existsSync(abs) ? readFil
 const graphEnvSites = (g: Graph): string[] => [...new Set([...g.modules].flatMap(([file, text]) => scanEnvSites(file, text)))].sort();
 
 const realHook = readFileSync(HOOK_PATH, "utf8");
-const realGraph = collectGraph(path.dirname(HOOK_PATH), Object.values(PINNED_NAMESPACES), readReal);
+/** Issue #428: the hook also loads this module with a separate import() (after the Promise.all, which the AC-7 guard in sanitize.test.ts pins by exact shape), so it is a graph root too. */
+const EXTRA_GRAPH_ROOTS: readonly string[] = ["../src/policy/config/path-trust-check.ts"];
+const realGraph = collectGraph(path.dirname(HOOK_PATH), [...Object.values(PINNED_NAMESPACES), ...EXTRA_GRAPH_ROOTS], readReal);
 
 // ---- real-input tests ----
 

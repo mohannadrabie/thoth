@@ -1,16 +1,48 @@
 {
-  "proposedMatcher": "Bash|PowerShell|mcp__.*",
+  "proposedMatcher": "Bash|Monitor|PowerShell|RemoteTrigger|mcp__.*",
   "proposedCommand": "sh \"${CLAUDE_PROJECT_DIR}/hooks/launch-gate.sh\" \"${CLAUDE_PROJECT_DIR}/hooks/pretooluse-kernel-gate.mjs\"",
   "timeout": 60,
   "pendingHumanDecision": [
-    { "tool": "Skill", "routingBreaks": "Every Skill invocation (project and plugin skills) is refused; the gate refuses any tool name other than Bash and mcp__." },
-    { "tool": "Workflow", "routingBreaks": "Every workflow run is refused." },
-    { "tool": "CronCreate", "routingBreaks": "Scheduling a cron job from a session is refused." },
-    { "tool": "RemoteTrigger", "routingBreaks": "Remote trigger calls are refused." },
-    { "tool": "Monitor", "routingBreaks": "Streaming a background command's output is refused." },
-    { "tool": "Task", "routingBreaks": "All subagent delegation is refused, including the reviewer agents this loop depends on." },
-    { "tool": "ScheduleWakeup", "routingBreaks": "A session cannot schedule its own later prompt." },
-    { "tool": "SlashCommand", "routingBreaks": "Slash commands run through the model are refused." }
+    {
+      "tool": "Skill",
+      "residualCondition": "authorable-content-protected",
+      "routingBreaks": "Every Skill invocation (project and plugin skills) is refused; the gate refuses any tool name other than Bash and mcp__."
+    },
+    {
+      "tool": "SlashCommand",
+      "residualCondition": "authorable-content-protected",
+      "routingBreaks": "Slash commands run through the model are refused."
+    },
+    {
+      "tool": "Workflow",
+      "residualCondition": "inner-calls-gated",
+      "routingBreaks": "Every workflow run is refused."
+    },
+    {
+      "tool": "CronCreate",
+      "residualCondition": "none",
+      "routingBreaks": "Scheduling a cron job from a session is refused."
+    },
+    {
+      "tool": "ScheduleWakeup",
+      "residualCondition": "none",
+      "routingBreaks": "A session cannot schedule its own later prompt."
+    },
+    {
+      "tool": "Task",
+      "residualCondition": "inner-calls-gated",
+      "routingBreaks": "All subagent delegation is refused, including the reviewer agents this loop depends on (init-list name)."
+    },
+    {
+      "tool": "Agent",
+      "residualCondition": "inner-calls-gated",
+      "routingBreaks": "All subagent delegation is refused (call-time name of Task; the hook payload's tool_name is Agent)."
+    },
+    {
+      "tool": "SendMessage",
+      "residualCondition": "inner-calls-gated",
+      "routingBreaks": "Resuming a subagent or messaging a teammate is refused."
+    }
   ],
-  "note": "Entry text for story K (held). Not a settings file: it has no hooks key on purpose (gate-manifest-check counts any JSON with one). What fires the hook for each pending tool, and what exactly breaks, is unmeasured (red-team J #4)."
+  "note": "Entry text for story K (held). Not a settings file: it has no hooks key on purpose (gate-manifest-check counts any JSON with one). The matcher and the pending list are hand-written and pinned to docs/qa/tool-exec-judgment.json by src/qa/tool-exec-judgment.test.ts (#429). What fires the hook for each pending tool, and what exactly breaks, is unmeasured except the subagent Bash case (docs/qa/s7-live-probes/README.md, P1)."
 }

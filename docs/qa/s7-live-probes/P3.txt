@@ -1,0 +1,73 @@
+P3: J5 negative control: a deny rule for an UNRELATED file in the same directory leaves the fixture copy editable; J5's wrong-case rule again
+Date: 2026-10-05. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11, Git Bash. Gate hosted from a detached worktree of origin/master (6f78aee).
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder; <SPIKES>/gate-wt is the gate worktree, <SPIKES>/proj the scratch project, <SPIKES>/home the scratch home, <SPIKES>/p2b-home the P2b dummy folder; ~/<SPIKES-REL> is <SPIKES> written relative to the real home), <HOME>. Ids are replaced by stable placeholders.
+Scratch copy of docs/qa/s5-central-classification.json (from origin/master), restored from .orig before each run. The real fixture is not edited.
+
+
+### profile p3unrelated.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(/docs/qa/unrelated-file.json)"
+    ]
+  }
+}
+
+### profile p3case.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(/Docs/QA/S5-Central-Classification.JSON)"
+    ]
+  }
+}
+
+### run p3-unrelated-edit
+profile=p3unrelated home_redirected=false config_dir_redirected=false exit=0 wall_ms=9851 cost_usd=0.0253339
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll help you edit that file. Let me first read it to locate the exact text."
+tool_use {"id":"<TOOLU-25>","name":"Read","input":{"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"tool_use_id":"<TOOLU-25>","length":2889,"content":"[omitted: 2889 chars, file body]"}
+assistant_text "Now I'll replace the exact text with 'J5 EDIT PROBE':"
+tool_use {"id":"<TOOLU-26>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json","old_string":"This fixture is the single source","new_string":"J5 EDIT PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-26>","length":268,"content":"The file <SPIKES>\\proj\\docs\\qa\\s5-central-classification.json has been updated successfully. (file state is current in your context — no need to Read it back)"}
+assistant_text "**Success.** The text 'This fixture is the single source' has been replaced with 'J5 EDIT PROBE' in line 4 of the JSON file."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0253339,"is_error":false,"result":"**Success.** The text 'This fixture is the single source' has been replaced with 'J5 EDIT PROBE' in line 4 of the JSON file."}
+
+### run p3-unrelated-write
+profile=p3unrelated home_redirected=false config_dir_redirected=false exit=0 wall_ms=13936 cost_usd=0.0328014
+prompt: Use the Write tool to overwrite docs/qa/s5-central-classification.json with the single line J5-WRITE-PROBE. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+tool_use {"id":"<TOOLU-27>","name":"Write","input":{"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json","content":"J5-WRITE-PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-27>","is_error":true,"length":96,"content":"<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>"}
+tool_use {"id":"<TOOLU-28>","name":"Read","input":{"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"tool_use_id":"<TOOLU-28>","length":2889,"content":"[omitted: 2889 chars, file body]"}
+tool_use {"id":"<TOOLU-29>","name":"Write","input":{"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json","content":"J5-WRITE-PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-29>","length":268,"content":"The file <SPIKES>\\proj\\docs\\qa\\s5-central-classification.json has been updated successfully. (file state is current in your context — no need to Read it back)"}
+assistant_text "Success. The file `docs/qa/s5-central-classification.json` has been overwritten with the single line `J5-WRITE-PROBE`."
+result {"subtype":"success","num_turns":4,"total_cost_usd":0.0328014,"is_error":false,"result":"Success. The file `docs/qa/s5-central-classification.json` has been overwritten with the single line `J5-WRITE-PROBE`."}
+
+### run p3-case-edit
+profile=p3case home_redirected=false config_dir_redirected=false exit=0 wall_ms=10768 cost_usd=0.0253127
+prompt: Use the Edit tool on docs/qa/s5-central-classification.json to replace the exact text 'This fixture is the single source' with 'J5 EDIT PROBE'. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll help you edit that file. Let me first read it to locate the text."
+tool_use {"id":"<TOOLU-30>","name":"Read","input":{"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json"}}
+tool_result {"tool_use_id":"<TOOLU-30>","length":2889,"content":"[omitted: 2889 chars, file body]"}
+assistant_text "Now I'll replace that text using the Edit tool."
+tool_use {"id":"<TOOLU-31>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>\\proj\\docs\\qa\\s5-central-classification.json","old_string":"This fixture is the single source","new_string":"J5 EDIT PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-31>","is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**The edit failed.** The file is located in a directory that has denied permissions (`docs/qa/s5-central-classification.json`). This is likely a Windows permission restriction or a setting in Claude Code that blocks writes to that directory path.\n\nYou may need to:\n1. Check the file's permission settings\n2. Run with elevated permissions, or\n3. Move the file to a directory with write access before editing\n\nWould you like me to try a different approach, or do you have access to adjust the permissions?"
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0253127,"is_error":false,"result":"**The edit failed.** The file is located in a directory that has denied permissions (`docs/qa/s5-central-classification.json`). This is likely a Windows permission restriction or a setting in Claude Code that blocks writes to that directory path.\n\nYou may need to:\n1. Check the file's permission settings\n2. Run with elevated permissions, or\n3. Move the file to a directory with write access before editing\n\nWould you like me to try a different approach, or do you have access to adjust the permissions?"}
+
+### before/after sha256 (first 16 hex) of the target file
+p3-unrelated-edit file=docs/qa/s5-central-classification.json before=bbade38ae1e3fe29 after=6d02c5c275e3766a changed=YES
+p3-case-edit file=docs/qa/s5-central-classification.json before=bbade38ae1e3fe29 after=bbade38ae1e3fe29 changed=no
+p3-unrelated-write file=docs/qa/s5-central-classification.json before=bbade38ae1e3fe29 after=9320c1005dd26c09 changed=YES

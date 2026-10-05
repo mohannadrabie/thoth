@@ -70,11 +70,18 @@
 //       general "what does ALLOW mean against a multi-target record" question is real but belongs
 //       to whichever future normalizer next needs to reason about it, not solved here (recorded by
 //       the Manager, not this file).
+//   11. #308 story E0 (Issue #408): a WHOLE simple command from the closed read-only table (readonly-catalog.ts: ls, cat,
+//       head, tail, wc, grep) now resolves to verb read or list with one canonical target. One guarded call site
+//       (`resolveReadOnly`), after the syntax, directory-flag and wrapper handling and before the kubectl grammar, only at
+//       depth 0 and only when no wrapper matched; a redirect-decorated command is never claimed (it keeps its F8 record);
+//       the Issue #82 cap applies (2 or more path operands are unresolved). git and rg are NOT in the table (#409).
 //
 // Anything this file cannot confidently resolve is reported via `unresolved`, never guessed at or
 // silently dropped (ADR-0021 §3.2, SUR-02's terminal fall-through is deny) — the uniform,
 // fail-closed pattern every branch below follows without exception.
 import { canonicalizePathTarget, pathFormIssue } from "./path-canonical.ts";
+import { isReadOnlyBinaryToken, matchReadOnly } from "./readonly-catalog.ts";
+import type { RawToken } from "./readonly-catalog.ts";
 
 /** F9 (Issue #420): the closed set of leading binaries the kubectl-shaped grammar resolves. The grammar reads the verb
  * from the token after the binary, so without this set `node get pods/x --context=c` resolved as a read and ran a file
@@ -254,6 +261,7 @@ function resolveWrapperMatch(
   raw: ShellCall,
   wrapper: WrapperMatch | "unresolved-shaped" | undefined,
   depth: number,
+  invoked: string[] | undefined,
 ): ActionRecord | undefined {
   if (wrapper === undefined) return undefined;
 
@@ -273,7 +281,7 @@ function resolveWrapperMatch(
     return unresolvedRecord(raw, [`nested command exceeds depth cap (${DEPTH_CAP})`], true);
   }
 
-  const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);
+  const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);
   return { ...inner, deferred: true };
 }
 
@@ -460,16 +468,58 @@ function resolveKubectlShape(
   };
 }
 
+/** The E0 read-only message for a ':' segment in a read operand (alternate data stream or drive form). */
+export const READ_OPERAND_COLON_UNRESOLVED = "read operand has a ':' segment (alternate data stream or drive form), which no project-relative rule can match (E0, Issue #408)";
+
+/** #308 story E0 (Issue #408): resolves a WHOLE simple command from the closed read-only table (readonly-catalog.ts) to a
+ * read or list record, or returns undefined (not claimed: the caller falls through to the kubectl-shaped path and the
+ * command ends unresolved). The caller has already returned early on any chain, substitution, directory flag or syntax
+ * cause, and has already handled wrappers. Refused here: a here-doc body, any live redirect operator (so a redirect-decorated
+ * command keeps exactly its F8 record), and a first token that is not exactly a table name. The #82 multi-target cap
+ * applies (ruling 2): a command with 2 or more path operands is unresolved. */
+function resolveReadOnly(
+  raw: ShellCall,
+  liveText: string,
+  offsetTokens: readonly { value: string; start: number }[],
+  bodies: readonly string[],
+  hasLiveRedirect: boolean,
+): ActionRecord | undefined {
+  if (bodies.length > 0 || hasLiveRedirect) return undefined;
+  // The raw span of a token runs from its start to the next token's start, minus the separating whitespace. If a token ends
+  // in an ESCAPED space, trimEnd also eats that space, so raw (`a\`) differs from value (`a `) and the token is refused:
+  // a mismatch can only make E0 refuse, never accept.
+  const tokens: RawToken[] = offsetTokens.map((t, i) => ({
+    value: t.value,
+    raw: liveText.slice(t.start, offsetTokens[i + 1]?.start ?? liveText.length).trimEnd(),
+  }));
+  if (!isReadOnlyBinaryToken(tokens[0])) return undefined;
+  const match = matchReadOnly(tokens);
+  if (match === undefined) return undefined;
+  if (match.operands.length >= 2) return unresolvedRecord(raw, [multiTargetMessage(match.operands.length)], raw.deferred ?? false);
+  return {
+    source: "parsed",
+    verbs: [match.verb],
+    targets: match.operands.map(canonicalizePathTarget),
+    environment: raw.environment,
+    identity: raw.identity,
+    deferred: raw.deferred ?? false,
+    unresolved: match.operands.some((o) => pathFormIssue(o) !== undefined) ? [READ_OPERAND_COLON_UNRESOLVED] : [],
+  };
+}
+
 /** Module-internal recursion entry point — `depth` is NEVER exported (architecture-reviewer, S4
  * Stage-3 review, Finding 2 / Issue #77: a public, externally-callable depth parameter is a
  * structural way to bypass the depth cap, even with 0 live call sites doing so today). Only this
  * file's own recursive self-call, below, ever passes a non-default `depth`. */
-function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
+function normalizeAtDepth(raw: ShellCall, depth: number, invoked?: string[]): ActionRecord {
   const { liveText, bodies } = stripHeredocBodies(raw.command);
   const syntaxUnresolved = collectSyntaxUnresolved(liveText);
 
   const offsetTokens = tokenizeWithOffsets(liveText);
   const tokens = offsetTokens.map((t) => t.value);
+  // Issue #428: the bare command name this layer would run, collected by the SAME recursion that resolves the command (not a
+  // second parser), so the gate's binary-trust check sees exactly the names the normalizer consumed.
+  if (invoked !== undefined && tokens[0] !== undefined) invoked.push(tokens[0]);
   // Position-based, not value-based (Issue #80) — a token counts as a redirect operator only when
   // it BEGINS at the same character offset as a live `>`/`>>` match (findLiveRedirectOperatorPositions
   // and extractRedirectTargets share the exact same live-operator scan), never by comparing the
@@ -494,8 +544,15 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
   if (wrapper !== undefined && (tokens[0] ?? "") !== toolToken) {
     return unresolvedRecord(raw, [WRAPPER_BINARY_NOT_BARE_UNRESOLVED], raw.deferred ?? false);
   }
-  const wrapperResult = resolveWrapperMatch(raw, wrapper, depth);
+  const wrapperResult = resolveWrapperMatch(raw, wrapper, depth, invoked);
   if (wrapperResult) return wrapperResult;
+
+  // E0 (Issue #408, ruling 2): only at depth 0 and only when no wrapper matched, so a wrapper's inner command is never
+  // resolved as a (deferred) read; every wrapper forces the whole command unresolved.
+  if (depth === 0 && wrapper === undefined) {
+    const readOnly = resolveReadOnly(raw, liveText, offsetTokens, bodies, redirectOperatorPositions.size > 0);
+    if (readOnly) return readOnly;
+  }
 
   return resolveKubectlShape(raw, positional, flags, liveText, tokens[0] ?? "");
 }
@@ -504,6 +561,21 @@ function normalizeAtDepth(raw: ShellCall, depth: number): ActionRecord {
  * comment for why depth is not, and must never become, a parameter of this exported function. */
 export function normalizeShellCall(raw: ShellCall): ActionRecord {
   return normalizeAtDepth(raw, 0);
+}
+
+/** Issue #428: the first token of the command at every layer the normalizer descended (the leading binary, then each unwrapped
+ * wrapper's inner command), in order, exactly as written. The gate hands these to its binary-trust check, because a bare
+ * name does not say which file runs. Collected by the same `normalizeAtDepth` recursion that resolves the command, so the
+ * two cannot drift. A command that does not resolve yields whatever layers were walked; POL-05 denies it anyway.
+ * `undefined` only if the walk itself throws (the gate then denies). */
+export function invokedBareBinaries(command: string): readonly string[] | undefined {
+  try {
+    const invoked: string[] = [];
+    normalizeAtDepth({ command, environment: "unknown", identity: "unknown", deferred: false }, 0, invoked);
+    return invoked;
+  } catch {
+    return undefined;
+  }
 }
 
 registerNormalizer({

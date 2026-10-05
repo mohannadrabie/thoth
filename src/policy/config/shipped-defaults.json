@@ -7,7 +7,148 @@
       "verbs": [
         "tool-class:read-only"
       ],
-      "rationale": "AP-1 baseline (#308 story E): a classified read-only MCP tool is allowed. Marker-only on purpose: no target, so a shell redirect into mcp/ cannot match (loader check V4), and a shell verb token equal to the marker is unresolved (PT-1). The verb-only shell read allow is withheld until story E0 (#408): shell verb resolution is tool-blind (PT-2)."
+      "rationale": "AP-1 baseline (#308 story E): a classified read-only MCP tool is allowed. Marker-only on purpose: no target, so a shell redirect into mcp/ cannot match (loader check V4), and a shell verb token equal to the marker is unresolved (PT-1). The verb-only shell read allow rests on story E0 (#408): the shell normalizer resolves only the closed read-only set (ls, cat, head, tail, wc, grep) to a read, so the allow covers nothing else (shell verb resolution is tool-blind, PT-2)."
+    },
+    {
+      "id": "protect-claude-agents",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/agents",
+        ".claude/agents/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-commands",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/commands",
+        ".claude/commands/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-hooks",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/hooks",
+        ".claude/hooks/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-launch-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/launch.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-loop-md",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/loop.md"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-output-styles",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/output-styles",
+        ".claude/output-styles/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-routines",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/routines",
+        ".claude/routines/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-scheduled-tasks-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/scheduled_tasks.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
     },
     {
       "id": "protect-claude-settings-json",
@@ -39,6 +180,95 @@
       ],
       "targets": [
         ".claude/settings.local.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-skills",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/skills",
+        ".claude/skills/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-claude-workflows",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".claude/workflows",
+        ".claude/workflows/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-git",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".git",
+        ".git/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-gitattributes",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".gitattributes"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-githooks",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        ".githooks",
+        ".githooks/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -96,6 +326,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-docs-qa-claude-code-write-deny-judgment-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "docs/qa/claude-code-write-deny-judgment.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-docs-qa-s5-central-classification-json",
       "effect": "deny",
       "verbs": [
@@ -108,6 +355,23 @@
       ],
       "targets": [
         "docs/qa/s5-central-classification.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-docs-qa-tool-exec-judgment-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "docs/qa/tool-exec-judgment.json"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -249,6 +513,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-policy-config-path-trust-check-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/config/path-trust-check.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-policy-config-pin-ts",
       "effect": "deny",
       "verbs": [
@@ -329,6 +610,23 @@
       ],
       "targets": [
         "src/policy/config/shipped-defaults.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-policy-gate-bare-binary-trust-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/gate/bare-binary-trust.ts"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -516,6 +814,23 @@
       ],
       "targets": [
         "src/policy/normalizer/path-canonical.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-policy-normalizer-readonly-catalog-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/normalizer/readonly-catalog.ts"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -759,6 +1074,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-qa-claude-code-write-deny-extract-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/claude-code-write-deny-extract.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-qa-gate-launcher-pin-check-ts",
       "effect": "deny",
       "verbs": [
@@ -771,6 +1103,125 @@
       ],
       "targets": [
         "src/qa/gate-launcher-pin-check.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-protected-path-list-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/protected-path-list.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-tool-exec-judgment-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/tool-exec-judgment.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-aliases",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_aliases"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-login",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_login"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-logout",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_logout"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bash-profile",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bash_profile"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-bashrc",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.bashrc"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -793,6 +1244,412 @@
       "mandatory": true
     },
     {
+      "id": "protect-home-claude-agents",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/agents",
+        "~/.claude/agents/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-claude-md",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/claude.md"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-commands",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/commands",
+        "~/.claude/commands/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-cowork-plugins",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/cowork_plugins",
+        "~/.claude/cowork_plugins/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-daemon-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/daemon.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-daemon",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/daemon",
+        "~/.claude/daemon/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-hooks",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/hooks",
+        "~/.claude/hooks/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-jobs",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/jobs",
+        "~/.claude/jobs/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-launch-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/launch.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-local",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/local",
+        "~/.claude/local/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-loop-md",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/loop.md"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-output-styles",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/output-styles",
+        "~/.claude/output-styles/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-plugins",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/plugins",
+        "~/.claude/plugins/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-policy-limits-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/policy-limits.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-projects",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/projects",
+        "~/.claude/projects/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-remote-settings-consent-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/remote-settings-consent.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-remote-settings-helper-consent",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/remote-settings-helper-consent",
+        "~/.claude/remote-settings-helper-consent/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-remote-settings-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/remote-settings.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-routines",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/routines",
+        "~/.claude/routines/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-rules",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/rules",
+        "~/.claude/rules/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-scheduled-tasks-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/scheduled_tasks.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-seed-admin",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/seed-admin",
+        "~/.claude/seed-admin/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-session-env",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/session-env",
+        "~/.claude/session-env/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-claude-settings-json",
       "effect": "deny",
       "verbs": [
@@ -805,6 +1662,267 @@
       ],
       "targets": [
         "~/.claude/settings.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-shell-snapshots",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/shell-snapshots",
+        "~/.claude/shell-snapshots/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-skills",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/skills",
+        "~/.claude/skills/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-claude-workflows",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude/workflows",
+        "~/.claude/workflows/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-config-fish",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.config/fish",
+        "~/.config/fish/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-config-git-attributes",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.config/git/attributes"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-config-git-config",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.config/git/config"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-gitconfig",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.gitconfig"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-profile",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.profile"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zlogin",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zlogin"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zlogout",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zlogout"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zprofile",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zprofile"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zshenv",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zshenv"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-zshrc",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.zshrc"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-documents-powershell",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/documents/powershell",
+        "~/documents/powershell/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-documents-windowspowershell",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/documents/windowspowershell",
+        "~/documents/windowspowershell/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1015,6 +2133,48 @@
       ],
       "targets": [
         "~/.claude"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-config",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.config"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-config-git",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.config/git"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-documents",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/documents"
       ],
       "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true

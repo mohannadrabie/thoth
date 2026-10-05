@@ -170,7 +170,20 @@ const FIXTURE_REL = path.join("docs", "qa", "s5-central-classification.json");
 const PROJECT_POLICY_REL = path.join(".thoth", "policy.json");
 const EMPTY_RULE_SET = `${JSON.stringify({ version: "0.0.0-s7-test-empty", rules: [] }, null, 2)}\n`;
 
-let templateDir: string | undefined;
+const PATH_TRUST_REL = path.join("src", "policy", "config", "path-trust-check.ts");
+const PATH_TRUST_PIN = `// gate-sandbox pin (Issue #428): the sandbox host's PATH is not a trusted-install world (the ubuntu runner image ships kubectl at
+// /usr/local/bin and AC-2 passed in an ubuntu:24.04 runner-like container, but a developer machine has per-user tools and
+// host PATH directories vary, for example a root-owned mode 700 /opt/pipx_bin), so tests that judge the NORMALIZER and the kernel through the real hook pin the binary-trust
+// check to allow. Tests of the check itself ask for the real one: createGateSandbox({ realPathTrust: true }).
+export function createRealTrustPorts(): never {
+  throw new Error("pinned away in the sandbox");
+}
+export function createRealBinaryCheck(): (names: readonly string[]) => { ok: true } {
+  return () => ({ ok: true });
+}
+`;
+
+const templates: { pinned?: string; real?: string } = {};
 
 function pinRegistryToAbsent(centralSourceFile: string): void {
   const original = fs.readFileSync(centralSourceFile, "utf8");
@@ -189,7 +202,15 @@ function pinRegistryToAbsent(centralSourceFile: string): void {
   fs.writeFileSync(centralSourceFile, pinned, "utf8");
 }
 
-function buildTemplate(): string {
+function pinPathTrust(file: string): void {
+  const original = fs.readFileSync(file, "utf8");
+  if (!original.includes("export function createRealBinaryCheck(")) {
+    throw new Error(`gate-sandbox: cannot pin the path-trust check: no "export function createRealBinaryCheck(" in ${PATH_TRUST_REL}`);
+  }
+  fs.writeFileSync(file, PATH_TRUST_PIN, "utf8");
+}
+
+function buildTemplate(realPathTrust: boolean): string {
   const dir = makeTempDir("gate-template");
   fs.mkdirSync(path.join(dir, "hooks"), { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, HOOK_REL), path.join(dir, HOOK_REL));
@@ -205,6 +226,7 @@ function buildTemplate(): string {
   fs.writeFileSync(path.join(dir, PROJECT_POLICY_REL), EMPTY_RULE_SET, "utf8");
   fs.writeFileSync(path.join(dir, SHIPPED_DEFAULTS_REL), EMPTY_RULE_SET, "utf8");
   pinRegistryToAbsent(path.join(dir, CENTRAL_SOURCE_REL));
+  if (!realPathTrust) pinPathTrust(path.join(dir, PATH_TRUST_REL));
   return dir;
 }
 
@@ -246,8 +268,14 @@ export function preToolUsePayload(root: string, toolName: unknown, toolInput: un
   return payload;
 }
 
-export function createGateSandbox(): GateSandbox {
-  templateDir ??= buildTemplate();
+export interface GateSandboxOptions {
+  /** Keep the REAL binary-trust check (Issue #428) instead of pinning it to allow. Default false. */
+  realPathTrust?: boolean;
+}
+
+export function createGateSandbox(options: GateSandboxOptions = {}): GateSandbox {
+  const real = options.realPathTrust === true;
+  const templateDir = real ? (templates.real ??= buildTemplate(true)) : (templates.pinned ??= buildTemplate(false));
   const root = makeTempDir("gate-sandbox");
   fs.cpSync(templateDir, root, { recursive: true });
   const hookPath = path.join(root, HOOK_REL);

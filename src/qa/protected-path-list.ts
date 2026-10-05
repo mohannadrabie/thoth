@@ -23,10 +23,11 @@
 // project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
 // developer-time input only (the settings file is itself a protected path).
 //
+// `--print-worktree-targets` lists the extra targets a linked worktree needs (worktreeExtraPaths).
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { canonicalizePathTarget } from "../policy/normalizer/path-canonical.ts";
@@ -229,7 +230,107 @@ function namedPaths(root: string): string[] {
     ".claude/settings.local.json", // project local settings
     "~/.claude/settings.json", // user settings (env reach unproven, treated as reachable)
     ".thoth/halt-state/", // named sensitive area: session-readable, secrets-adjacent derivation
+    // #409 (S7): the config, attribute and hook files git reads, each able to name a program git then runs (core.fsmonitor,
+    // diff/filter drivers, hooks). Deny-rule targets are exact or directory-prefix (no globs, rule-types.ts), so nested
+    // .gitattributes files are not listed: an attribute can only select a driver that config defines.
+    // What this seals: the WHOLE project-relative git dir of a MAIN checkout as one directory entry (.git/ covers config,
+    // config.worktree, hooks, info/attributes, modules/, worktrees/ and any file a later git version reads, including
+    // commondir, which redirects every one of those lookups), plus .git itself (the pointer file in a linked worktree), the
+    // root .gitattributes, .githooks/ and the user-level files. It does NOT seal the common dir of a LINKED worktree
+    // (outside the project root): see worktreeExtraPaths, which derives those targets per checkout.
+    ".git/",
+    ".githooks/", // this repo's own core.hooksPath target (src/lib/git-hooks-install.ts): the hooks git actually runs here
+    ".gitattributes",
+    "~/.gitconfig",
+    "~/.config/git/config",
+    "~/.config/git/attributes",
+    // #429 (S7): content the Skill and SlashCommand tools run (it can carry shell preprocessing). Residual-with-condition in
+    // docs/qa/tool-exec-judgment.json: the session must not author it. .claude/worktrees/ is deliberately NOT listed.
+    ".claude/commands/",
+    ".claude/skills/",
+    ".claude/agents/",
+    "~/.claude/commands/",
+    "~/.claude/skills/",
+    "~/.claude/agents/",
+    "~/.claude/plugins/", // plugin skills and commands load from here
+    // #446 (S7, Manager ruling on the #428 cross-domain finding): login-shell profile files. A session that can write one can
+    // prepend a planted PATH directory for its next shell. Residual R1 of #409 is now owned by #429/#446 (this list).
+    "~/.bashrc",
+    "~/.bash_profile",
+    "~/.bash_login",
+    "~/.profile",
+    "~/.zshrc",
+    "~/.zprofile",
+    "~/.zshenv",
+    "~/.config/fish/",
+    "~/.zlogin",
+    "~/.zlogout",
+    "~/.bash_logout",
+    "~/.bash_aliases",
+    "~/Documents/PowerShell/", // PowerShell profile directories (the PowerShell tool is routed, but pwsh can be launched by a gated command)
+    "~/Documents/WindowsPowerShell/",
+    // #448 (S7, red-team HIGH): the Bash tool sources snapshot-bash-*.sh from here into every gated command's shell.
+    "~/.claude/shell-snapshots/",
+    // #429 LOWs: the judgments and the two instruments that derive the protected list and the K matcher.
+    "docs/qa/tool-exec-judgment.json",
+    "src/qa/tool-exec-judgment.ts",
+    "src/qa/protected-path-list.ts",
+    // #451 and #429 round 2 (S7): every entry the installed Claude Code lists as write-protected for its own sandbox that is sourced,
+    // executed or loaded as instructions or config (judged in docs/qa/claude-code-write-deny-judgment.json, extracted by
+    // src/qa/claude-code-write-deny-extract.ts), plus ~/.claude.json (user MCP declarations) and the two instruments.
+    "~/.claude/session-env/",
+    "~/.claude/hooks/",
+    "~/.claude/workflows/",
+    "~/.claude/routines/",
+    "~/.claude/rules/",
+    "~/.claude/output-styles/",
+    "~/.claude/scheduled_tasks.json",
+    "~/.claude/launch.json",
+    "~/.claude/CLAUDE.md",
+    "~/.claude/projects/",
+    "~/.claude/daemon.json",
+    "~/.claude/policy-limits.json",
+    "~/.claude/loop.md",
+    "~/.claude/cowork_plugins/",
+    "~/.claude/local/",
+    "~/.claude/jobs/",
+    "~/.claude/seed-admin/",
+    "~/.claude/daemon/",
+    "~/.claude/remote-settings.json",
+    "~/.claude/remote-settings-consent.json",
+    "~/.claude/remote-settings-helper-consent/",
+    ".claude/hooks/",
+    ".claude/workflows/",
+    ".claude/routines/",
+    ".claude/output-styles/",
+    ".claude/launch.json",
+    ".claude/loop.md",
+    ".claude/scheduled_tasks.json",
+    ".mcp.json",
+    "~/.claude.json",
+    "docs/qa/claude-code-write-deny-judgment.json",
+    "src/qa/claude-code-write-deny-extract.ts",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
+}
+
+/** Extra protected targets for a LINKED worktree (#442). There .git is a file (gitdir: <common>/worktrees/<name>) and git
+ * reads config, hooks and attributes from the COMMON dir, outside the project root, plus <gitdir>/config.worktree.
+ * Returns targets relative to the project root (e.g. ../main/.git/config), empty in a main checkout. NOT part of the
+ * committed rules (they would differ per checkout layout and fail the F-committed drift check): the activation story (K)
+ * and the preflight use this per checkout. A common dir on another drive has no relative form and is skipped. */
+export function worktreeExtraPaths(root: string, read: Reader = readReal): string[] {
+  const dot = resolve(root, ".git");
+  if (!existsSync(dot) || statSync(dot).isDirectory()) return [];
+  const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(read(dot) ?? "");
+  if (pointer === null) return [];
+  const gitDir = resolve(root, pointer[1]!);
+  const commonText = read(join(gitDir, "commondir"));
+  const common = commonText === undefined ? gitDir : resolve(gitDir, commonText.trim());
+  const base = toRel(root, common);
+  if (isAbsolute(base)) return [];
+  // The whole common dir as one directory entry (it contains this worktree's own git dir), and the pointer file itself.
+  const targets = [`${base}/`, toRel(root, dot)];
+  return [...new Set(targets.map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : "")))].sort();
 }
 
 /** Named paths that must exist on disk (the others may legitimately be absent). */
@@ -331,15 +432,25 @@ export function editDenyEntry(p: string): string {
   return body.startsWith("~/") ? `Edit(${body})` : `Edit(/${body})`;
 }
 
+/** Every Edit(...) entry a path needs: a directory entry also needs one for the directory path itself, since `d/**` does not name `d`
+ * (a linked worktree's .git is a FILE at that path). */
+export function editDenyEntries(p: string): string[] {
+  return p.endsWith("/") ? [editDenyEntry(p), editDenyEntry(p.slice(0, -1))] : [editDenyEntry(p)];
+}
+
 /** The PROPOSED settings text (shipped by story K under the human's approval; never the real settings file). */
+/** Nested authorable directories (#449): kernel targets are exact or trailing-slash prefix (no globs), but Claude Code Edit rules
+ * accept ** globs. Whether these globs match is a K live-spike item. */
+export const NESTED_EDIT_GLOBS: readonly string[] = ["skills", "commands", "agents", "hooks", "workflows", "routines", "output-styles"].map((d) => `Edit(/**/.claude/${d}/**)`);
+
 export function buildSettingsProposal(paths: readonly string[]): string {
-  return `${JSON.stringify({ permissions: { deny: paths.map(editDenyEntry) } }, null, 2)}\n`;
+  return `${JSON.stringify({ permissions: { deny: [...paths.flatMap(editDenyEntries), ...NESTED_EDIT_GLOBS] } }, null, 2)}\n`;
 }
 
 export function missingEditDenies(settingsText: string, paths: readonly string[]): string[] {
   const parsed = JSON.parse(settingsText) as { permissions?: { deny?: unknown } };
   const deny = Array.isArray(parsed.permissions?.deny) ? (parsed.permissions.deny as unknown[]) : [];
-  return paths.filter((p) => !deny.includes(editDenyEntry(p)));
+  return paths.filter((p) => !editDenyEntries(p).every((e) => deny.includes(e)));
 }
 
 export function renderShippedDefaults(existingText: string, paths: readonly string[]): string {
@@ -350,6 +461,10 @@ export function renderShippedDefaults(existingText: string, paths: readonly stri
 }
 
 export function main(argv: readonly string[]): number {
+  if (argv.includes("--print-worktree-targets")) {
+    for (const p of worktreeExtraPaths(REPO_ROOT)) console.log(p);
+    return 0;
+  }
   const write = argv.includes("--write");
   const { all } = protectedPaths(REPO_ROOT);
   const skipped = wiredHookScan(REPO_ROOT).skipped;

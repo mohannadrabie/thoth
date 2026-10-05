@@ -44,6 +44,8 @@ function ports(opts: { rules?: Rule[]; defaultOutcome?: VerdictOutcome; catalog?
       if (opts.catalogThrows === true) throw new Error("catalog exploded");
       return opts.catalog ?? catalogOf([]);
     },
+    // Issue #428: these tests judge the kernel path, so the binary-trust port allows (it has its own tests).
+    checkBareBinaries: () => ({ ok: true }),
   };
   return spy;
 }
@@ -150,6 +152,7 @@ function realPorts(shipped: string, project: string, central: CentralPolicySourc
       return { ok: true, ruleSet: { version: loaded.merged.version, rules: loaded.merged.rules }, defaultOutcome: loaded.defaultOutcome.outcome };
     },
     loadCatalog: () => catalog,
+    checkBareBinaries: () => ({ ok: true }),
   };
 }
 

@@ -1,0 +1,269 @@
+{
+  "claudeCodeVersion": "2.1.267",
+  "note": "Hand-judged. Every entry the installed Claude Code lists as write-protected for its own sandbox (extracted by src/qa/claude-code-write-deny-extract.ts, read-only, from the binary's bundled code) has a judgment here; test src/qa/claude-code-write-deny.test.ts fails on a new unjudged entry. ~/.claude.json is protected beyond the extracted list (it holds user MCP server declarations). Nested copies of project entries below a subdirectory are the #449 residual (covered by K's glob Edit denies, not by kernel rules).",
+  "user": [
+    {
+      "name": "shell-snapshots",
+      "judgment": "protected",
+      "path": "~/.claude/shell-snapshots/",
+      "reason": "Sourced by the Bash tool into every gated command's shell (#448)."
+    },
+    {
+      "name": "session-env",
+      "judgment": "protected",
+      "path": "~/.claude/session-env/",
+      "reason": "Per-session environment files the harness creates and loads (#451)."
+    },
+    {
+      "name": "plugins",
+      "judgment": "protected",
+      "path": "~/.claude/plugins/",
+      "reason": "Plugin skills, commands, hooks and MCP declarations load from here (#429)."
+    },
+    {
+      "name": "hooks",
+      "judgment": "protected",
+      "path": "~/.claude/hooks/",
+      "reason": "Hook scripts settings can name; executed by the harness."
+    },
+    {
+      "name": "skills",
+      "judgment": "protected",
+      "path": "~/.claude/skills/",
+      "reason": "Skill content, can carry shell preprocessing (#429)."
+    },
+    {
+      "name": "commands",
+      "judgment": "protected",
+      "path": "~/.claude/commands/",
+      "reason": "Command files run by SlashCommand (#429)."
+    },
+    {
+      "name": "agents",
+      "judgment": "protected",
+      "path": "~/.claude/agents/",
+      "reason": "Subagent definitions loaded as instructions (#429)."
+    },
+    {
+      "name": "workflows",
+      "judgment": "protected",
+      "path": "~/.claude/workflows/",
+      "reason": "Workflow definitions the Workflow tool runs."
+    },
+    {
+      "name": "routines",
+      "judgment": "protected",
+      "path": "~/.claude/routines/",
+      "reason": "Routine definitions run on a schedule or trigger."
+    },
+    {
+      "name": "rules",
+      "judgment": "protected",
+      "path": "~/.claude/rules/",
+      "reason": "Rule files loaded into the model's instructions."
+    },
+    {
+      "name": "output-styles",
+      "judgment": "protected",
+      "path": "~/.claude/output-styles/",
+      "reason": "Output styles loaded into the system prompt."
+    },
+    {
+      "name": "scheduled_tasks.json",
+      "judgment": "protected",
+      "path": "~/.claude/scheduled_tasks.json",
+      "reason": "Scheduled prompts the harness runs later."
+    },
+    {
+      "name": "launch.json",
+      "judgment": "protected",
+      "path": "~/.claude/launch.json",
+      "reason": "Launch configuration (commands the harness may start)."
+    },
+    {
+      "name": "CLAUDE.md",
+      "judgment": "protected",
+      "path": "~/.claude/CLAUDE.md",
+      "reason": "User instructions loaded into every session."
+    },
+    {
+      "name": "projects",
+      "judgment": "protected",
+      "path": "~/.claude/projects/",
+      "reason": "Holds per-project auto-memory (MEMORY.md) that is loaded into context as instructions, plus transcripts. COST for the human at K: the session's own memory writes (Edit/Write) are denied."
+    },
+    {
+      "name": "daemon.json",
+      "judgment": "protected",
+      "path": "~/.claude/daemon.json",
+      "reason": "Daemon configuration, loaded as config."
+    },
+    {
+      "name": "policy-limits.json",
+      "judgment": "protected",
+      "path": "~/.claude/policy-limits.json",
+      "reason": "Policy limits file, loaded as config."
+    },
+    {
+      "name": "loop.md",
+      "judgment": "protected",
+      "path": "~/.claude/loop.md",
+      "reason": "Prompt the loop feature runs."
+    },
+    {
+      "name": "cowork_plugins",
+      "judgment": "protected",
+      "path": "~/.claude/cowork_plugins/",
+      "reason": "A second plugin root, same class as plugins."
+    },
+    {
+      "name": "local",
+      "judgment": "protected",
+      "path": "~/.claude/local/",
+      "reason": "A local install of the Claude Code program: executed."
+    },
+    {
+      "name": "jobs",
+      "judgment": "protected",
+      "path": "~/.claude/jobs/",
+      "reason": "Job definitions the harness runs."
+    },
+    {
+      "name": "seed-admin",
+      "judgment": "protected",
+      "path": "~/.claude/seed-admin/",
+      "reason": "Admin seed configuration, loaded as config."
+    },
+    {
+      "name": "daemon",
+      "judgment": "protected",
+      "path": "~/.claude/daemon/",
+      "reason": "Daemon state and config directory."
+    },
+    {
+      "name": "remote-settings.json",
+      "judgment": "protected",
+      "path": "~/.claude/remote-settings.json",
+      "reason": "Cached remote settings, loaded as config."
+    },
+    {
+      "name": "remote-settings-consent.json",
+      "judgment": "protected",
+      "path": "~/.claude/remote-settings-consent.json",
+      "reason": "Consent record that authorizes loading remote settings."
+    },
+    {
+      "name": "remote-settings-helper-consent",
+      "judgment": "protected",
+      "path": "~/.claude/remote-settings-helper-consent/",
+      "reason": "Consent for a remote-settings helper program; kind (file or directory) unverified, so the directory-or-file form is used."
+    },
+    {
+      "name": "backups",
+      "judgment": "residual",
+      "reason": "Recovery copies of config files; not loaded unless the live file is corrupt (unverified). Listed, not protected."
+    },
+    {
+      "name": "state",
+      "judgment": "residual",
+      "reason": "Runtime state kept by the harness; no evidence it is sourced, executed or loaded as instructions. Listed, not protected."
+    },
+    {
+      "name": "mcp-skill-archives",
+      "judgment": "residual",
+      "reason": "Cache of fetched skill archives; extraction into a skills directory goes through the protected skills paths. Listed, not protected."
+    },
+    {
+      "name": "mcp-discovery-cache",
+      "judgment": "residual",
+      "reason": "Cache of MCP discovery results; read as data. Listed, not protected."
+    },
+    {
+      "name": "shares",
+      "judgment": "residual",
+      "reason": "Shared-file staging; no evidence it is loaded or executed. Listed, not protected."
+    }
+  ],
+  "project": [
+    {
+      "name": "skills",
+      "judgment": "protected",
+      "path": ".claude/skills/",
+      "reason": "Project skills: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "commands",
+      "judgment": "protected",
+      "path": ".claude/commands/",
+      "reason": "Project commands: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "agents",
+      "judgment": "protected",
+      "path": ".claude/agents/",
+      "reason": "Project agents: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "hooks",
+      "judgment": "protected",
+      "path": ".claude/hooks/",
+      "reason": "Project hooks: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "workflows",
+      "judgment": "protected",
+      "path": ".claude/workflows/",
+      "reason": "Project workflows: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "routines",
+      "judgment": "protected",
+      "path": ".claude/routines/",
+      "reason": "Project routines: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "output-styles",
+      "judgment": "protected",
+      "path": ".claude/output-styles/",
+      "reason": "Project output-styles: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "launch.json",
+      "judgment": "protected",
+      "path": ".claude/launch.json",
+      "reason": "Project launch.json: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "loop.md",
+      "judgment": "protected",
+      "path": ".claude/loop.md",
+      "reason": "Project loop.md: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "scheduled_tasks.json",
+      "judgment": "protected",
+      "path": ".claude/scheduled_tasks.json",
+      "reason": "Project scheduled_tasks.json: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "settings.json",
+      "judgment": "protected",
+      "path": ".claude/settings.json",
+      "reason": "Project settings.json: same class as the user-level entry (authorable content the harness loads or runs)."
+    },
+    {
+      "name": "settings.local.json",
+      "judgment": "protected",
+      "path": ".claude/settings.local.json",
+      "reason": "Project settings.local.json: same class as the user-level entry (authorable content the harness loads or runs)."
+    }
+  ],
+  "projectRoot": [
+    {
+      "name": ".mcp.json",
+      "judgment": "protected",
+      "path": ".mcp.json",
+      "reason": "Declares MCP servers (commands the harness starts); a project-root file."
+    }
+  ]
+}

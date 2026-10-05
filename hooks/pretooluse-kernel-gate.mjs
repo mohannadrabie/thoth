@@ -11,8 +11,8 @@
 // its own preconditions (plan section 14, AP-1 to AP-14), among them a refreshed tool inventory, the deny rules
 // (story F) and the launcher-level residuals below (AP-13, narrowed by docs/plans/s7a-gate-hook-robustness-phase1-
 // 2026-09-26.md). Baseline allow content has shipped (baseline-allow-class-read-only, story E); nothing denies by
-// class from shipped data, and that class rule matches no committed fixture entry today. The Bash baseline allow (read-only
-// commands such as ls, cat, git status) is still unmet: with the gate wired they are denied by POL-05 until story E0 (Issue #408).
+// class from shipped data, and that class rule matches no committed fixture entry today. The Bash baseline allow is still partly unmet:
+// only the E0 set (Issue #408: ls, cat, head, tail, wc, grep) resolves as a read, while git, rg and every other command are denied by POL-05 (git and rg until #409).
 //
 // SCOPE (plan R-B): the gate evaluates ONLY `tool_name == "Bash"` (S4 shell normalizer) and names of
 // the form `mcp__<server>__<tool>` (the tool-class normalizer, class carried on a marker verb, see
@@ -173,6 +173,11 @@ async function main() {
 
     unlockFor = gate.hookFailureUnlock;
 
+    // Issue #428: the binary-trust port's real file-system adapter. Loaded AFTER the Promise.all, not inside it, on purpose: the
+    // sanitizer wiring guard (src/policy/config/sanitize.test.ts, AC-7) pins that array's exact shape, and a load failure here
+    // lands in the same catch below (exit 2) either way.
+    const pathTrust = await import("../src/policy/config/path-trust-check.ts");
+
     if (raw.trim() === "") {
       throw new Error("empty stdin: no hook payload received at all");
     }
@@ -202,6 +207,9 @@ async function main() {
       loadCatalog() {
         return catalog.assembleCatalog(catalog.moduleRelativeFixtureLocation()).merged;
       },
+      // Issue #428: for a call the kernel allowed, prove each bare command name it runs resolves to a system-installed file
+      // (no shadow in a session-writable PATH directory). Read-only; the live PATH is read on every call.
+      checkBareBinaries: pathTrust.createRealBinaryCheck(),
     };
 
     const output = render.renderHookOutput(gate.decideToolCall(input, ports), sanitizeMod.sanitizeForTerminal);

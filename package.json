@@ -35,6 +35,8 @@
     "qa:vendor-tool-inventory": "node src/qa/vendor-tool-inventory.ts",
     "qa:fixture-name-triage": "node src/qa/fixture-name-triage.ts",
     "qa:protected-path-list": "node src/qa/protected-path-list.ts",
+    "qa:git-env-snapshot": "node src/qa/git-env-snapshot.ts",
+    "qa:git-rg-lever-preflight": "node src/qa/git-rg-lever-preflight.ts",
     "qa:gate-manifest": "node src/qa/gate-manifest-check.ts",
     "qa:gate-latency-budget": "node src/qa/gate-latency-budget-check.ts",
     "qa:hook-typecheck-coverage": "node src/qa/hook-typecheck-coverage-check.ts",

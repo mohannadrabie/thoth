@@ -35,6 +35,7 @@ import { normalize } from "../normalizer/registry.ts";
 import "../normalizer/shell.ts";
 import { moduleRelativeFixtureLocation } from "../tools/classification-catalog.ts";
 import {
+  NESTED_EDIT_GLOBS,
   PROTECTED_VERBS,
   buildDenyRules,
   buildParentRules,
@@ -195,6 +196,7 @@ test("F5 F5-ap10-paths-edit-deny: every protected path has an Edit(...) deny ent
   assert.equal(text, buildSettingsProposal(PATHS.all));
   const parsed = JSON.parse(text) as { permissions: { deny: string[] } };
   for (let i = 0; i < parsed.permissions.deny.length; i++) {
+    if (NESTED_EDIT_GLOBS.includes(parsed.permissions.deny[i]!)) continue; // glob entries (#449) belong to no path; F1-nested-edit-globs-in-proposal pins them
     const mutant = JSON.stringify({ permissions: { deny: parsed.permissions.deny.filter((_, j) => j !== i) } });
     assert.equal(missingEditDenies(mutant, PATHS.all).length, 1, `F5 mutant ${String(i)}`);
   }
@@ -280,4 +282,73 @@ test("cross-domain LOW 2: a non-project hook in the gitignored local settings is
   assert.equal(local.skipped.length, 1);
   assert.throws(() => wiredHookScan(REPO_ROOT, only(".claude/settings.json", bad)), /wired hook command/);
   assert.deepEqual(wiredHookScan(REPO_ROOT, only(".claude/settings.local.json", good)).scripts, ["hooks/x.mjs"]);
+});
+
+// #429 (S7): the content Skill and SlashCommand run is authorable by the session unless these directories are write-protected.
+const SKILL_CMD_DIRS = [".claude/commands/", ".claude/skills/", ".claude/agents/", "~/.claude/commands/", "~/.claude/skills/", "~/.claude/agents/", "~/.claude/plugins/"];
+test("F1-skill-command-content-protected: the seven authorable skill/command/agent/plugin directories are named, and the shipped rules deny every write verb under each", () => {
+  for (const d of SKILL_CMD_DIRS) {
+    assert.ok(PATHS.named.includes(d), `named protected directory missing: ${d}`);
+    for (const verb of PROTECTED_VERBS) {
+      const rec: ActionRecord = { ...writeRecord(`${d}x/child.md`), verbs: [verb] };
+      const v = decide(WORLD(shipped()), rec);
+      assert.equal(v.outcome, "deny", `${verb} under ${d}: ${JSON.stringify(v)}`);
+    }
+    assert.deepEqual(unmatchedPaths(shipped(), [d]), [], `shipped rules match ${d}`);
+    assert.deepEqual(unmatchedPaths(shipped().filter((r) => r.id !== ruleIdFor(d)), [d]), [d], `mutant: dropping the rule for ${d} is detected`);
+  }
+});
+
+test("F1-skill-protect-no-overblock: a write under .claude/worktrees/ is not denied by the shipped rules", () => {
+  const v = decide(WORLD(shipped()), writeRecord(".claude/worktrees/x/file.txt"));
+  assert.notEqual(v.outcome, "deny", JSON.stringify(v));
+});
+
+// #446 (S7, cross-domain finding on #428; Manager ruling): a session able to write its login-shell profile files can prepend a
+// planted PATH directory for the next shell, so these user-level files are write-protected too.
+const SHELL_PROFILE_FILES = ["~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.config/fish/", "~/.zlogin", "~/.zlogout", "~/.bash_logout", "~/.bash_aliases", "~/Documents/PowerShell/", "~/Documents/WindowsPowerShell/"];
+test("F1-shell-profile-files-protected-or-residual-owned: every login-shell profile file is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const proposal = readFileSync(PROPOSAL_PATH, "utf8");
+  for (const raw of SHELL_PROFILE_FILES) {
+    const f = raw.toLowerCase(); // the protected list is canonical (lowercase)
+    assert.ok(PATHS.all.includes(f), `shell profile file not protected: ${f}`);
+    assert.deepEqual(missingEditDenies(proposal, [f]), [], `K Edit entry missing for ${f}`);
+    for (const verb of PROTECTED_VERBS) {
+      const v = decide(WORLD(shipped()), { ...writeRecord(probeTarget(f)), verbs: [verb] });
+      assert.equal(v.outcome, "deny", `${verb} ${f}: ${JSON.stringify(v)}`);
+    }
+  }
+});
+
+// #448 (HIGH, red-team): the Bash tool sources ~/.claude/shell-snapshots/snapshot-bash-*.sh into every gated command's shell.
+test("F1-shell-snapshot-dir-protected: ~/.claude/shell-snapshots/ is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const d = "~/.claude/shell-snapshots/";
+  assert.ok(PATHS.named.includes(d), "named protected directory missing");
+  assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [d]), []);
+  for (const verb of PROTECTED_VERBS) assert.equal(decide(WORLD(shipped()), { ...writeRecord(`${d}snapshot-bash-1.sh`), verbs: [verb] }).outcome, "deny", verb);
+});
+
+// #429 LOWs (app-security suspicion 2, red-team LOW 4): the instruments that hold the judgments are session-unwritable.
+test("F1-judgment-instruments-protected: the judgment file and the two generator instruments are on the protected list, denied for writes, with K Edit entries", () => {
+  const files = ["docs/qa/tool-exec-judgment.json", "src/qa/tool-exec-judgment.ts", "src/qa/protected-path-list.ts"];
+  for (const f of files) {
+    assert.ok(PATHS.all.includes(f), `not protected: ${f}`);
+    assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [f]), [], `K Edit entry missing: ${f}`);
+    assert.equal(decide(WORLD(shipped()), writeRecord(f)).outcome, "deny", f);
+  }
+});
+
+// #451 (HIGH, red-team round 2): the harness creates ~/.claude/session-env/<session>/ and loads from it; a sibling of #448.
+test("F1-session-env-dir-protected: ~/.claude/session-env/ is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const d = "~/.claude/session-env/";
+  assert.ok(PATHS.named.includes(d), "named protected directory missing");
+  assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [d]), []);
+  for (const verb of PROTECTED_VERBS) assert.equal(decide(WORLD(shipped()), { ...writeRecord(`${d}abc/sessionstart-hook-1.sh`), verbs: [verb] }).outcome, "deny", verb);
+});
+
+// #449 (refs, round 2): Claude Code Edit rules accept ** globs, so K's Edit-deny can cover nested authorable directories
+// that a kernel rule (exact or trailing-slash prefix) cannot. Matching of these globs is a K live-spike item.
+test("F1-nested-edit-globs-in-proposal: the K proposal carries a glob Edit-deny for each nested authorable .claude directory", () => {
+  const deny = (JSON.parse(readFileSync(PROPOSAL_PATH, "utf8")) as { permissions: { deny: string[] } }).permissions.deny;
+  for (const d of ["skills", "commands", "agents", "hooks", "workflows", "routines", "output-styles"]) assert.ok(deny.includes(`Edit(/**/.claude/${d}/**)`), `glob entry missing for ${d}`);
 });
