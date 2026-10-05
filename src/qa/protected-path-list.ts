@@ -23,7 +23,7 @@
 // project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
 // developer-time input only (the settings file is itself a protected path).
 //
-// `--print-worktree-targets` lists the extra targets a linked worktree needs (worktreeExtraPaths).
+// `--print-worktree-targets --form=relative|absolute` prints the Edit(...) lines a linked worktree needs (worktreeExtraPaths; --form is required, #442).
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -333,6 +333,45 @@ export function worktreeExtraPaths(root: string, read: Reader = readReal): strin
   return [...new Set(targets.map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : "")))].sort();
 }
 
+export type WorktreeForm = "relative" | "absolute";
+
+/** Ready-to-paste permissions.deny Edit(...) lines for the worktree targets (#442), one per line, sorted.
+ * relative: `/x` is project-root relative (so `/../main/.git/**`); absolute: the `//`-prefixed absolute form. Which form
+ * Claude Code honors for a path outside the project root is live probe P-K4 (stage 1), so both are emitted on request. */
+export function worktreeEditLines(root: string, form: WorktreeForm, read: Reader = readReal): string[] {
+  const targets = worktreeExtraPaths(root, read);
+  const lines = new Set<string>();
+  for (const t of targets) {
+    if (form === "relative") {
+      for (const e of editDenyEntries(t)) lines.add(e);
+      continue;
+    }
+    const abs = resolve(root, t).split(sep).join("/");
+    const body = abs.startsWith("/") ? abs.slice(1) : abs;
+    lines.add(`Edit(//${body})`);
+    if (t.endsWith("/")) lines.add(`Edit(//${body}/**)`);
+  }
+  return [...lines].sort();
+}
+
+/** CLI body of --print-worktree-targets (#442). Fails closed: --form=relative|absolute is required (exit 1, nothing on
+ * stdout). A main checkout emits nothing, exits 0 and says so on stderr. */
+export function runWorktreeTargets(argv: readonly string[], root: string, out: (l: string) => void, err: (l: string) => void, read: Reader = readReal): number {
+  const forms = argv.filter((a) => a.startsWith("--form="));
+  const form = forms.length === 1 ? forms[0]!.slice("--form=".length) : undefined;
+  if (form !== "relative" && form !== "absolute") {
+    err("protected-path-list: --print-worktree-targets requires exactly one --form=relative or --form=absolute");
+    return 1;
+  }
+  const lines = worktreeEditLines(root, form, read);
+  if (lines.length === 0) {
+    err("protected-path-list: main checkout (or no linked-worktree pointer): no worktree targets");
+    return 0;
+  }
+  for (const l of lines) out(l);
+  return 0;
+}
+
 /** Named paths that must exist on disk (the others may legitimately be absent). */
 const MUST_EXIST = [SHIPPED_REL, "hooks/launch-gate.sh", "src/qa/gate-launcher-pin-check.ts"];
 
@@ -462,8 +501,7 @@ export function renderShippedDefaults(existingText: string, paths: readonly stri
 
 export function main(argv: readonly string[]): number {
   if (argv.includes("--print-worktree-targets")) {
-    for (const p of worktreeExtraPaths(REPO_ROOT)) console.log(p);
-    return 0;
+    return runWorktreeTargets(argv, REPO_ROOT, (l) => console.log(l), (l) => console.error(l));
   }
   const write = argv.includes("--write");
   const { all } = protectedPaths(REPO_ROOT);
