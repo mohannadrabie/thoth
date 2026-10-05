@@ -6,8 +6,11 @@
       "Edit(/.thoth/halt-state/**)",
       "Edit(/.thoth/policy.json)",
       "Edit(/docs/qa/s5-central-classification.json)",
+      "Edit(/docs/qa/tool-inventory.json)",
       "Edit(/hooks/launch-gate.sh)",
       "Edit(/hooks/pretooluse-kernel-gate.mjs)",
+      "Edit(/hooks/sessionstart-tool-enum.mjs)",
+      "Edit(/hooks/userpromptsubmit-halt-relay.mjs)",
       "Edit(/src/policy/config/bootstrap-ruleset.ts)",
       "Edit(/src/policy/config/central-source.ts)",
       "Edit(/src/policy/config/loader.ts)",
@@ -40,6 +43,7 @@
       "Edit(/src/policy/tools/central-classification.ts)",
       "Edit(/src/policy/tools/classification-catalog.ts)",
       "Edit(/src/policy/tools/classification.ts)",
+      "Edit(/src/policy/tools/mcp-enumeration.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
       "Edit(~/.claude/settings.json)"
     ]

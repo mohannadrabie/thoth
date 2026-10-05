@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeShellCall, REDIRECT_DECORATES_UNRESOLVED } from "./shell.ts";
+import { BINARY_NOT_RECOGNIZED_UNRESOLVED, normalizeShellCall, REDIRECT_DECORATES_UNRESOLVED } from "./shell.ts";
 import {
   shellAbbreviatedFlagCall,
   shellAmpersandChainedCall,
@@ -163,7 +163,9 @@ test("SUR-07: a path-qualified tool-binary token resolves to the SAME verbs/targ
   const record = normalizeShellCall(shellPathQualifiedToolCall);
   assert.deepEqual(record.verbs, CANONICAL.verbs);
   assert.deepEqual(record.targets, CANONICAL.targets);
-  assert.deepEqual(record.unresolved, []);
+  // F9 (#420) recorded act (SE ADR-0005): was []. A path-qualified binary can be a planted file, so it is no longer resolved;
+  // verbs and targets still equal the canonical form (visible to a reviewer), and the unresolved cause makes POL-05 deny.
+  assert.deepEqual(record.unresolved, [BINARY_NOT_RECOGNIZED_UNRESOLVED]);
 });
 
 test("SUR-07: quoted tool/verb/resource tokens all resolve to the SAME verbs/targets as the canonical form", () => {

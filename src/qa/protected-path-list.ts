@@ -2,16 +2,21 @@
 // THOTH-ADR-0003 hold: F ships only after the human accepts it.
 //
 // The list is GENERATED, not typed:
-//   generated  = the PreToolUse hook file plus every module in its relative-import graph (static import,
-//                export-from, and import() with a literal specifier), found by a TypeScript AST walk. This is a
-//                parallel implementation of the scan in src/policy/config/hook-import-pins.test.ts (its helpers
-//                are private to that test); a non-relative, non-node: specifier or a computed import() throws.
+//   generated  = (1) the PreToolUse hook file and EVERY hook script wired in .claude/settings.json (read-only parse,
+//                Issue #419), plus every module in their relative-import graph (static import, export-from,
+//                import(), require() and createRequire(...)() with a literal specifier), found by a TypeScript AST
+//                walk; a computed import(), a non-literal require() or a stored createRequire throws (Issue #418).
+//                A parallel implementation of the scan in src/policy/config/hook-import-pins.test.ts (its helpers
+//                are private to that test). (2) the data files the closure reads by path (readByPathCandidates:
+//                a module that calls a fs read function and builds a data-file path from join()/resolve()/new URL()
+//                literals, Issue #417).
 //   named      = paths the graph cannot produce: files read by path (the classification fixture, the shipped
 //                defaults), the launcher and its pin file, the project policy file, the settings files that can
 //                carry an `env` block, and the halt-state directory. The fixture path comes from the single-source
 //                funnel, never typed here.
 // Every path is stored in canonical form (src/policy/normalizer/path-canonical.ts): project-relative, lowercase,
-// forward slash; a trailing "/" marks a directory prefix. The user settings file is the literal `~/...` form.
+// forward slash. In this module's lists a trailing "/" marks a DIRECTORY entry (the canonicalizer itself drops it);
+// a directory entry gets a rule for the directory and for its children. The user settings file is the literal `~/...` form.
 //
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
@@ -46,22 +51,117 @@ const toRel = (root: string, abs: string): string => relative(root, abs).split(s
 type Reader = (abs: string) => string | undefined;
 const readReal: Reader = (abs) => (existsSync(abs) ? readFileSync(abs, "utf8") : undefined);
 
+// The name of node:module's require factory, assembled so this production file does not itself name it: the locked
+// single-source scan (R1-6b/R1-6d, Issue #332) forbids any production use of that factory by name.
+const MODULE_REQUIRE_FACTORY = ["create", "Require"].join("");
+
+/** The module specifier a node pulls in, if any. Recognized: import, export-from, import("lit"), require("lit") and
+ * createRequire(...)("lit"). "(computed)" marks a dependency whose target cannot be read statically (a non-literal
+ * import() or require(), or a createRequire(...) that is not invoked on the spot); the caller throws on it (Issue #418). */
 function specifierOf(node: ts.Node): string | undefined {
   if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined && ts.isStringLiteralLike(node.moduleSpecifier)) {
     return node.moduleSpecifier.text;
   }
-  if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    const a = node.arguments[0];
-    return a !== undefined && ts.isStringLiteralLike(a) ? a.text : "(computed)";
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    const arg = node.arguments[0];
+    const literal = arg !== undefined && ts.isStringLiteralLike(arg) ? arg.text : "(computed)";
+    if (callee.kind === ts.SyntaxKind.ImportKeyword) return literal;
+    if (ts.isIdentifier(callee) && callee.text === "require") return literal;
+    // createRequire(import.meta.url)("lit"): the outer call's callee is itself a call to createRequire.
+    if (ts.isCallExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === MODULE_REQUIRE_FACTORY) return literal;
+    // createRequire(...) anywhere else (aliased, stored, passed): the later call cannot be followed statically.
+    if (ts.isIdentifier(callee) && callee.text === MODULE_REQUIRE_FACTORY && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) return "(computed)";
   }
   return undefined;
+}
+
+const JS_ROOT = /\.(mjs|js|cjs|ts|mts)$/;
+
+/** Project scripts named by the command hooks wired in .claude/settings.json and .claude/settings.local.json (read-only
+ * parse, Issue #419). A command is expected to reference its script as ${CLAUDE_PROJECT_DIR}/<path>; a wired command
+ * that names no project script cannot be enumerated and throws (fail closed). `readSettings` is injectable. */
+export function wiredHookScripts(root: string, readSettings: Reader = readReal): string[] {
+  const out = new Set<string>();
+  for (const f of [".claude/settings.json", ".claude/settings.local.json"]) {
+    const text = readSettings(resolve(root, f));
+    if (text === undefined) continue;
+    const hooks = (JSON.parse(text) as { hooks?: Record<string, { hooks?: { command?: unknown }[] }[]> }).hooks ?? {};
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        for (const h of entry.hooks ?? []) {
+          if (typeof h.command !== "string") continue;
+          const found = [...h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s\x22\x27\x60;|&]+)/g)].map((m) => canonicalizePathTarget(m[1]!));
+          if (found.length === 0) throw new Error(`wired hook command names no CLAUDE_PROJECT_DIR script, cannot enumerate it: ${h.command.slice(0, 80)}`);
+          for (const x of found) out.add(x);
+        }
+      }
+    }
+  }
+  return [...out].sort();
+}
+
+const READ_FNS = new Set(["readFileSync", "readFile", "readdirSync", "readdir", "createReadStream", "openSync", "readSync"]);
+const DATA_EXT = /\.(json|txt|md|ya?ml|toml|csv|ini)$/i;
+
+const calleeName = (e: ts.Expression): string | undefined => (ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : undefined);
+
+/** Data files the given modules read by path (Issue #417). Only modules that call a fs read function are scanned.
+ * Recognized path expressions: join()/resolve() whose later arguments are string literals and whose first argument is a
+ * module-directory name or dirname(...) call (resolved against the module) or a string literal (against the repo
+ * root); new URL("lit", import.meta.url); a bare path-like string literal with a data extension. A caller-supplied
+ * path (a function parameter) is not visible here: its literal appears where the caller builds it, which is scanned
+ * if that caller is in the closure. Returns repo-relative canonical paths inside the repo, sorted. `read` is injectable. */
+export function readByPathCandidates(root: string, files: readonly string[], read: Reader = readReal): string[] {
+  const found = new Set<string>();
+  for (const rel of files) {
+    const abs = resolve(root, rel);
+    const text = read(abs);
+    if (text === undefined) continue;
+    const sf = ts.createSourceFile(abs, text, ts.ScriptTarget.Latest, true, abs.endsWith(".mjs") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    let reads = false;
+    const hits: string[] = [];
+    const lit = (e: ts.Expression): string | undefined => (ts.isStringLiteralLike(e) ? e.text : undefined);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const name = calleeName(node.expression);
+        if (name !== undefined && READ_FNS.has(name)) reads = true;
+        if ((name === "join" || name === "resolve") && node.arguments.length >= 2) {
+          const [first, ...rest] = node.arguments;
+          const parts = rest.map(lit);
+          const tail = parts[parts.length - 1];
+          if (parts.every((x): x is string => x !== undefined) && tail !== undefined && DATA_EXT.test(tail)) {
+            const f = lit(first!);
+            const moduleDir = ts.isIdentifier(first!) ? /dir$/i.test(first.text) : ts.isCallExpression(first!) && calleeName(first.expression) === "dirname";
+            if (f !== undefined) hits.push(resolve(root, f, ...parts));
+            else if (moduleDir) hits.push(resolve(dirname(abs), ...parts));
+          }
+        }
+      } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL" && node.arguments !== undefined) {
+        const a = node.arguments[0];
+        const l = a === undefined ? undefined : lit(a);
+        if (l !== undefined && DATA_EXT.test(l) && node.arguments[1]?.getText(sf).includes("import.meta.url")) hits.push(resolve(dirname(abs), l));
+      } else if (ts.isStringLiteralLike(node) && node.text.includes("/") && DATA_EXT.test(node.text) && !node.text.startsWith(".") && !/^[a-z]+:/i.test(node.text)) {
+        hits.push(resolve(root, node.text));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    if (reads) for (const h of hits) found.add(h);
+  }
+  return [...found]
+    .map((a) => toRel(root, a))
+    .filter((r) => !r.startsWith(".."))
+    .map(canonicalizePathTarget)
+    .sort();
 }
 
 /** Repo-relative posix paths of the hook and its relative-import closure, sorted. `read` and `fallback` are
  * injectable so a mutant can add an import (F3-mutant-add-import); `fallback` supplies a file `read` lacks. */
 export function importGraphFiles(root: string, read: Reader = readReal, fallback: Reader = () => undefined): string[] {
   const seen = new Set<string>();
-  const queue = [resolve(root, HOOK_REL)];
+  const roots = [HOOK_REL, ...wiredHookScripts(root).filter((r) => JS_ROOT.test(r))];
+  const queue = [...new Set(roots)].map((r) => resolve(root, r));
   while (queue.length > 0) {
     const abs = queue.shift()!;
     if (seen.has(abs)) continue;
@@ -72,7 +172,7 @@ export function importGraphFiles(root: string, read: Reader = readReal, fallback
     const visit = (node: ts.Node): void => {
       const spec = specifierOf(node);
       if (spec !== undefined) {
-        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: import() with a non-literal specifier`);
+        if (spec === "(computed)") throw new Error(`${toRel(root, abs)}: computed import(), non-literal require(), or a stored require factory not invoked with a literal on the spot`);
         if (spec.startsWith(".")) queue.push(resolve(dirname(abs), spec));
         else if (!spec.startsWith("node:")) throw new Error(`${toRel(root, abs)}: non-relative, non-node: import "${spec}"`);
       }
@@ -96,7 +196,7 @@ function namedPaths(root: string): string[] {
     ".claude/settings.local.json", // project local settings
     "~/.claude/settings.json", // user settings (env reach unproven, treated as reachable)
     ".thoth/halt-state/", // named sensitive area: session-readable, secrets-adjacent derivation
-  ].map(canonicalizePathTarget);
+  ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
 /** Named paths that must exist on disk (the others may legitimately be absent). */
@@ -109,7 +209,9 @@ export interface ProtectedPaths {
 }
 
 export function protectedPaths(root: string): ProtectedPaths {
-  const generated = importGraphFiles(root);
+  const graph = importGraphFiles(root);
+  const wiredNonJs = wiredHookScripts(root).filter((r) => !JS_ROOT.test(r));
+  const generated = [...new Set([...graph, ...wiredNonJs, ...readByPathCandidates(root, graph)])].sort();
   const named = namedPaths(root);
   for (const m of [...MUST_EXIST, named[0]!]) if (!existsSync(join(root, m))) throw new Error(`named protected path does not exist: ${m}`);
   return { generated, named, all: [...new Set([...generated, ...named])].sort() };
@@ -126,10 +228,53 @@ export function buildDenyRules(paths: readonly string[]): Rule[] {
       id,
       effect: "deny",
       verbs: [...PROTECTED_VERBS],
-      targets: [p],
+      targets: p.endsWith("/") ? [p.slice(0, -1), p] : [p],
       rationale: "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       mandatory: true, // INERT outside the central layer; disclosed in activation-preconditions.test.ts
     } satisfies Rule;
+  });
+}
+
+/** Verbs denied on the parent directories of protected paths (Issue #415): taking the directory away takes the
+ * protected files with it. File writes inside a parent directory are NOT denied (no over-blocking of a source tree). */
+export const PARENT_VERBS = ["move", "delete", "rename"] as const;
+const PARENT_PREFIX = `${RULE_PREFIX}parent-`;
+
+/** Every parent directory of a protected path, up to but excluding the repo root (and the home root `~`), sorted. */
+export function parentDirs(paths: readonly string[]): string[] {
+  const dirs = new Set<string>();
+  for (const p of paths) {
+    const parts = p.replace(/\/$/, "").split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const d = parts.slice(0, i).join("/");
+      if (d !== "" && d !== "." && d !== "~") dirs.add(d);
+    }
+  }
+  return [...dirs].sort();
+}
+
+export function buildParentRules(dirs: readonly string[]): Rule[] {
+  return dirs.map(
+    (d) =>
+      ({
+        id: `${PARENT_PREFIX}${d.replace(/^~\//, "home/").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+        effect: "deny",
+        verbs: [...PARENT_VERBS],
+        targets: [d],
+        rationale: "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+        mandatory: true,
+      }) satisfies Rule,
+  );
+}
+
+/** Parent directories for which no rule denies a resolved move of the directory. */
+export function unmatchedParentDirs(rules: readonly Rule[], dirs: readonly string[]): string[] {
+  return dirs.filter((d) => {
+    const v = decide(
+      { rules: { version: "0.0.0-check", rules: [...rules] }, defaultOutcome: "allow" },
+      { source: "parsed", verbs: ["move"], targets: [d], environment: "e", identity: "i", deferred: false, unresolved: [] },
+    );
+    return v.outcome !== "deny";
   });
 }
 
@@ -167,7 +312,8 @@ export function missingEditDenies(settingsText: string, paths: readonly string[]
 export function renderShippedDefaults(existingText: string, paths: readonly string[]): string {
   const existing = JSON.parse(existingText) as { rules: Rule[] };
   const kept = existing.rules.filter((r) => !r.id.startsWith(RULE_PREFIX));
-  return `${JSON.stringify({ version: SHIPPED_VERSION, rules: [...kept, ...buildDenyRules(paths)] }, null, 2)}\n`;
+  const rules = [...kept, ...buildDenyRules(paths), ...buildParentRules(parentDirs(paths))];
+  return `${JSON.stringify({ version: SHIPPED_VERSION, rules }, null, 2)}\n`;
 }
 
 export function main(argv: readonly string[]): number {

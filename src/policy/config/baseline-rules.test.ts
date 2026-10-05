@@ -91,15 +91,19 @@ const FORGERIES = [
 
 /** Binaries other than the kubectl-shaped tool, placed in the tool position (Issue #414: witnesses per derived verb).
  * Stand-in names; none is a fixture entry. */
-const OTHER_BINARIES = ["rm", "curl", "python", "deltool"];
+const OTHER_BINARIES = ["rm", "curl", "python", "node", "sh", "deltool"];
+
+/** The seeded mutant normalizer: the binary-blind resolver F9 (Issue #420) closed. It reads the command as if the
+ * binary were the recognized one, which is what the old grammar did for every binary. */
+const binaryBlindRecord = (cmd: string): ActionRecord => shellRecord(cmd.replace(/^\S+/, "kubectl"));
 
 /** PT-2 as a function so the real rules and a seeded mutant are judged by the same check. */
-function pt2Violations(rules: Rule[]): string[] {
+function pt2Violations(rules: Rule[], recordFor: (cmd: string) => ActionRecord = shellRecord): string[] {
   const bad: string[] = [];
   for (const verb of nonMutatingVerbs()) {
     for (const binary of OTHER_BINARIES) {
       const cmd = `${binary} ${verb} pods/x --context=c`;
-      if (decide(world(rules, "deny"), shellRecord(cmd)).outcome === "allow") bad.push(cmd);
+      if (decide(world(rules, "deny"), recordFor(cmd)).outcome === "allow") bad.push(cmd);
     }
   }
   return bad;
@@ -154,11 +158,14 @@ test("PT2-mutant: for EACH non-mutating verb, a verb-only allow on that verb alo
   const missed: string[] = [];
   for (const v of verbs) {
     const mutant: Rule[] = [{ id: `mutant-allow-only-${v}`, effect: "allow", verbs: [v] }];
-    if (pt2Violations(mutant).length === 0) missed.push(v);
+    if (pt2Violations(mutant, binaryBlindRecord).length === 0) missed.push(v);
   }
   assert.deepEqual(missed, [], "a verb-only allow on one verb authorizes another binary's command and PT-2 must see it");
   const all: Rule[] = [{ id: "mutant-allow-read-verbs", effect: "allow", verbs: verbs }];
-  assert.ok(pt2Violations(all).length > 0);
+  assert.ok(pt2Violations(all, binaryBlindRecord).length > 0);
+  // F9 (#420) recorded act: against the real normalizer a verb-only allow is no longer forgeable by another binary,
+  // so the same rule set is NOT flagged there. The check keeps its teeth through the binary-blind mutant above.
+  assert.deepEqual(pt2Violations(all), [], "real normalizer: other binaries never resolve, so a verb-only allow cannot authorize them");
 });
 
 test("PT-12: every shipped rule matches a witness record (none is silently inert); a shipped rule set that matches nothing fails", () => {

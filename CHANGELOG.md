@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #308 story F review conditions (Closes #415, #416, #417, #418, #419, #420)
+
+Refs #308. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first.
+
+- #420 (HIGH, F9): the kubectl-shaped resolver in `src/policy/normalizer/shell.ts` no longer ignores the binary. It resolves only when the first token is exactly a member of `RESOLVABLE_BINARIES` (`kubectl`, bare and lowercase). `node get pods/x --context=c`, `python ...`, `sh ...`, `./kubectl ...`, `KUBECTL ...` are unresolved, so POL-05 denies. Corpus test `src/policy/normalizer/shell-binary-closed-set.test.ts`.
+- #418: the generator's import walk follows `require("lit")` and `createRequire(...)("lit")`; a computed `import()`, a non-literal `require()` or a stored `createRequire` throws. The F3 add-import mutant now has the static, `require` and `createRequire` forms and each must be found.
+- #419: the protected list now comes from EVERY hook wired in `.claude/settings.json` (and the local settings file), read-only: the SessionStart and UserPromptSubmit hooks and `src/policy/tools/mcp-enumeration.ts` are covered. A wired command that names no `${CLAUDE_PROJECT_DIR}` script fails the generator closed.
+- #417: `readByPathCandidates` finds data files the hook closure reads by path (join/resolve/new URL literals in modules that call a fs read function). `docs/qa/tool-inventory.json` is now protected; a synthetic new read site is a detected mutant. Disclosed limit: a path built only from a caller-supplied parameter is seen where the caller builds it, not at the read.
+- #416: the canonicalizer folds trailing dots and spaces per segment and drops a trailing slash; a redirect target with a `:` segment (alternate data stream, drive-relative) makes the record unresolved.
+- #415: move, delete and rename are denied on every parent directory of a protected path, up to but excluding the repo root (`protect-parent-*` rules). File writes inside those directories are not denied.
+- Text, per the Manager's triage: the proposed `permissions.deny` `Edit(...)` list (`docs/plans/s308-K-proposed-settings-2026-10-04.json`, shipped by K) covers the built-in file tools only. It does NOT cover Bash writes; those depend on the gate's deny rules and POL-05.
+- Recorded acts (SE ADR-0005): `shell.test.ts` SUR-07 path-qualified binary (`unresolved` `[]` to the F9 cause); `baseline-rules.test.ts` PT-2 witnesses and `PT2-mutant` (other binaries no longer resolve; the mutant is now the binary-blind normalizer, so the check keeps its teeth); the K proposal and `shipped-defaults.json` regenerated.
+
 ### Fixed - Issue #308 story E review conditions (Closes #412, #413, #414)
 
 Refs #308. Tests written failing first.

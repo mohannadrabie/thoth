@@ -5,7 +5,7 @@
 // root), $VAR and ~user expansion, symlinks, 8.3 short names. written FAILING FIRST against a missing module.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canonicalizePathTarget } from "./path-canonical.ts";
+import { canonicalizePathTarget, pathFormIssue } from "./path-canonical.ts";
 import { normalize } from "./registry.ts";
 import "./shell.ts";
 
@@ -17,7 +17,11 @@ const CASES: [string, string][] = [
   [".\\.THOTH\\policy.json", ".thoth/policy.json"],
   ["a/../.thoth/policy.json", ".thoth/policy.json"],
   ["./a/./b/../../.thoth//policy.json", ".thoth/policy.json"],
-  [".thoth/halt-state/", ".thoth/halt-state/"],
+  [".thoth/halt-state/", ".thoth/halt-state"],
+  [".thoth/policy.json.", ".thoth/policy.json"],
+  [".thoth/policy.json. . ", ".thoth/policy.json"],
+  [".thoth./policy.json", ".thoth/policy.json"],
+  ["...", "..."],
   [".thoth/./halt-state//x", ".thoth/halt-state/x"],
   ["../x/y", "../x/y"],
   ["a/../../x", "../x"],
@@ -41,4 +45,14 @@ test("F4-normalizer: the shell record's redirect target is the canonical form, f
   const q = normalize("shell", { command: 'echo x > ".\\.THOTH\\policy.json"', environment: "e", identity: "i", deferred: false });
   assert.notDeepEqual(q.targets, [".thoth/policy.json"], "DOCUMENTING: a backslash path inside a quoted shell word is not canonicalized (disclosed gap; F8 denies the command anyway)");
   assert.ok(q.unresolved.length > 0, "and the record is unresolved, so POL-05 denies it regardless of any path rule");
+});
+
+test("F4/#416: a segment with a colon (alternate data stream, drive-relative or drive) is flagged by pathFormIssue and the shell record is unresolved; colon-free paths are not flagged", () => {
+  for (const t of [".thoth/policy.json::$data", ".thoth/policy.json:stream", "c:policy.json", "c:/x/y", "a/b:c/d"]) assert.ok(pathFormIssue(t) !== undefined, t);
+  for (const t of [".thoth/policy.json", "~/.claude/settings.json", "/dev/null", "a/b.c/d"]) assert.equal(pathFormIssue(t), undefined, t);
+  for (const t of [".thoth/policy.json::$data", "c:policy.json"]) {
+    const r = normalize("shell", { command: `echo x > '${t}'`, environment: "e", identity: "i", deferred: false });
+    assert.ok(r.unresolved.some((u) => u.includes("#416")), `${t}: ${JSON.stringify(r.unresolved)}`);
+    assert.deepEqual(r.verbs, ["write"], "the record still says write and keeps the target");
+  }
 });

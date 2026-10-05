@@ -37,9 +37,14 @@ import { moduleRelativeFixtureLocation } from "../tools/classification-catalog.t
 import {
   PROTECTED_VERBS,
   buildDenyRules,
+  buildParentRules,
   buildSettingsProposal,
   importGraphFiles,
   missingEditDenies,
+  parentDirs,
+  readByPathCandidates,
+  unmatchedParentDirs,
+  wiredHookScripts,
   protectedPaths,
   ruleIdFor,
   unmatchedPaths,
@@ -85,13 +90,14 @@ test("F2: the generated half is the hook's relative-import graph (hook file plus
   assert.ok(direct.length >= 6, "the hook import()s its project modules");
   for (const d of direct) assert.ok(PATHS.generated.includes(d), `direct import missing: ${d}`);
   assert.ok(PATHS.generated.includes("hooks/pretooluse-kernel-gate.mjs"));
-  assert.deepEqual(PATHS.generated, importGraphFiles(REPO_ROOT));
+  for (const g of importGraphFiles(REPO_ROOT)) assert.ok(PATHS.generated.includes(g), `graph file missing from generated: ${g}`);
 });
 
 test("F-committed: the committed deny rules equal the generator's output for the current list (a stale list fails)", () => {
   const committed = shipped().filter((r) => r.id.startsWith("protect-"));
-  assert.deepEqual(committed, buildDenyRules(PATHS.all));
-  assert.ok(committed.every((r) => r.effect === "deny" && JSON.stringify(r.verbs) === JSON.stringify([...PROTECTED_VERBS])));
+  assert.deepEqual(committed, [...buildDenyRules(PATHS.all), ...buildParentRules(parentDirs(PATHS.all))]);
+  assert.ok(committed.every((r) => r.effect === "deny"));
+  assert.ok(committed.filter((r) => !r.id.startsWith("protect-parent-")).every((r) => JSON.stringify(r.verbs) === JSON.stringify([...PROTECTED_VERBS])));
 });
 
 test("F3 mutants: dropping any one deny rule is detected and names the path; adding an import to the graph is detected", () => {
@@ -101,17 +107,29 @@ test("F3 mutants: dropping any one deny rule is detected and names the path; add
     const mutant = rules.filter((r) => r.id !== ruleIdFor(p));
     assert.deepEqual(unmatchedPaths(mutant, PATHS.all), [p], `F3-mutant-drop-rule: ${p}`);
   }
-  const extra = importGraphFiles(
-    REPO_ROOT,
-    (abs) => {
-      if (!existsSync(abs)) return undefined;
-      const text = readFileSync(abs, "utf8");
-      return abs.replaceAll("\\", "/").endsWith("src/policy/config/sanitize.ts") ? `${text}\nimport "./synthetic-extra-module.ts";\n` : text;
-    },
-    (abs) => (abs.replaceAll("\\", "/").endsWith("synthetic-extra-module.ts") ? "export {};" : undefined),
-  );
-  assert.ok(extra.includes("src/policy/config/synthetic-extra-module.ts"));
-  assert.deepEqual(unmatchedPaths(rules, extra), ["src/policy/config/synthetic-extra-module.ts"], "F3-mutant-add-import");
+  // Issue #418: every dependency form is a mutant that must be found (static import, require, createRequire(...)(...)),
+  // and a non-literal or aliased form must make the generator fail closed (throw), never silently skip the module.
+  const withLine = (line: string) => (abs: string) => {
+    if (!existsSync(abs)) return undefined;
+    const text = readFileSync(abs, "utf8");
+    return abs.replaceAll("\\", "/").endsWith("src/policy/config/sanitize.ts") ? `${text}
+${line}
+` : text;
+  };
+  const synthetic = (abs: string) => (abs.replaceAll("\\", "/").endsWith("synthetic-extra-module.ts") ? "export {};" : undefined);
+  const forms = [
+    'import "./synthetic-extra-module.ts";',
+    'const dep = require("./synthetic-extra-module.ts");',
+    'const dep = createRequire(import.meta.url)("./synthetic-extra-module.ts");',
+  ];
+  for (const line of forms) {
+    const extra = importGraphFiles(REPO_ROOT, withLine(line), synthetic);
+    assert.ok(extra.includes("src/policy/config/synthetic-extra-module.ts"), `walk misses: ${line}`);
+    assert.deepEqual(unmatchedPaths(rules, extra), ["src/policy/config/synthetic-extra-module.ts"], `F3-mutant-add-import: ${line}`);
+  }
+  for (const line of ['const dep = require(name);', 'const r = createRequire(import.meta.url); const dep = r("./synthetic-extra-module.ts");', 'const dep = await import(name);']) {
+    assert.throws(() => importGraphFiles(REPO_ROOT, withLine(line), synthetic), /non-literal|createRequire|computed/, `fails closed: ${line}`);
+  }
 });
 
 test("F3a F3-mutant-drop-fixture-deny: removing the classification fixture's deny rule fails the check (THOTH-ADR-0003 compliance row)", () => {
@@ -180,4 +198,45 @@ test("F5 F5-ap10-paths-edit-deny: every protected path has an Edit(...) deny ent
     assert.equal(missingEditDenies(mutant, PATHS.all).length, 1, `F5 mutant ${String(i)}`);
   }
   assert.ok(!JSON.stringify(parsed).includes("PreToolUse"), "the proposal is not the wiring entry (K)");
+});
+
+// ---- review round 1 fix-now (Issues #415, #417, #419) ----
+
+test("#419 wired-hooks: every hook script wired in .claude/settings.json (read-only parse), and its import graph, is on the protected list; an unparseable wired command fails closed", () => {
+  const settings = JSON.parse(readFileSync(join(REPO_ROOT, ".claude", "settings.json"), "utf8")) as { hooks?: Record<string, { hooks: { command: string }[] }[]> };
+  const wired = Object.values(settings.hooks ?? {}).flatMap((entries) => entries.flatMap((e) => e.hooks.map((h) => h.command)));
+  assert.ok(wired.length >= 2, "the repo wires at least the SessionStart and UserPromptSubmit hooks");
+  const scripts = wired.flatMap((c) => [...c.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s"'`;|&]+)/g)].map((m) => m[1]!));
+  assert.ok(scripts.length >= wired.length, "every wired command names a project script");
+  for (const sc of scripts) assert.ok(PATHS.all.includes(sc.toLowerCase()), `wired script missing from the protected list: ${sc}`);
+  assert.ok(PATHS.all.includes("src/policy/tools/mcp-enumeration.ts"), "a module only the wired SessionStart hook imports");
+  assert.throws(() => wiredHookScripts(REPO_ROOT, () => JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: "echo done" }] }] } })), /wired hook command/);
+});
+
+test("#417 read-by-path: the scan finds the data files the hook closure reads (fixture, tool inventory); a new read site is detected and must be protected", () => {
+  const found = readByPathCandidates(REPO_ROOT, importGraphFiles(REPO_ROOT));
+  assert.ok(found.includes(FIXTURE_REL), "the scan finds the fixture the closure reads");
+  assert.ok(found.includes("docs/qa/tool-inventory.json"), "the scan finds the tool inventory the closure reads");
+  for (const f of found) assert.ok(PATHS.all.includes(f), `read-by-path file not protected: ${f}`);
+  const probe = readByPathCandidates(REPO_ROOT, ["src/policy/config/sanitize.ts"], (abs) =>
+    `${readFileSync(abs, "utf8")}\nimport { readFileSync } from "node:fs";\nexport const X = readFileSync(join(THIS_DIR, "..", "..", "..", "docs", "qa", "synthetic-new-data.json"), "utf8");\n`);
+  assert.deepEqual(probe, ["docs/qa/synthetic-new-data.json"], "F3-mutant-new-read: a new read site is found");
+  assert.deepEqual(unmatchedPaths(shipped(), probe), probe, "and it is unprotected until a rule is generated for it");
+});
+
+test("#415 parent-dirs: move, delete and rename of every parent directory of a protected path (up to, excluding, the repo root) are denied; file writes beside a protected file are not over-blocked; the root is not protected", () => {
+  const dirs = parentDirs(PATHS.all);
+  assert.ok(dirs.includes("hooks") && dirs.includes(".thoth") && dirs.includes("src/policy"), `parent dirs: ${dirs.join(",")}`);
+  assert.ok(!dirs.includes("") && !dirs.includes(".") && !dirs.includes("~"), "the repo root and the home root are excluded");
+  const problems: string[] = [];
+  for (const d of dirs) {
+    for (const verb of ["move", "delete", "rename"]) {
+      const v = decide(WORLD(shipped()), { ...writeRecord(d), verbs: [verb] });
+      if (v.outcome !== "deny") problems.push(`${verb} ${d}: ${v.outcome}`);
+    }
+    const sibling = decide(WORLD(shipped()), writeRecord(`${d}/zz-unprotected-sibling.txt`));
+    if (sibling.outcome !== "allow") problems.push(`write beside protected file in ${d}: ${sibling.outcome}`);
+  }
+  assert.deepEqual(problems, []);
+  assert.ok(unmatchedParentDirs(shipped().filter((r) => !r.id.startsWith("protect-parent-")), dirs).length === dirs.length, "mutant: dropping the parent rules is detected");
 });

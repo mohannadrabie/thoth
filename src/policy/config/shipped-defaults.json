@@ -55,6 +55,7 @@
         "rename"
       ],
       "targets": [
+        ".thoth/halt-state",
         ".thoth/halt-state/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
@@ -95,6 +96,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-docs-qa-tool-inventory-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "docs/qa/tool-inventory.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-hooks-launch-gate-sh",
       "effect": "deny",
       "verbs": [
@@ -124,6 +142,40 @@
       ],
       "targets": [
         "hooks/pretooluse-kernel-gate.mjs"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-hooks-sessionstart-tool-enum-mjs",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "hooks/sessionstart-tool-enum.mjs"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-hooks-userpromptsubmit-halt-relay-mjs",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "hooks/userpromptsubmit-halt-relay.mjs"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -673,6 +725,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-policy-tools-mcp-enumeration-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/tools/mcp-enumeration.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-qa-gate-launcher-pin-check-ts",
       "effect": "deny",
       "verbs": [
@@ -704,6 +773,216 @@
         "~/.claude/settings.json"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-claude",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        ".claude"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-thoth",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        ".thoth"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-docs",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "docs"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-docs-qa",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "docs/qa"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-hooks",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "hooks"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-config",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/config"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-gate",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/gate"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-kernel",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/kernel"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-normalizer",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/normalizer"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-rule",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/rule"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-policy-tools",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/tools"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-src-qa",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "src/qa"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-claude",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.claude"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true
     }
   ]
