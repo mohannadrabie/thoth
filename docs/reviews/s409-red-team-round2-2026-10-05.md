@@ -28,7 +28,7 @@ Scratch probes ran in the session scratchpad and were removed. No plant carried 
 - Exposure: ~100% of main checkouts (any `.git` directory accepts a new `commondir` file; no deny target or K Edit entry names it), basis: counted in code + guard probe. Production runtime today: 0% (gate unwired, K held, git unresolved under POL-05). The live exposure is the deliverable "sealed up to the write boundary" claim and the re-add gate, the same framing as round-1 #440.
 - Mechanism: git resolves the common dir from `GIT_DIR/commondir` in any git dir, not only linked worktrees. Repo config, hooks and `info/attributes` are then read from the common dir.
 - Current defense:
-  - shipped-defaults.json protects `.git/config`, `.git/config.worktree`, `.git/hooks/`, `.git/info/attributes`, `.git/modules/`, `.git/worktrees/` (write/create/...). `.git` itself only has move/delete/rename (protect-parent-git, exact target), so creating a child file under `.git/` is not matched.
+  - shipped-defaults.json protects `.git/config`, .git/config.worktree, `.git/hooks/`, `.git/info/attributes`, `.git/modules/`, `.git/worktrees/` (write/create/...). `.git` itself only has move/delete/rename (protect-parent-git, exact target), so creating a child file under `.git/` is not matched.
   - Preflight `gitDirs` (src/qa/git-rg-lever-preflight.ts:270) returns `commonDir = .git` for a directory `.git` without reading `commondir`, so it scans the original config and reports clean.
 - Silence: total. The guard allows the write, and the preflight scans the wrong directory.
 - Fix direction (implementer call): protect `.git/commondir` (or deny write/create on the whole `.git/` prefix, since sessions cannot run git anyway). Have `gitDirs` honor, or flag, a `commondir` file in a main checkout.
@@ -71,8 +71,8 @@ Scratch probes ran in the session scratchpad and were removed. No plant carried 
 - Proof-test: S409-preflight-skips-mixed-separator-unc.
 
 ### 6. UNPROVEN -- [LOW][code-traced] Managed-settings path is stale (refines #447)
-- `defaultManagedSettings` (:320) reads the ProgramData `ClaudeCode/managed-settings.json`.
-- Vendor docs (code.claude.com settings and admin-setup pages): that Windows fallback was removed in Claude Code v2.1.75. The current path is under Program Files (`ClaudeCode/managed-settings.json`). This machine runs 2.1.267.
+- `defaultManagedSettings` (:320) reads the ProgramData ClaudeCode/managed-settings.json.
+- Vendor docs (code.claude.com settings and admin-setup pages): that Windows fallback was removed in Claude Code v2.1.75. The current path is under Program Files (ClaudeCode/managed-settings.json). This machine runs 2.1.267.
 - Consequences:
   - A session-created ProgramData file (#447) is likely inert on current versions.
   - The real managed-settings file is never read or printed.
