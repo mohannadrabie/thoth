@@ -300,6 +300,10 @@ function resolveEntries(ports: TrustPorts, pathValue: string): { dirs: ScanDir[]
     if (win && entry.length >= 2 && entry.startsWith('"') && entry.endsWith('"')) entry = entry.slice(1, -1);
     // A ".." segment is folded lexically here, but the shell resolves it through the file system, so after a symlink the gate
     // could list a different directory than the shell searches. Fail closed (Issue #445 re-confirm, R2).
+    // A POSIX entry starting with ~ is tilde-expanded by the shell (~, ~user, ~+, ~-) in ways the gate cannot mirror (red-team N2).
+    if (!win && entry.startsWith("~")) {
+      return { dirs, problem: { kind: "unreadable-dir", reason: `PATH entry ${bounded(entry)} starts with "~", which the shell expands in ways the gate cannot mirror; fail-closed.` } };
+    }
     if (entry.split(win ? /[\\/]/ : "/").includes("..")) {
       return { dirs, problem: { kind: "unreadable-dir", reason: `PATH entry ${bounded(entry)} contains a ".." segment, so the directory the shell searches cannot be told from the one the gate lists; fail-closed.` } };
     }
@@ -313,6 +317,9 @@ function resolveEntries(ports: TrustPorts, pathValue: string): { dirs: ScanDir[]
   // $HOME/.local/bin. A missing directory costs one failed readdir and a created one is scanned at the next call.
   const home = ports.homedir();
   if (home === undefined || home === "") throw new Error("home directory unknown");
+  if (home.split(win ? /[\\/]/ : "/").includes("..")) {
+    return { dirs, problem: { kind: "unreadable-dir", reason: `the home directory ${bounded(home)} contains a ".." segment, so the login-profile directories derived from it cannot be told from the ones the shell searches; fail-closed.` } };
+  }
   for (const rel of ["bin", ".local/bin"]) {
     const problem = add(joinPath(platform, home, rel), "login profile");
     if (problem !== undefined) return { dirs, problem };
@@ -389,6 +396,13 @@ function check(names: readonly string[], ports: TrustPorts): TrustResult {
           `bare binary "${name}" also exists in an untrusted PATH directory (${bounded(d.dir)}), where a session could have planted it; the gate cannot tell which copy the shell runs. Remove it from that directory or take the directory off PATH.`,
         );
       }
+    }
+    // POSIX only: a case-insensitive file system (macOS default, vfat, casefold) lists `LS` but runs it for `ls`, which the exact
+    // match above misses. Probe every wanted name with lstat too (Issue #428, red-team N1).
+    if (!isWin(platform)) {
+      const probed = probeNames(ports, d.dir, wanted);
+      if (probed?.present === true) return deny("shadow", `bare binary "${probed.name}" exists in an untrusted PATH directory (${bounded(d.dir)}) under a different spelling, where a session could have planted it; fail-closed.`);
+      if (probed !== undefined) return deny("unreadable-dir", `PATH directory ${bounded(d.dir)} (${d.source}) could not be probed for "${probed.name}" (${probed.code}); fail-closed.`);
     }
   }
 
