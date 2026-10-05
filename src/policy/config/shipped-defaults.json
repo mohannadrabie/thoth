@@ -98,7 +98,7 @@
       "mandatory": true
     },
     {
-      "id": "protect-git-config",
+      "id": "protect-git",
       "effect": "deny",
       "verbs": [
         "write",
@@ -109,95 +109,8 @@
         "rename"
       ],
       "targets": [
-        ".git/config"
-      ],
-      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-git-config-worktree",
-      "effect": "deny",
-      "verbs": [
-        "write",
-        "create",
-        "modify",
-        "delete",
-        "move",
-        "rename"
-      ],
-      "targets": [
-        ".git/config.worktree"
-      ],
-      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-git-hooks",
-      "effect": "deny",
-      "verbs": [
-        "write",
-        "create",
-        "modify",
-        "delete",
-        "move",
-        "rename"
-      ],
-      "targets": [
-        ".git/hooks",
-        ".git/hooks/"
-      ],
-      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-git-info-attributes",
-      "effect": "deny",
-      "verbs": [
-        "write",
-        "create",
-        "modify",
-        "delete",
-        "move",
-        "rename"
-      ],
-      "targets": [
-        ".git/info/attributes"
-      ],
-      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-git-modules",
-      "effect": "deny",
-      "verbs": [
-        "write",
-        "create",
-        "modify",
-        "delete",
-        "move",
-        "rename"
-      ],
-      "targets": [
-        ".git/modules",
-        ".git/modules/"
-      ],
-      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-git-worktrees",
-      "effect": "deny",
-      "verbs": [
-        "write",
-        "create",
-        "modify",
-        "delete",
-        "move",
-        "rename"
-      ],
-      "targets": [
-        ".git/worktrees",
-        ".git/worktrees/"
+        ".git",
+        ".git/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1463,34 +1376,6 @@
       ],
       "targets": [
         ".claude"
-      ],
-      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-parent-git",
-      "effect": "deny",
-      "verbs": [
-        "move",
-        "delete",
-        "rename"
-      ],
-      "targets": [
-        ".git"
-      ],
-      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
-      "mandatory": true
-    },
-    {
-      "id": "protect-parent-git-info",
-      "effect": "deny",
-      "verbs": [
-        "move",
-        "delete",
-        "rename"
-      ],
-      "targets": [
-        ".git/info"
       ],
       "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true

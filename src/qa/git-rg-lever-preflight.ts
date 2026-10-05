@@ -51,8 +51,8 @@ export interface PreflightInput {
 
 /** Residuals the seal does NOT close. Keys are pinned by S409-residuals-listed; the plan and CHANGELOG carry the same four. */
 export const RESIDUALS: Readonly<Record<string, string>> = {
-  R1: "shell profile files (~/.bashrc, ~/.profile, ~/.zshrc) are write-protected by the #429/#446 story (named paths); pre-existing content, other shells and a profile reached through BASH_ENV or ENV are not covered",
-  R2: "managed settings and OS-level or ambient environment are not session-writable and are not sealed; this command reads them (system gitconfig only at the usual POSIX and Git for Windows paths: files from scoop, winget or choco installs are not located)",
+  R1: "shell profile files (~/.bashrc, ~/.profile, ~/.zshrc) feed the next session's shell env; they are protected by the #446 story, not by this seal, and a lever key that arrives through the process env is printed as AMBIENT",
+  R2: "managed settings, the system gitconfig and the process env are not session-writable and are not sealed; this command reads and prints them (system gitconfig only at the usual POSIX and Git for Windows paths: files from scoop, winget or choco installs are not located)",
   R3: "config that existed before activation (git config, hooks, attributes, rg config) is outside the write seal; this command detects it",
   R4: "user-scope settings env reach was not run live (J8 ran project scope only) and is treated as reachable; the user settings file is protected either way",
 };
@@ -71,10 +71,13 @@ const MAX_INCLUDE_DEPTH = 5;
 
 type Read = { ok: true; text: string } | { ok: false; error: string } | undefined;
 
+/** Two leading separators of either kind, in any mix, name a UNC path on Windows (an SMB authentication attempt on open). */
+export const isUncPath = (p: string): boolean => /^[\\/]{2}/.test(p);
+
 /** Reads a regular file only. A UNC path (an SMB authentication attempt on open) and a non-regular file (a FIFO could hang)
  * are skipped: some paths here are steered by data this command checks (env vars, include.path). */
 function tryRead(path: string): Read {
-  if (path.startsWith("//") || path.startsWith("\\\\")) return undefined;
+  if (isUncPath(path)) return undefined;
   if (!existsSync(path)) return undefined;
   try {
     if (!statSync(path).isFile()) return undefined;
@@ -96,6 +99,9 @@ function executingKey(section: string, sub: string | undefined, key: string, val
   const v = value.replace(/^"/, "").trim();
   if (EXEC_KEY_SUFFIX.test(key)) return true;
   if (section === "submodule" && key === "update" && v.startsWith("!")) return true;
+  if ((section === "difftool" || section === "mergetool" || section === "man") && key === "path") return true;
+  if (section === "imap" && key === "tunnel") return true;
+  if (section === "sendemail" && key === "smtpserver" && /^(\/|[A-Za-z]:[\\/])/.test(v)) return true;
   switch (section) {
     case "core":
       return ["fsmonitor", "hookspath", "pager", "sshcommand", "editor", "askpass", "gitproxy"].includes(key);
@@ -242,8 +248,19 @@ function scanGitDir(dir: string, home: string, findings: Finding[], seen: Set<st
   scanHooks(join(dir, "hooks"), findings);
   scanAttributes(join(dir, "info", "attributes"), findings);
   if (depth >= MAX_INCLUDE_DEPTH) return;
-  for (const sub of listDirs(join(dir, "modules"))) scanGitDir(sub, home, findings, seen, [], depth + 1);
+  for (const sub of moduleGitDirs(join(dir, "modules"), 0)) scanGitDir(sub, home, findings, seen, [], depth + 1);
   for (const wt of listDirs(join(dir, "worktrees"))) scanGitConfig(join(wt, "config.worktree"), home, findings, seen, 0);
+}
+
+/** Submodule git dirs under modules/. A submodule named with a slash (a/b) keeps its git dir at modules/a/b, so a directory with none of
+ * HEAD, config or hooks is a namespace and is descended into. */
+function moduleGitDirs(modulesDir: string, depth: number): string[] {
+  const out: string[] = [];
+  for (const d of listDirs(modulesDir)) {
+    if (["HEAD", "config", "hooks"].some((m) => existsSync(join(d, m)))) out.push(d);
+    else if (depth < MAX_INCLUDE_DEPTH) out.push(...moduleGitDirs(d, depth + 1));
+  }
+  return out;
 }
 
 function listDirs(dir: string): string[] {
@@ -264,10 +281,14 @@ function scanGithooksDir(dir: string, findings: Finding[]): void {
 }
 
 /** The .git directory and the common directory (they differ in a linked worktree, where .git is a file). */
-function gitDirs(repoRoot: string): { gitDir: string; commonDir: string } | undefined {
+function gitDirs(repoRoot: string): { gitDir: string; commonDir: string; mainCommondir?: string } | undefined {
   const dot = join(repoRoot, ".git");
   if (!existsSync(dot)) return undefined;
-  if (lstatSync(dot).isDirectory()) return { gitDir: dot, commonDir: dot };
+  if (lstatSync(dot).isDirectory()) {
+    // git honors a commondir file in ANY git dir, a main checkout's too: it redirects config, hooks and attributes.
+    const redirect = tryRead(join(dot, "commondir"));
+    return { gitDir: dot, commonDir: dot, ...(redirect?.ok === true ? { mainCommondir: resolve(dot, redirect.text.trim()) } : {}) };
+  }
   const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dot, "utf8"));
   if (pointer === null) return undefined;
   const gitDir = resolve(repoRoot, pointer[1]!);
@@ -316,9 +337,11 @@ function scanSettingsFile(scope: string, file: string, findings: Finding[]): voi
   }
 }
 
-function defaultManagedSettings(env: Readonly<Record<string, string | undefined>>): string {
-  if (process.platform === "win32") return join(env["ProgramData"] ?? env["PROGRAMDATA"] ?? "C:/ProgramData", "ClaudeCode", "managed-settings.json");
-  if (process.platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
+/** The current managed-settings location, admin-only (ambient). Claude Code removed the ProgramData Windows fallback in v2.1.75;
+ * the older ProgramData file is scanned separately as session-writable. Paths per the vendor documentation, not checked on disk here. */
+export function defaultManagedSettings(env: Readonly<Record<string, string | undefined>>, platform: string = process.platform): string {
+  if (platform === "win32") return join(env["ProgramFiles"] ?? env["PROGRAMFILES"] ?? "C:/Program Files", "ClaudeCode", "managed-settings.json");
+  if (platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
   return "/etc/claude-code/managed-settings.json";
 }
 
@@ -340,6 +363,10 @@ export function runPreflight(input: PreflightInput): Finding[] {
     const dirs = gitDirs(repoRoot);
     if (dirs !== undefined) {
       scanGitDir(dirs.commonDir, home, out, seen, KNOWN_PROJECT_CONFIG, 0);
+      if (dirs.mainCommondir !== undefined) {
+        out.push({ where: join(dirs.gitDir, "commondir"), key: "commondir in main checkout", detail: "a commondir file in a main checkout's git dir redirects git's config, hooks and attributes lookup; the redirected dir is scanned below" });
+        scanGitDir(dirs.mainCommondir, home, out, seen, [], 0);
+      }
       if (dirs.gitDir !== dirs.commonDir) scanGitConfig(join(dirs.gitDir, "config.worktree"), home, out, seen, 0);
     }
     scanAttributes(join(repoRoot, ".gitattributes"), out);
@@ -347,7 +374,11 @@ export function runPreflight(input: PreflightInput): Finding[] {
     const xdg = env["XDG_CONFIG_HOME"];
     for (const f of [join(home, ".gitconfig"), join(home, ".config", "git", "config"), ...(xdg === undefined || xdg === "" ? [] : [join(xdg, "git", "config")])]) scanGitConfig(f, home, out, seen, 0);
     scanAttributes(join(home, ".config", "git", "attributes"), out);
-    if (input.programData !== undefined) scanGitConfig(join(input.programData, "Git", "config"), home, out, seen, 0);
+    if (input.programData !== undefined) {
+      scanGitConfig(join(input.programData, "Git", "config"), home, out, seen, 0);
+      // Older Claude Code versions read managed settings from ProgramData, which a standard-user session can create (#447).
+      scanSettingsFile("managed-legacy-programdata", join(input.programData, "ClaudeCode", "managed-settings.json"), out);
+    }
     const rg = env["RIPGREP_CONFIG_PATH"];
     if (rg !== undefined && rg !== "") scanRgConfig(rg, out);
     const kube = (env["KUBECONFIG"] ?? "").split(delimiter).filter((p) => p !== "");

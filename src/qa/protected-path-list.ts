@@ -233,17 +233,13 @@ function namedPaths(root: string): string[] {
     // #409 (S7): the config, attribute and hook files git reads, each able to name a program git then runs (core.fsmonitor,
     // diff/filter drivers, hooks). Deny-rule targets are exact or directory-prefix (no globs, rule-types.ts), so nested
     // .gitattributes files are not listed: an attribute can only select a driver that config defines.
-    // What this seals: the project-relative git dir of a MAIN checkout (.git/config, .git/config.worktree, .git/hooks/,
-    // .git/info/attributes, .git/modules/ for submodule git dirs, .git/worktrees/), the root .gitattributes, .githooks/ and
-    // the user-level files. It does NOT seal the common dir of a LINKED worktree (outside the project root): see
-    // worktreeExtraPaths, which derives those targets per checkout.
-    ".git/config",
-    ".git/config.worktree",
-    ".git/modules/",
-    ".git/worktrees/",
-    ".git/hooks/",
+    // What this seals: the WHOLE project-relative git dir of a MAIN checkout as one directory entry (.git/ covers config,
+    // config.worktree, hooks, info/attributes, modules/, worktrees/ and any file a later git version reads, including
+    // commondir, which redirects every one of those lookups), plus .git itself (the pointer file in a linked worktree), the
+    // root .gitattributes, .githooks/ and the user-level files. It does NOT seal the common dir of a LINKED worktree
+    // (outside the project root): see worktreeExtraPaths, which derives those targets per checkout.
+    ".git/",
     ".githooks/", // this repo's own core.hooksPath target (src/lib/git-hooks-install.ts): the hooks git actually runs here
-    ".git/info/attributes",
     ".gitattributes",
     "~/.gitconfig",
     "~/.config/git/config",
@@ -296,9 +292,9 @@ export function worktreeExtraPaths(root: string, read: Reader = readReal): strin
   const commonText = read(join(gitDir, "commondir"));
   const common = commonText === undefined ? gitDir : resolve(gitDir, commonText.trim());
   const base = toRel(root, common);
-  const own = toRel(root, gitDir);
-  if (isAbsolute(base) || isAbsolute(own)) return [];
-  const targets = [`${base}/config`, `${base}/config.worktree`, `${base}/hooks/`, `${base}/info/attributes`, `${base}/modules/`, `${base}/worktrees/`, `${own}/config.worktree`];
+  if (isAbsolute(base)) return [];
+  // The whole common dir as one directory entry (it contains this worktree's own git dir), and the pointer file itself.
+  const targets = [`${base}/`, toRel(root, dot)];
   return [...new Set(targets.map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : "")))].sort();
 }
 
@@ -401,15 +397,21 @@ export function editDenyEntry(p: string): string {
   return body.startsWith("~/") ? `Edit(${body})` : `Edit(/${body})`;
 }
 
+/** Every Edit(...) entry a path needs: a directory entry also needs one for the directory path itself, since `d/**` does not name `d`
+ * (a linked worktree's .git is a FILE at that path). */
+export function editDenyEntries(p: string): string[] {
+  return p.endsWith("/") ? [editDenyEntry(p), editDenyEntry(p.slice(0, -1))] : [editDenyEntry(p)];
+}
+
 /** The PROPOSED settings text (shipped by story K under the human's approval; never the real settings file). */
 export function buildSettingsProposal(paths: readonly string[]): string {
-  return `${JSON.stringify({ permissions: { deny: paths.map(editDenyEntry) } }, null, 2)}\n`;
+  return `${JSON.stringify({ permissions: { deny: paths.flatMap(editDenyEntries) } }, null, 2)}\n`;
 }
 
 export function missingEditDenies(settingsText: string, paths: readonly string[]): string[] {
   const parsed = JSON.parse(settingsText) as { permissions?: { deny?: unknown } };
   const deny = Array.isArray(parsed.permissions?.deny) ? (parsed.permissions.deny as unknown[]) : [];
-  return paths.filter((p) => !deny.includes(editDenyEntry(p)));
+  return paths.filter((p) => !editDenyEntries(p).every((e) => deny.includes(e)));
 }
 
 export function renderShippedDefaults(existingText: string, paths: readonly string[]): string {
