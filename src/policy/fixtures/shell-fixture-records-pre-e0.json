@@ -1,0 +1,645 @@
+{
+  "shellAbbreviatedFlagCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": []
+  },
+  "shellAmpersandChainedCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"&\" detected outside quotes"
+    ]
+  },
+  "shellAmpersandStillSeparatesCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"&\" detected outside quotes"
+    ]
+  },
+  "shellAtHeredocMultiCommandCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": [
+      "command separator \"\\n\" detected outside quotes"
+    ]
+  },
+  "shellBacktickSubstitutionCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command/process substitution \"`\" detected"
+    ]
+  },
+  "shellBareUnterminatedQuoteCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "unterminated quote — cannot confidently classify the rest of the command"
+    ]
+  },
+  "shellBashDashCWrapperCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": []
+  },
+  "shellChainedReadThenMutateCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "chain operator \"&&\" detected outside quotes"
+    ]
+  },
+  "shellCommandSubstitutionCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command/process substitution \"$(\" detected"
+    ]
+  },
+  "shellDepthCapExactCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": []
+  },
+  "shellDepthCapExceededCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": [
+      "nested command exceeds depth cap (5)"
+    ]
+  },
+  "shellDirectoryFlagAliasCollisionCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "directory flag (-C/-d/--directory) present"
+    ]
+  },
+  "shellDirectoryFlagLongCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "directory flag (-C/-d/--directory) present"
+    ]
+  },
+  "shellDirectoryFlagLongSpaceCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "directory flag (-C/-d/--directory) present"
+    ]
+  },
+  "shellDirectoryFlagShortCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "directory flag (-C/-d/--directory) present"
+    ]
+  },
+  "shellDirectoryFlagShortEqualsDCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "directory flag (-C/-d/--directory) present"
+    ]
+  },
+  "shellEquivalentDeleteCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": []
+  },
+  "shellEscapedRedirectFalseFdDupCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"&\" detected outside quotes"
+    ]
+  },
+  "shellEscapedRedirectWithResourceCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"&\" detected outside quotes"
+    ]
+  },
+  "shellFdDupAmpersandCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/tmp/ok"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellFdDupAmpersandRedirectCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/tmp/ok"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellFdDupCloseFdCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/tmp/ok"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellFdDupDigitLeadingWordRedirectCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellFdDupWordRedirectCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellFdDupWordRedirectGluedCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellFdDupWordRedirectPlainWriteCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "out"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellHeredocRedirectCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/etc/app/config"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellHerestringNotHeredocCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"\\n\" detected outside quotes"
+    ]
+  },
+  "shellKubectlWithRedirectCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellLiveRedirectStillExcludedCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMalformedCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command resource \"\"",
+      "command flag --context"
+    ]
+  },
+  "shellMalformedResourceWithRedirectCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/tmp/out"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command binary is not one of the recognized set (F9, Issue #420)",
+      "command verb \"secrets/db-password/extra-smuggled-segment\"",
+      "command resource \"secrets/db-password/extra-smuggled-segment\"",
+      "command flag --context"
+    ]
+  },
+  "shellMultiRedirectCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMultiResourceCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMultiTargetResourcePlusRedirectCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMultiTargetTwoRedirectsCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMultiTargetTwoResourcesCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellMultiTargetViaWrapperCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellNewlineChainedCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command separator \"\\n\" detected outside quotes"
+    ]
+  },
+  "shellNoSpaceRedirectCall": {
+    "source": "parsed",
+    "verbs": [
+      "write"
+    ],
+    "targets": [
+      "/etc/cron.d/pwn"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "redirect decorates a command that does not resolve on its own (F8, Issue #411)"
+    ]
+  },
+  "shellNohupWrapperCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": []
+  },
+  "shellOverLongResourceTokenCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command resource \"secrets/db-password/extra-smuggled-segment\""
+    ]
+  },
+  "shellPathQualifiedToolCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command binary is not one of the recognized set (F9, Issue #420)"
+    ]
+  },
+  "shellQuotedChainOperatorCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster && evil/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": []
+  },
+  "shellQuotedLiteralAppendRedirectArgCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellQuotedLiteralRedirectArgCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command assembles 2 targets — denied wholesale rather than partially authorized (Issue #82)"
+    ]
+  },
+  "shellQuotedTokensCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": []
+  },
+  "shellReorderedFlagCall": {
+    "source": "parsed",
+    "verbs": [
+      "delete"
+    ],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": []
+  },
+  "shellUnrecognizedVerbCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "command verb \"patch\""
+    ]
+  },
+  "shellUnrecognizedWrapperShapeCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": [
+      "indirect-execution-shaped command does not match a recognized wrapper's expected form"
+    ]
+  },
+  "shellUnterminatedDoubleQuoteCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "unterminated quote — cannot confidently classify the rest of the command"
+    ]
+  },
+  "shellUnterminatedSingleQuoteCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": false,
+    "unresolved": [
+      "unterminated quote — cannot confidently classify the rest of the command"
+    ]
+  },
+  "shellWrapperInnerUnresolvedCall": {
+    "source": "parsed",
+    "verbs": [],
+    "targets": [
+      "prod/cluster/prod-cluster/pod/payment-worker"
+    ],
+    "environment": "prod",
+    "identity": "agent:story-implementer",
+    "deferred": true,
+    "unresolved": [
+      "command verb \"patch\""
+    ]
+  }
+}
