@@ -5,7 +5,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 ## Resume point — 2026-10-05, after PR #453 merged (newest): S7 K blockers on master; K waits for the human
 
-- **Merged:** PR #453 (`s7/knockout`) to `master` as `80ec926`, 2026-10-05 21:26 UTC. CI on its head: all 30 steps green (the first two attempts never got a runner: GitHub Actions outage).
+- **Merged:** PR #453 (`s7/knockout`) to `master` as `80ec926`, 2026-10-05 21:26 UTC. CI on its head: green on run 37368294348 attempt 3 (attempts 1 and 2 never got a runner during a GitHub Actions outage).
 - **On master now:** E0 (`ls`, `cat`, `head`, `tail`, `wc`, `grep` resolve to read), #428 bare-binary trust check, #409 git/rg lever seal (whole `.git/` protected; `qa:git-rg-lever-preflight`), #429/#424/#446 per-tool exec judgment and derived K matcher `Bash|Monitor|PowerShell|RemoteTrigger|mcp__.*`. Details: the "Prior entry" below and the decisions rows dated 2026-10-05.
 - **Issues closed by the merge or by the Manager after it:** #408, #410, #424, #428, #429, #436, #440, #441, #443, #445, #446, #447, #448, #449, #451.
 - **#308 reopened again:** commit 6d56e5a's subject `fix: #308 ...` auto-closed it. Commit subjects must not start with fix/close/resolve followed by #308 until K ships.
