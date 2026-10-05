@@ -41,6 +41,8 @@ export type GatePolicyResult = LoadedGatePolicy | GatePolicyFailure;
 export interface GatePorts {
   loadPolicy(): GatePolicyResult;
   loadCatalog(): MergedToolClassificationSet;
+  /** STUB (RED commit, Issue #428): unused until the next commit. */
+  checkBareBinaries?(names: readonly string[]): { ok: true } | { ok: false; reason: string };
 }
 
 export type RefusalCategory = "malformed-input" | "unroutable-tool" | "policy-load-failure";

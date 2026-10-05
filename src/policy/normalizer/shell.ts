@@ -563,3 +563,8 @@ registerNormalizer({
   toolType: "shell",
   normalize: (raw) => normalizeShellCall(raw as ShellCall),
 });
+
+/** STUB (RED commit, Issue #428). */
+export function invokedBareBinaries(_command: string): readonly string[] | undefined {
+  return [];
+}
