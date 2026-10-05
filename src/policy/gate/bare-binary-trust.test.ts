@@ -371,3 +371,34 @@ test("TRUST-2d-real-shell-resolution-covered-by-matchesName: every file name the
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- TRUST-19 (Issue #445) --------------------------------------------------------------------------------------------
+
+test("TRUST-19-unlistable-root-owned-dir-skipped-posix: a POSIX directory the gate cannot list but only root can write is skipped; any other unlistable directory still denies", () => {
+  const withDir = (stat: { uid: number; mode: number }, code = "EACCES", platformPath = `${POSIX_PATH}:/opt/pipx_bin`) =>
+    posixWorld({ path: platformPath, dirs: { "/opt": [], "/opt/pipx_bin": { throws: code } }, stats: { "/opt/pipx_bin": stat } });
+  // root-owned 0700 (the runner image's /opt/pipx_bin): the session cannot plant there, so skip
+  assert.deepEqual(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40700 })), { ok: true });
+  assert.deepEqual(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40700 }, "EPERM")), { ok: true });
+  // session-owned 0700: the session can plant, so deny
+  assert.equal(denied(checkBareBinaries(["ls"], withDir({ uid: 1001, mode: 0o40700 }))).kind, "unreadable-dir");
+  // root-owned but group-writable: deny
+  assert.equal(denied(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40770 }))).kind, "unreadable-dir");
+  // an unlistable directory under a session-owned ancestor: deny
+  const badAncestor = posixWorld({ path: `${POSIX_PATH}:/opt/x/pipx_bin`, dirs: { "/opt": [], "/opt/x": [], "/opt/x/pipx_bin": { throws: "EACCES" } }, stats: { "/opt/x": { uid: 1001, mode: 0o40755 }, "/opt/x/pipx_bin": { uid: 0, mode: 0o40700 } } });
+  assert.equal(denied(checkBareBinaries(["ls"], badAncestor)).kind, "unreadable-dir");
+  // only access errors qualify: EIO on a root-owned directory still denies
+  assert.equal(denied(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40700 }, "EIO"))).kind, "unreadable-dir");
+  // a failing lstat or realpath denies
+  const noLstat = withDir({ uid: 0, mode: 0o40700 });
+  const base = noLstat.lstat.bind(noLstat);
+  noLstat.lstat = (p: string) => {
+    if (p === "/opt/pipx_bin") throw fsError("EACCES");
+    return base(p);
+  };
+  assert.equal(denied(checkBareBinaries(["ls"], noLstat)).kind, "unreadable-dir");
+  // Windows keeps the deny on any readdir error
+  for (const code of ["EACCES", "EPERM"]) {
+    assert.equal(denied(checkBareBinaries(["kubectl"], winWorld({ userLocal: undefined, dirs: { [USER_LOCAL]: { throws: code } } }))).kind, "unreadable-dir", code);
+  }
+});
