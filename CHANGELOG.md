@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - THOTH-ADR-0003 accepted by the human (2026-10-05); hold released for #308 stories E, F and J
+
+Refs #308. Recorded on the human's words: "accept ADR-0003 but keep the 2026-09-19 exemption".
+
+- `docs/adr/thoth-0003-central-classification-fixture-as-gate-input.md`: `status: accepted`. The Manager's proposed narrowing (a fresh dated review report for every fixture entry addition) is removed; an entry-only pull request keeps the 2026-09-19 exemption, matching the `CLAUDE.md` "Policy delivery" sentence, which stays as written.
+- The hold is released for stories E, F and J. Story K and the `.claude/settings.json` PreToolUse entry still need the human's separate approval.
+- `docs/adr/thoth-0001-central-classification-fixture-standing-exception.md`: the "Amended in part by" pointer now reads accepted.
+- `src/qa/adr0003-write-path-claim.test.ts`: the status pin moves from `proposed` to `accepted` and requires the Status line to name the human.
+
 ### Fixed - Issue #308 story J review conditions (Closes #423, #426, #427) and THOTH-ADR-0003 write-path amendment (refs #424)
 
 Refs #308, #398. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance (the ADR stays `proposed`; agents do not accept it). Tests written failing first.
