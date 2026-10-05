@@ -373,11 +373,21 @@ test("TRUST-2d-real-shell-resolution-covered-by-matchesName: every file name the
   }
 });
 
+/** Makes lstat of anything UNDER `dir` throw `code` (default ENOENT), except names in `present`. */
+function absentUnder<T extends TrustPorts>(w: T, dir: string, code = "ENOENT", present: readonly string[] = []): T {
+  const base = w.lstat.bind(w);
+  w.lstat = (p: string) => {
+    if (p.startsWith(`${dir}/`) && !present.includes(p.slice(dir.length + 1))) throw fsError(code);
+    return base(p);
+  };
+  return w;
+}
+
 // --- TRUST-19 (Issue #445) --------------------------------------------------------------------------------------------
 
 test("TRUST-19-unlistable-root-owned-dir-skipped-posix: a POSIX directory the gate cannot list but only root can write is skipped; any other unlistable directory still denies", () => {
   const withDir = (stat: { uid: number; mode: number }, code = "EACCES", platformPath = `${POSIX_PATH}:/opt/pipx_bin`) =>
-    posixWorld({ path: platformPath, dirs: { "/opt": [], "/opt/pipx_bin": { throws: code } }, stats: { "/opt/pipx_bin": stat } });
+    absentUnder(posixWorld({ path: platformPath, dirs: { "/opt": [], "/opt/pipx_bin": { throws: code } }, stats: { "/opt/pipx_bin": stat } }), "/opt/pipx_bin");
   // root-owned 0700 (the runner image's /opt/pipx_bin): the session cannot plant there, so skip
   assert.deepEqual(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40700 })), { ok: true });
   assert.deepEqual(checkBareBinaries(["ls"], withDir({ uid: 0, mode: 0o40700 }, "EPERM")), { ok: true });
@@ -402,4 +412,48 @@ test("TRUST-19-unlistable-root-owned-dir-skipped-posix: a POSIX directory the ga
   for (const code of ["EACCES", "EPERM"]) {
     assert.equal(denied(checkBareBinaries(["kubectl"], winWorld({ userLocal: undefined, dirs: { [USER_LOCAL]: { throws: code } } }))).kind, "unreadable-dir", code);
   }
+});
+
+test("TRUST-19b-searchable-unlistable-root-dir-probes-names: an unlistable root-owned directory is skipped only when the shell cannot reach the name there either", () => {
+  const mk = (mode: number, code: string, present: readonly string[]) =>
+    absentUnder(
+      posixWorld({ path: `${POSIX_PATH}:/opt/pipx_bin`, dirs: { "/opt": [], "/opt/pipx_bin": { throws: "EACCES" } }, stats: { "/opt/pipx_bin": { uid: 0, mode } } }),
+      "/opt/pipx_bin",
+      code,
+      present,
+    );
+  // 0711: unlistable but searchable, the name is there: bash would run it, so deny
+  assert.equal(denied(checkBareBinaries(["ls"], mk(0o40711, "ENOENT", ["ls"]))).kind, "shadow");
+  // 0711 with the name absent: skip
+  assert.deepEqual(checkBareBinaries(["ls"], mk(0o40711, "ENOENT", [])), { ok: true });
+  // 0700, lstat of dir/name is EACCES (the shell cannot reach it either): skip
+  assert.deepEqual(checkBareBinaries(["ls"], mk(0o40700, "EACCES", [])), { ok: true });
+  assert.deepEqual(checkBareBinaries(["ls"], mk(0o40700, "EPERM", [])), { ok: true });
+  // any other probe error denies
+  for (const code of ["EIO", "ELOOP", "EMFILE", "UNKNOWN"]) assert.equal(denied(checkBareBinaries(["ls"], mk(0o40711, code, []))).kind, "unreadable-dir", code);
+  // every wanted name is probed, not just the first
+  assert.equal(denied(checkBareBinaries(["ls", "sh"], mk(0o40711, "ENOENT", ["sh"]))).kind, "shadow");
+});
+
+test("TRUST-19c-only-access-errors-skip: every readdir error other than EACCES and EPERM denies, even on a root-owned directory", () => {
+  for (const code of ["EIO", "EMFILE", "ENOMEM", "ELOOP", "ENAMETOOLONG", "UNKNOWN"]) {
+    const w = absentUnder(
+      posixWorld({ path: `${POSIX_PATH}:/opt/pipx_bin`, dirs: { "/opt": [], "/opt/pipx_bin": { throws: code } }, stats: { "/opt/pipx_bin": { uid: 0, mode: 0o40700 } } }),
+      "/opt/pipx_bin",
+    );
+    assert.equal(denied(checkBareBinaries(["ls"], w)).kind, "unreadable-dir", code);
+  }
+});
+
+test("TRUST-20-dotdot-path-entry-denies: a PATH entry with a .. segment is folded lexically, so after a symlink the gate could list a different directory than the shell searches; it denies", () => {
+  for (const entry of ["/home/u/link/../bin", "/usr/bin/..", "../x", "bin/../bin"]) {
+    const d = denied(checkBareBinaries(["ls"], posixWorld({ path: `${POSIX_PATH}:${entry}` })));
+    assert.equal(d.kind, "unreadable-dir", entry);
+    assert.match(d.reason, /\.\./, entry);
+  }
+  for (const entry of ["C:\\Users\\u\\link\\..\\bin", "C:/Users/u/../bin"]) {
+    assert.equal(denied(checkBareBinaries(["kubectl"], winWorld({ path: `${WIN_PATH};${entry}` }))).kind, "unreadable-dir", entry);
+  }
+  // a name that merely contains dots is not a .. segment
+  assert.deepEqual(checkBareBinaries(["ls"], posixWorld({ path: `${POSIX_PATH}:/home/u/..bin:/home/u/a..b` })), { ok: true });
 });
