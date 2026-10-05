@@ -77,7 +77,9 @@ const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
 
 /** A path operand: bare (raw equals dequoted, so the screened string is the recorded string), from a safe character set, not flag-shaped. */
 function isBarePath(t: RawToken): boolean {
-  return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith("-");
+  // A leading "//" is a UNC path on Windows (an SMB authentication vector, Issue #436); canonicalization would fold it to
+  // "/host/share" and hide that. A single leading "/" stays an ordinary absolute path.
+  return t.raw === t.value && t.value.length <= MAX_OPERAND_LENGTH && BARE_WORD.test(t.value) && !t.value.startsWith("-") && !t.value.startsWith("//");
 }
 
 /** grep's pattern slot: a bare word, or a SINGLE-quoted span (inert to the shell) of printable ASCII with no inner quote. */

@@ -11,8 +11,8 @@
 // its own preconditions (plan section 14, AP-1 to AP-14), among them a refreshed tool inventory, the deny rules
 // (story F) and the launcher-level residuals below (AP-13, narrowed by docs/plans/s7a-gate-hook-robustness-phase1-
 // 2026-09-26.md). Baseline allow content has shipped (baseline-allow-class-read-only, story E); nothing denies by
-// class from shipped data, and that class rule matches no committed fixture entry today. The Bash baseline allow (read-only
-// commands such as ls, cat, git status) is still unmet: with the gate wired they are denied by POL-05 until story E0 (Issue #408).
+// class from shipped data, and that class rule matches no committed fixture entry today. The Bash baseline allow is still partly unmet:
+// only the E0 set (Issue #408: ls, cat, head, tail, wc, grep) resolves as a read, while git, rg and every other command are denied by POL-05 (git and rg until #409).
 //
 // SCOPE (plan R-B): the gate evaluates ONLY `tool_name == "Bash"` (S4 shell normalizer) and names of
 // the form `mcp__<server>__<tool>` (the tool-class normalizer, class carried on a marker verb, see

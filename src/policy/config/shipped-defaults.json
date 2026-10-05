@@ -7,7 +7,7 @@
       "verbs": [
         "tool-class:read-only"
       ],
-      "rationale": "AP-1 baseline (#308 story E): a classified read-only MCP tool is allowed. Marker-only on purpose: no target, so a shell redirect into mcp/ cannot match (loader check V4), and a shell verb token equal to the marker is unresolved (PT-1). The verb-only shell read allow is withheld until story E0 (#408): shell verb resolution is tool-blind (PT-2)."
+      "rationale": "AP-1 baseline (#308 story E): a classified read-only MCP tool is allowed. Marker-only on purpose: no target, so a shell redirect into mcp/ cannot match (loader check V4), and a shell verb token equal to the marker is unresolved (PT-1). The verb-only shell read allow rests on story E0 (#408): the shell normalizer resolves only the closed read-only set (ls, cat, head, tail, wc, grep) to a read, so the allow covers nothing else (shell verb resolution is tool-blind, PT-2)."
     },
     {
       "id": "protect-claude-settings-json",
