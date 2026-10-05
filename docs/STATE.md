@@ -3,6 +3,10 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 **Last updated:** 2026-10-05, after PR #453 merged (E0, #428, #409, #429 on master; K planned, not wired)
 
+## Update 2026-10-05 (newest): #452 write-deny extraction check built on `s308/452-build`
+
+- The check now fails in both directions and on a version change; the K readiness row `CC-extraction-covers-judged (#452)` reads PASS on 2.1.267 (31/31 user, 12/12 project). Judgment file unchanged. Review chain (code-reviewer, cross-domain-reviewer, red-team on the skip/require seam) and the human's merge are next. Plan `docs/plans/s308-452-extractor-plan-2026-10-05.md`.
+
 ## Resume point — 2026-10-05, after PR #453 merged (newest): S7 K blockers on master; K waits for the human
 
 - **Merged:** PR #453 (`s7/knockout`) to `master` as `80ec926`, 2026-10-05 21:26 UTC. CI on its head: green on run 37368294348 attempt 3 (attempts 1 and 2 never got a runner during a GitHub Actions outage).
