@@ -282,8 +282,8 @@ const MUTANTS: Mutant[] = [
     "inner-unresolved-propagation-broken",
     "ADR-0021 'exactly one Action record': dropping the inner record's own unresolved array on the way back out would hide a genuinely unresolved inner command behind a clean-looking outer one",
     SHELL,
-    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);\n  return { ...inner, deferred: true };",
-    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1);\n  return { ...inner, deferred: true, unresolved: [] };",
+    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);\n  return { ...inner, deferred: true };",
+    "const inner = normalizeAtDepth({ ...raw, command: wrapper.inner }, depth + 1, invoked);\n  return { ...inner, deferred: true, unresolved: [] };",
   ),
   // --- regression guards: real bugs found and fixed during this story's own build (both S4
   // Stage-3 fix-now round self-discoveries, not reviewer findings) ---------------------------
