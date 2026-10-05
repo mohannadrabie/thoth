@@ -148,7 +148,7 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 
 | # | Criterion | Check |
 |---|---|---|
-| J1 | Matcher `Bash` + `mcp__.*`, timeout 60 recorded as the proposed entry text, in the plan, not in settings.json | Doc |
+| J1 | Matcher `Bash`, `PowerShell` and `mcp__.*` (amended 2026-10-05 after J3 showed PowerShell running un-gated, Issue #426), timeout 60, shell-form launcher, recorded as the proposed entry text in docs/plans/s308-K-proposed-entry-2026-10-05.md and its .json twin, not in settings.json; the other arbitrary-exec built-ins sit in its pendingHumanDecision list (Issue #424) | Doc; test `K-matcher-covers-arbitrary-exec` (src/qa/k-matcher-covers-arbitrary-exec.test.ts) |
 | J2 | Four qa checks green against the proposed entry in a scratch copy of the settings | `qa:gate-command-path`, `qa:gate-matcher-drift`, `qa:gate-manifest`, `qa:gate-latency-budget` |
 | J3 | U-8: a Bash call and an MCP call through the real runtime in a scratch session, allow and deny both exercised | Recorded transcript |
 | J4 | Full regression | `npm test` real counts (skipped is not passed), `qa:*` set, fresh `docs/reviews/` reports |
@@ -167,7 +167,7 @@ U-8 (full Bash + MCP session against the real rules) moves to J because it needs
 | K2 | After merge, `qa:gate-*` four checks green on the real file | Run |
 | K3 | Added (`docs/reviews/s308-A-adr-red-team-round2-2026-10-02.md`, S1): `K3-edit-deny-covers-fixture`. No qa check reads `permissions.deny` today; K adds one, and a dropped `Edit(...)` line for the fixture (or any AP-10 path) must fail it | NEW check, with a seeded mutant that removes the line |
 | K4 | ADR gate: the settings entry and the `permissions.deny` entries ship with K under the human's approval, after acceptance of THOTH-ADR-0003 | Decisions row |
-| K5 | Added (story D cross-domain review MED, Issue #401; red-team attack 3): `K-pretooluse-entry-uses-launcher`. The wired PreToolUse command string must equal the one pinned launcher form byte for byte, including the interpreter word `sh` (a `bash` run reopens a shell-function lever). Mutants that must each fail: a bare `node <gate>`, a trailing `|| true`, a trailing `; exit 0`, `echo <launcher> <gate>`, and `bash` in place of `sh` | A qa check run over the real settings file, mutant fixtures in its test file |
+| K5 | Added (story D cross-domain review MED, Issue #401; red-team attack 3): `K-pretooluse-entry-uses-launcher`. The wired PreToolUse command string must equal the one pinned launcher form byte for byte, including the interpreter word `sh` (a `bash` run reopens a shell-function lever). Mutants that must each fail: a bare `node <gate>`, a trailing `|| true`, a trailing `; exit 0`, `echo <launcher> <gate>`, `bash` in place of `sh`, and (added 2026-10-05, Issue #426) `PowerShell` missing from the matcher; the pinned form stays the shell form (J9 ruling, exec form not adopted) | A qa check run over the real settings file, mutant fixtures in its test file |
 
 ## 4. Reviewer sets and human touchpoints
 

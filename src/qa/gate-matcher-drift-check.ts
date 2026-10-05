@@ -55,9 +55,14 @@ export function extractMatcherToolNames(settings: unknown): string[] {
 
 /** Pure diff: every name in `referencedNames` not present in `vendoredNames` is drift. Duplicate
  * referenced names are reported once. */
+/** Issue #423 (J9 ruling 2026-10-05): matcher tokens that are patterns, not tool names. EXACT tokens only: a mistyped bare
+ * name still fails SUR-05, and so does any looser pattern. */
+export const PATTERN_MATCHER_TOKENS: ReadonlySet<string> = new Set(["mcp__.*"]);
+
 export function computeMatcherDrift(referencedNames: readonly string[], vendoredNames: ReadonlySet<string>): string[] {
   const drift: string[] = [];
   for (const name of new Set(referencedNames)) {
+    if (PATTERN_MATCHER_TOKENS.has(name)) continue;
     if (!vendoredNames.has(name)) {
       drift.push(
         `"${name}" is referenced (classification catalog or a .claude/settings.json hook matcher) but is ABSENT from the vendored built-in-tool snapshot (docs/qa/tool-inventory.json) -- possible dead matcher, typo, or renamed/removed tool`,

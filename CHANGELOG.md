@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #308 story J review conditions (Closes #423, #426, #427) and THOTH-ADR-0003 write-path amendment (refs #424)
+
+Refs #308, #398. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance (the ADR stays `proposed`; agents do not accept it). Tests written failing first.
+
+- #426 (HIGH): K matcher amended to `Bash|PowerShell|mcp__.*`, shell form (J9 ruling: the exec form is not adopted). New `src/qa/k-matcher-covers-arbitrary-exec.test.ts` (`K-matcher-covers-arbitrary-exec`): the arbitrary-exec set is read by AST from `src/qa/arbitrary-exec-classification.test.ts`, the matcher and an explicit `pendingHumanDecision` list from `docs/plans/s308-K-proposed-entry-2026-10-05.json`; a tool neither matched nor listed fails, and a mutant dropping PowerShell fails. Pending list (one line each on what routing would break): Skill, Workflow, CronCreate, RemoteTrigger, Monitor, Task, ScheduleWakeup, SlashCommand. Plan rows J1 and K5 in `docs/plans/s308-activation-phase0-2026-10-02.md` updated (K5 gains the mutant "PowerShell missing from the matcher").
+- #423 (narrowed): `qa:gate-matcher-drift` accepts the exact token `mcp__.*`; a mistyped name or any looser pattern is still drift.
+- #427: J README rows corrected. `CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec` and `BASH_ENV` with `exit 0` stopped the Bash command too (everything stopped, not a gate-only skip); `MSYS=noglob` is the one measured shell-form fail-open; a non-shell tool under `SHELLOPTS=noexec` was not run (unmeasured, closed by settings protection per #398). Hook attribution and the "Gate env" column are described as measured (by content; in the logger's process).
+- THOTH-ADR-0003 (`proposed`, edited in place): the "every session write path" constraint and Rules for agents add the PowerShell tool (routed by K's matcher, so the gate refuses it) and state that the other arbitrary-exec built-ins are a human decision at K; amendment-history line cites #424, #426 and J3.
+
 ### Fixed - Issue #308 story F round 2 conditions (#420 F9b/F10, #421, #422)
 
 Refs #308, #409. CRITICAL tier; HELD behind THOTH-ADR-0003 acceptance. Tests written failing first. Closes #421, closes #422.

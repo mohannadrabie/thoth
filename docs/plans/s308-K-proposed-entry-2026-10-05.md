@@ -1,18 +1,19 @@
 # Story K: proposed PreToolUse entry (J1) and what J changed in the K plan
 
-Date: 2026-10-05. Author: story-implementer (Ptah). Proposal text only: nothing here is written to `.claude/settings.json`. K needs the human's separate approval and THOTH-ADR-0003 acceptance. Evidence: `docs/qa/s308-live-spikes-J/`.
+Date: 2026-10-05 (revised after the J9 ruling and the J review). Author: story-implementer (Ptah). Proposal text only: nothing here is written to `.claude/settings.json`. K needs the human's separate approval and THOTH-ADR-0003 acceptance. Evidence: `docs/qa/s308-live-spikes-J/`. Machine-readable copy: `docs/plans/s308-K-proposed-entry-2026-10-05.json` (checked by `src/qa/k-matcher-covers-arbitrary-exec.test.ts`).
 
-## Entry as planned (Phase 0 J1)
+## Entry (K5's pinned form is the shell form)
 
-- Matcher `Bash` and `mcp__.*`, timeout 60, shell-form launcher.
-- Result in J2: `qa:gate-command-path` pass, `qa:gate-manifest` pass, `qa:gate-latency-budget` pass, `qa:gate-matcher-drift` FAIL (it reads `mcp__.*` as a tool name).
+- Matcher `Bash|PowerShell|mcp__.*`, timeout 60, shell-form launcher. The exec form is not adopted (J9 ruling).
+- J3: with matcher `Bash` only, the model fell back to the PowerShell tool after a Bash denial and `Get-ChildItem` ran with no gate call. With `PowerShell` in the matcher the gate refuses it ("the gate evaluates only Bash and mcp__ tool names").
+- Routing PowerShell makes it unusable: the gate refuses every tool name other than Bash and `mcp__*`. Git Bash is already a launcher precondition.
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash|PowerShell|mcp__.*",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PROJECT_DIR}/hooks/launch-gate.sh\" \"${CLAUDE_PROJECT_DIR}/hooks/pretooluse-kernel-gate.mjs\"", "timeout": 60 }
         ]
@@ -22,38 +23,26 @@ Date: 2026-10-05. Author: story-implementer (Ptah). Proposal text only: nothing 
 }
 ```
 
-## Recommended entry (changes from J)
+## Pending human decision at K: the other arbitrary-exec built-ins (#424)
 
-- Add `PowerShell` to the matcher. J3: with matcher `Bash`, the model fell back to the PowerShell tool after a Bash denial and `Get-ChildItem` ran with no gate call. With `PowerShell` in the matcher the gate refuses it ("the gate evaluates only Bash and mcp__ tool names").
-- Use the exec form with `env -i`. J8/J9: a settings `env` block defeats the shell form (`CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec`, `BASH_ENV`, `MSYS=noglob` each stop the gate from running or failing closed). The bare exec form (`command: sh`, `args: [launcher, gate]`) held against CLAUDE_CODE_SHELL_PREFIX, MSYS=noglob and BASH_ENV but not `SHELLOPTS=noexec` (the `sh` interpreter honors it). The `env -i` exec form below held against `SHELLOPTS=noexec`; it was not run against the other keys (unmeasured; `env -i` clears the environment before `sh` starts).
+- The set is read from `src/qa/arbitrary-exec-classification.test.ts` (its AP12_NAMED and ADDED_BUILTINS arrays) by the test `K-matcher-covers-arbitrary-exec`; a tool that is neither matched nor listed here fails the test.
+- Each tool below has the same fall-back exposure as PowerShell had in J3. Routing a tool makes it unusable (the gate refuses it). What fires the hook for each, and the exact breakage, is unmeasured.
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell|mcp__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "env",
-            "args": ["-i", "PATH=/usr/bin:/bin:/c/PROGRA~1/nodejs", "sh", "${CLAUDE_PROJECT_DIR}/hooks/launch-gate.sh", "${CLAUDE_PROJECT_DIR}/hooks/pretooluse-kernel-gate.mjs"],
-            "timeout": 60
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+| Tool | What routing it would break |
+|---|---|
+| Skill | Every Skill invocation (project and plugin skills) |
+| Workflow | Every workflow run |
+| CronCreate | Scheduling a cron job from a session |
+| RemoteTrigger | Remote trigger calls |
+| Monitor | Streaming a background command's output |
+| Task | All subagent delegation, including the reviewer agents this loop uses |
+| ScheduleWakeup | A session scheduling its own later prompt |
+| SlashCommand | Slash commands run through the model |
 
-- Open in the exec form: the `PATH` value is machine-specific (the Node directory in MSYS short form); `${CLAUDE_PROJECT_DIR}` expansion inside `args` was not measured (J used absolute paths in the scratch project); the runtime resolves `env` and `sh` through its own PATH.
+## K plan changes from J
 
-## K plan changes
-
-- K5 (pinned entry string): the pinned form changes from `sh "<launcher>" "<gate>"` to the chosen form; the five mutants stay and gain: a missing `PowerShell` in the matcher, a missing `env -i`, a bare `sh` command (loses SHELLOPTS protection).
-- New K check: `qa:gate-matcher-drift` must treat a matcher token starting with `mcp__` as a prefix pattern, not a tool name (currently FAIL on any `mcp__.*` matcher).
-- New K check: `qa:gate-command-path` must read the exec form (`command` plus `args`); it fails today with "could not extract a .mjs or .sh script path from command env".
-- Settings protection stays the primary closure for env-block levers (Issue #398 ruling, #406, #409); the exec form narrows, it does not replace F and K's `Edit(...)` deny.
-- Other built-ins that execute or schedule (Skill, Workflow, CronCreate, RemoteTrigger, per `src/qa/arbitrary-exec-classification.test.ts`) are not in the matcher either; same fall-back exposure as PowerShell. Whether to route them (the gate refuses them) is the Manager's ruling.
+- K5 (pinned entry string): stays `sh "<launcher>" "<gate>"`. Its mutant set gains "PowerShell missing from the matcher" (alongside a bare `node <gate>`, a trailing `|| true`, a trailing `; exit 0`, `echo <launcher> <gate>`, and `bash` in place of `sh`).
+- `qa:gate-matcher-drift` accepts the exact tokens `mcp__.*` and `PowerShell` (#423, done on this branch). A mistyped bare name still fails.
+- Env-block levers (`CLAUDE_CODE_SHELL_PREFIX`, `SHELLOPTS=noexec`, `BASH_ENV`, `MSYS=noglob`) need a settings write; the #398 ruling closes them by settings protection (F's list plus K's `Edit(...)` deny), not by the launcher. `MSYS=noglob` is the one measured shell-form fail-open (see the J README).
+- #406 stays open until K: the plain-node SessionStart and UserPromptSubmit hooks stay exposed and are closed only by settings protection.
 - Pre-E0 baseline: with the gate wired, ordinary Bash reads (`ls`, `cat`, `git status`) are denied by POL-05; only kubectl-shaped calls and classified MCP tools run (J3).

@@ -4,7 +4,7 @@
 - Method: story B harness (`../s308-live-spikes/harness/`), copied and extended in `harness/`. Each run is `claude -p` (Claude Code 2.1.267, model alias haiku, Windows 11, Git Bash) in a scratch project outside this repo, with its own `.claude/settings.json` wiring the gate at this repo's absolute paths.
 - Rules at HEAD 4ad9f87 (E and F shipped locally, held behind THOTH-ADR-0003).
 - Spend: USD 0.9857 over 39 live calls; hard cap USD 1.50 (`ledger.txt`). Paths, ids, host and user names are scrubbed by `docs/qa/s308-live-spikes-J/harness/scrub-j.mjs`; a run that printed a full environment is omitted from J8.txt.
-- Hook attribution: the first `hook_started` is the gate (config order), the second is the logger. The order is read from the stream, not from a hook name.
+- Hook attribution was by content (the hook's stderr text, its exit code, and the logger's own log file), not by the order of events in the stream: both hooks of a pair can finish in either order, and two identical empty responses cannot be told apart.
 
 ## Outcomes by item
 
@@ -18,25 +18,25 @@
 | J5 | `J5.txt` | `Edit(/docs/qa/s5-central-classification.json)` blocked Edit and Write on the scratch copy, in default mode and under `bypassPermissions`. File hash unchanged in all five deny runs; the control edit changed it. A rule written in the wrong case (`Edit(/Docs/QA/S5-...JSON)`) also blocked: the match is case-insensitive on Windows. Read stays allowed. |
 | J6, J6a | `J9.txt` (footer) | Local, 40 runs per cell: allow path p99 179 ms direct, 250 ms launcher, 300 ms `env -i` launcher. Deny path p99 183, 220, 385 ms. All far below the 2000 ms ceiling. In-runtime hook wall time (stream arrival) 109 to 448 ms. |
 | J8 | `J8.txt` | Table below. |
-| J9 | `J9.txt` | Exec form works for allow and deny. Recommendation below. |
+| J9 | `J9.txt` | Exec form works for allow and deny; not adopted (Manager ruling). |
 
 ## J8: settings `env` block keys
 
-Gate = the shell-form launcher entry. "Gate env" = the key reached the hook process. "Shell" = the key reached the runtime's command shell (control run, no gate).
+Gate = the shell-form launcher entry. "Gate env" = the key reached a plain `node` hook process (the logger, which has the same env block); it was NOT measured in the gate's own node process, which the launcher starts under `env -i`. "Shell" = the key reached the runtime's command shell (control run, no gate).
 
 | Key | Gate env | Shell | Gate result with the key set |
 |---|---|---|---|
-| `CLAUDE_CODE_SHELL_PREFIX=true` | hooks wrapped too | command not run | Gate did not run, hook exit 0. Bypass. |
-| `SHELLOPTS=noexec` | yes | command not run | Gate did not run, hook exit 0. Bypass. |
+| `CLAUDE_CODE_SHELL_PREFIX=true` | hooks wrapped too (the logger left no log) | command not run | Everything stopped: neither hook ran (exit 0) and the Bash command produced no output. Not a gate-only skip; for a Bash call the effect is a blocked call. |
+| `SHELLOPTS=noexec` | hooks wrapped too (the logger left no log) | command not run | Everything stopped, same as above. A non-shell tool (`mcp__`, PowerShell) under this key was NOT run, so whether the gate is skipped while that tool still runs is unmeasured. |
 | `BASH_FUNC_echo%%` | yes | yes (`echo` hijacked) | Gate ran, allowed as normal. |
-| `BASH_ENV=<script>` | yes (script ran in the hook shell) | yes | Gate ran. With a script that runs `exit 0` (`j8x-bashenvexit`) the gate did not run: bypass. |
-| `MSYS=noglob` | yes | yes (breaks the runtime's own quoting) | Hook command failed with exit 127; the call ran. Fail-open. |
+| `BASH_ENV=<script>` | yes (script ran in the hook shell) | yes | Gate ran and allowed. With a script that runs `exit 0` (`j8x-bashenvexit`) neither the hook nor the Bash command produced output (everything stopped, as for the two rows above). |
+| `MSYS=noglob` | yes | yes (breaks the runtime's own quoting) | Hook command failed with exit 127 and the Bash call RAN. This is the one measured fail-open of the shell-form entry. |
 | `CLAUDE_CODE_GIT_BASH_PATH=<missing>` | yes | value visible, runtime still used its own bash | No effect on the gate. |
 | `NODE_OPTIONS=--spike-unknown-flag` | reaches `sh`, not the gate (the launcher runs `node` under `env -i`) | yes | Gate ran and allowed. A plain `node` hook (the logger) exited 9. #406 is closed for the launcher form. |
 | `GIT_EXTERNAL_DIFF=<script>` | yes | yes | No effect on the gate. Reach only; no `git diff` was run. |
 | `RIPGREP_CONFIG_PATH=<file>` | yes | yes | No effect on the gate. Reach only. |
 
-- Every row that bypasses or fails open needs a settings write. That keeps the #398 ruling: closed by settings protection (F and K), not by the launcher.
+- Every row that stops or fails open needs a settings write. That keeps the #398 ruling: closed by settings protection (F and K), not by the launcher. The J9 ruling adopts the shell form on that basis.
 - #406 (`NODE_OPTIONS`): not reproducible with the launcher wired.
 - #409 (`GIT_EXTERNAL_DIFF`, `RIPGREP_CONFIG_PATH`): both reach the gate's env and the command shell. Neither stops the gate. Whether they run attacker code depends on a later `git diff` or `rg` call, which the gate denies today as unresolved.
 
@@ -45,13 +45,13 @@ Gate = the shell-form launcher entry. "Gate env" = the key reached the hook proc
 | Variant | Result |
 |---|---|
 | `sh` with args, allow and deny input | Same outcomes as the shell form. Hook time 119 and 240 ms (shell form 109 and 252 ms). |
-| `sh` with args + `CLAUDE_CODE_SHELL_PREFIX=true` | Gate ran and denied. Shell form bypassed. |
+| `sh` with args + `CLAUDE_CODE_SHELL_PREFIX=true` | Gate ran and denied. Shell form: everything stopped. |
 | `sh` with args + `MSYS=noglob` | Gate ran and denied. Shell form failed open. |
-| `sh` with args + `BASH_ENV` (`exit 0`) | Gate ran and denied. Shell form bypassed. |
-| `sh` with args + `SHELLOPTS=noexec` | Gate did not run. Bypass (the `sh` interpreter honors the variable). |
+| `sh` with args + `BASH_ENV` (`exit 0`) | Gate ran and denied. Shell form: everything stopped. |
+| `sh` with args + `SHELLOPTS=noexec` | Gate did not run; the Bash command produced no output (everything stopped). |
 | `env -i PATH=... sh launcher gate` + `SHELLOPTS=noexec` | Gate ran and denied. |
 
-- Recommendation: adopt the exec form with `env -i` for K, and keep F plus K's `Edit(...)` deny as the primary closure. The Manager rules.
+- Ruling (Manager, 2026-10-05): the exec form is not adopted; K uses the shell form `sh "<launcher>" "<gate>"`. This section is measurement only.
 - Cost: the `PATH` argument is machine-specific; `qa:gate-command-path` and K5's pinned string must learn the new form; `${CLAUDE_PROJECT_DIR}` inside `args` was not measured.
 
 ## Not covered
