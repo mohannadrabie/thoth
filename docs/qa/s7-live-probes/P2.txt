@@ -1,0 +1,54 @@
+P2: permissions.deny Edit(~/.claude/settings.json) against a dummy user settings file in a scratch home
+Date: 2026-10-05. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11, Git Bash. Gate hosted from a detached worktree of origin/master (6f78aee).
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder; <SPIKES>/gate-wt is the gate worktree, <SPIKES>/proj the scratch project, <SPIKES>/home the scratch home, <SPIKES>/p2b-home the P2b dummy folder; ~/<SPIKES-REL> is <SPIKES> written relative to the real home), <HOME>. Ids are replaced by stable placeholders.
+HOME and USERPROFILE pointed at <SPIKES>/home holding a freshly written dummy settings file (never a copy of a real one). Result: the runtime reports 'Not logged in' with the home redirected, at zero cost, before any tool call. Second attempt: CLAUDE_CONFIG_DIR at the scratch config dir (home also scratch): same. No credential file was copied anywhere, so P2 stopped here; the deny runs were not made.
+
+
+### profile p2control.json
+{
+  "permissions": {
+    "allow": []
+  }
+}
+
+### profile p2deny.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(~/.claude/settings.json)"
+    ]
+  }
+}
+
+### run p2-control-edit
+profile=p2control home_redirected=true config_dir_redirected=false exit=1 wall_ms=1344 cost_usd=0
+prompt: Use the Edit tool on the file <SPIKES>/home/.claude/settings.json to replace the exact text "original" with "P2-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,NotebookEdit,Read,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "Not logged in · Please run /login"
+result {"subtype":"success","num_turns":1,"total_cost_usd":0,"is_error":true,"result":"Not logged in · Please run /login"}
+
+### run p2-cfgdir-control-edit
+profile=p2control home_redirected=true config_dir_redirected=true exit=1 wall_ms=1479 cost_usd=0
+prompt: Use the Edit tool on the file <SPIKES>/home/.claude/settings.json to replace the exact text "original" with "P2-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,NotebookEdit,Read,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "Not logged in · Please run /login"
+result {"subtype":"success","num_turns":1,"total_cost_usd":0,"is_error":true,"result":"Not logged in · Please run /login"}
+stderr: Claude configuration file not found at: <SPIKES>\home\.claude\.claude.json
+A backup file exists at: <SPIKES>\home\.claude\backups\.claude.json.backup.1791212008285
+You can manually restore it by running: cp "<SPIKES>\home\.claude\backups\.claude.json.backup.179121200828...[clipped, 1501 chars]
+
+### dummy settings file written to <SPIKES>/home/.claude/settings.json
+{
+  "$comment": "s7 P2 dummy user settings (scratch)",
+  "env": {
+    "S7_DUMMY": "original"
+  }
+}
+
+### before/after sha256 (first 16 hex) of the target file
+p2-control-edit file=../home/.claude/settings.json before=56e84c3acfe16f01 after=56e84c3acfe16f01 changed=no
+p2-cfgdir-control-edit file=../home/.claude/settings.json before=56e84c3acfe16f01 after=56e84c3acfe16f01 changed=no

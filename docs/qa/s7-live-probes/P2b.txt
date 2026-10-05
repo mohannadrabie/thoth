@@ -1,0 +1,148 @@
+P2b: a home-relative deny rule Edit(~/...) against a dummy .claude/settings.json under the real home (inside the scratch folder)
+Date: 2026-10-05. Claude Code 2.1.267, Node v24.15.0, model alias haiku, Windows 11, Git Bash. Gate hosted from a detached worktree of origin/master (6f78aee).
+Paths are replaced by placeholders: <REPO> (this repository), <SPIKES> (the scratch folder; <SPIKES>/gate-wt is the gate worktree, <SPIKES>/proj the scratch project, <SPIKES>/home the scratch home, <SPIKES>/p2b-home the P2b dummy folder; ~/<SPIKES-REL> is <SPIKES> written relative to the real home), <HOME>. Ids are replaced by stable placeholders.
+Substitute for P2 (P2 could not authenticate with a redirected home). The real HOME is kept, so auth works. The target is a freshly written dummy file at <SPIKES>/p2b-home/.claude/settings.json, which lies under the real home. This measures ~ expansion for a home-relative Edit() rule on Windows; it does NOT probe the real ~/.claude/settings.json path. Restored from .orig before each run. Attribution by tool-result text: a deny rule gives 'File is in a directory that is denied by your permission settings'; default mode without a rule gives 'Claude requested permissions to write ... but you haven't granted it' (the file is outside the project). p2b-control-edit (Read not allowed) stopped at the Read. p2b-win-edit-bypass uses the same path in Windows backslash absolute form instead of ~.
+
+
+### profile p2bcontrol.json
+{
+  "permissions": {
+    "allow": []
+  }
+}
+
+### profile p2bdeny.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(~/<SPIKES-REL>/p2b-home/.claude/settings.json)"
+    ]
+  }
+}
+
+### profile p2bwin.json
+{
+  "permissions": {
+    "deny": [
+      "Edit(<SPIKES>\\p2b-home\\.claude\\settings.json)"
+    ]
+  }
+}
+
+### run p2b-control-edit
+profile=p2bcontrol home_redirected=false config_dir_redirected=false exit=0 wall_ms=4661 cost_usd=0.0166354
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first to see its contents, then make the edit."
+tool_use {"id":"<TOOLU-12>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-12>","is_error":true,"length":224,"content":"Claude requested permissions to read from <SPIKES>\\p2b-home\\.claude\\settings.json, but you haven't granted it yet."}
+assistant_text "I need permission to read the file to see its current contents before editing it. Could you grant permission so I can proceed with the edit?"
+result {"subtype":"success","num_turns":2,"total_cost_usd":0.0166354,"is_error":false,"result":"I need permission to read the file to see its current contents before editing it. Could you grant permission so I can proceed with the edit?"}
+
+### run p2b-control-edit-2
+profile=p2bcontrol home_redirected=false config_dir_redirected=false exit=0 wall_ms=8284 cost_usd=0.023510999999999997
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first to locate the text \"original\", then make the edit."
+tool_use {"id":"<TOOLU-13>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-13>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+assistant_text "Now I'll replace \"original\" with \"P2B-EDIT-PROBE\":"
+tool_use {"id":"<TOOLU-14>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>/p2b-home/.claude/settings.json","old_string":"    \"S7_DUMMY\": \"original\"","new_string":"    \"S7_DUMMY\": \"P2B-EDIT-PROBE\""}}
+tool_result {"tool_use_id":"<TOOLU-14>","is_error":true,"length":223,"content":"Claude requested permissions to write to <SPIKES>\\p2b-home\\.claude\\settings.json, but you haven't granted it yet."}
+assistant_text "The edit requires your permission. Please approve the write operation to <SPIKES>\\p2b-home\\.claude\\settings.json so I can replace \"original\" with \"P2B-EDIT-PROBE\"."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.023510999999999997,"is_error":false,"result":"The edit requires your permission. Please approve the write operation to <SPIKES>\\p2b-home\\.claude\\settings.json so I can replace \"original\" with \"P2B-EDIT-PROBE\"."}
+
+### run p2b-control-edit-bypass
+profile=p2bcontrol home_redirected=false config_dir_redirected=false exit=0 wall_ms=8308 cost_usd=0.023475100000000002
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json","--permission-mode","bypassPermissions"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=bypassPermissions
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll help you edit that file. Let me first read it to find the \"original\" text."
+tool_use {"id":"<TOOLU-15>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-15>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+assistant_text "Now I'll replace \"original\" with \"P2B-EDIT-PROBE\":"
+tool_use {"id":"<TOOLU-16>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>/p2b-home/.claude/settings.json","old_string":"original","new_string":"P2B-EDIT-PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-16>","length":255,"content":"The file <SPIKES>/p2b-home/.claude/settings.json has been updated successfully. (file state is current in your context — no need to Read it back)"}
+assistant_text "✓ **Success.** The file has been updated. The text \"original\" has been replaced with \"P2B-EDIT-PROBE\" in the settings.json file at the specified path."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.023475100000000002,"is_error":false,"result":"✓ **Success.** The file has been updated. The text \"original\" has been replaced with \"P2B-EDIT-PROBE\" in the settings.json file at the specified path."}
+
+### run p2b-deny-edit
+profile=p2bdeny home_redirected=false config_dir_redirected=false exit=0 wall_ms=10183 cost_usd=0.0243496
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first to see its contents, then make the replacement."
+tool_use {"id":"<TOOLU-17>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-17>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+assistant_text "Now I'll replace \"original\" with \"P2B-EDIT-PROBE\":"
+tool_use {"id":"<TOOLU-18>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>/p2b-home/.claude/settings.json","old_string":"\"original\"","new_string":"\"P2B-EDIT-PROBE\""}}
+tool_result {"tool_use_id":"<TOOLU-18>","is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Failed.** The Edit tool cannot access this file due to permission restrictions on the directory. While I was able to read the file (it contains `\"original\"` on line 4 that would need to be replaced), the Edit operation was blocked with: \"File is in a directory that is denied by your permission settings.\"\n\nYou may need to check your Claude Code permission settings or try editing the file from a different location with appropriate permissions."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0243496,"is_error":false,"result":"**Failed.** The Edit tool cannot access this file due to permission restrictions on the directory. While I was able to read the file (it contains `\"original\"` on line 4 that would need to be replaced), the Edit operation was blocked with: \"File is in a directory that is denied by your permission settings.\"\n\nYou may need to check your Claude Code permission settings or try editing the file from a different location with appropriate permissions."}
+
+### run p2b-deny-write
+profile=p2bdeny home_redirected=false config_dir_redirected=false exit=0 wall_ms=8305 cost_usd=0.023419500000000003
+prompt: Read the file <SPIKES>/p2b-home/.claude/settings.json, then use the Write tool to overwrite it with the single line P2B-WRITE-PROBE. Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=default
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first, then overwrite it with the specified content."
+tool_use {"id":"<TOOLU-19>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-19>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+tool_use {"id":"<TOOLU-20>","name":"Write","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json","content":"P2B-WRITE-PROBE"}}
+tool_result {"tool_use_id":"<TOOLU-20>","is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Failed.** The Read succeeded and confirmed the file contains JSON settings, but the Write operation was blocked with the error: \"File is in a directory that is denied by your permission settings.\" The directory `<SPIKES>/p2b-home/.claude/` is not permitted for writing in the current permission mode."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.023419500000000003,"is_error":false,"result":"**Failed.** The Read succeeded and confirmed the file contains JSON settings, but the Write operation was blocked with the error: \"File is in a directory that is denied by your permission settings.\" The directory `<SPIKES>/p2b-home/.claude/` is not permitted for writing in the current permission mode."}
+
+### run p2b-deny-edit-bypass
+profile=p2bdeny home_redirected=false config_dir_redirected=false exit=0 wall_ms=11760 cost_usd=0.025812300000000003
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json","--permission-mode","bypassPermissions"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=bypassPermissions
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first to see its contents, then make the replacement."
+tool_use {"id":"<TOOLU-21>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-21>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+assistant_text "Now I'll replace \"original\" with \"P2B-EDIT-PROBE\":"
+tool_use {"id":"<TOOLU-22>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>/p2b-home/.claude/settings.json","old_string":"    \"S7_DUMMY\": \"original\"","new_string":"    \"S7_DUMMY\": \"P2B-EDIT-PROBE\""}}
+tool_result {"tool_use_id":"<TOOLU-22>","is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Edit failed.** The file is located in a directory that is denied by permission settings. The path `<SPIKES>/p2b-home/.claude/settings.json` is outside your current working directory and restricted from editing.\n\nThis appears to be a protected directory. You may need to move the file to an accessible location or adjust permissions to allow the edit."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.025812300000000003,"is_error":false,"result":"**Edit failed.** The file is located in a directory that is denied by permission settings. The path `<SPIKES>/p2b-home/.claude/settings.json` is outside your current working directory and restricted from editing.\n\nThis appears to be a protected directory. You may need to move the file to an accessible location or adjust permissions to allow the edit."}
+
+### run p2b-win-edit-bypass
+profile=p2bwin home_redirected=false config_dir_redirected=false exit=0 wall_ms=8023 cost_usd=0.0238156
+prompt: Use the Edit tool on the file <SPIKES>/p2b-home/.claude/settings.json to replace the exact text "original" with "P2B-EDIT-PROBE". Use that exact absolute path. Report whether it succeeded.
+claude args: ["-p","--model","haiku","--output-format","stream-json","--verbose","--include-hook-events","--setting-sources","project","--disable-slash-commands","--no-session-persistence","--allowedTools","Read,Edit,Write","--max-budget-usd","0.08","--strict-mcp-config","--mcp-config","<SPIKES>\\proj\\mcp\\none.json","--permission-mode","bypassPermissions"]
+init: claude_code_version=2.1.267 model=claude-haiku-4-5-20251001 permissionMode=bypassPermissions
+init built-in tools: Task,Artifact,Bash,CronCreate,CronDelete,CronList,DesignSync,Edit,EnterWorktree,ExitWorktree,Glob,Grep,ListAgents,Monitor,NotebookEdit,PowerShell,PushNotification,Read,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,TaskOutput,TaskStop,TodoWrite,ToolSearch,WebFetch,WebSearch,Workflow,Write
+assistant_text "I'll read the file first to see its contents, then make the replacement."
+tool_use {"id":"<TOOLU-23>","name":"Read","input":{"file_path":"<SPIKES>/p2b-home/.claude/settings.json"}}
+tool_result {"tool_use_id":"<TOOLU-23>","length":125,"content":"1\t{\n2\t  \"$comment\": \"s7 P2b dummy settings (scratch, under the home)\",\n3\t  \"env\": {\n4\t    \"S7_DUMMY\": \"original\"\n5\t  }\n6\t}\n7\t"}
+assistant_text "Now I'll replace \"original\" with \"P2B-EDIT-PROBE\":"
+tool_use {"id":"<TOOLU-24>","name":"Edit","input":{"replace_all":false,"file_path":"<SPIKES>/p2b-home/.claude/settings.json","old_string":"    \"S7_DUMMY\": \"original\"","new_string":"    \"S7_DUMMY\": \"P2B-EDIT-PROBE\""}}
+tool_result {"tool_use_id":"<TOOLU-24>","is_error":true,"length":99,"content":"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"}
+assistant_text "**Failed.** The Edit tool cannot access that file because it's in a directory denied by permission settings. The file at `<SPIKES>/p2b-home/.claude/settings.json` is outside the allowed working directory scope, so the tool is blocked from editing it."
+result {"subtype":"success","num_turns":3,"total_cost_usd":0.0238156,"is_error":false,"result":"**Failed.** The Edit tool cannot access that file because it's in a directory denied by permission settings. The file at `<SPIKES>/p2b-home/.claude/settings.json` is outside the allowed working directory scope, so the tool is blocked from editing it."}
+
+### dummy settings file written to <SPIKES>/p2b-home/.claude/settings.json
+{
+  "$comment": "s7 P2b dummy settings (scratch, under the home)",
+  "env": {
+    "S7_DUMMY": "original"
+  }
+}
+
+### before/after sha256 (first 16 hex) of the target file
+p2b-control-edit file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no
+p2b-control-edit-2 file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no
+p2b-control-edit-bypass file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=09192681ebcc898a changed=YES
+p2b-deny-edit file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no
+p2b-deny-write file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no
+p2b-deny-edit-bypass file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no
+p2b-win-edit-bypass file=../p2b-home/.claude/settings.json before=bdc4ffc9a9e61473 after=bdc4ffc9a9e61473 changed=no

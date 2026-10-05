@@ -1,0 +1,19 @@
+live calls: 16
+total cost USD: 0.5864
+hard cap USD 1.00
+p1-main-ctl	p1-main-ctl	exit=0	wall_ms=9792	cost_usd=0.0880957
+p1-sub-r1	p1-sub-r1	exit=0	wall_ms=20352	cost_usd=0.1514778
+p1-sub-r2	p1-sub-r2	exit=0	wall_ms=18121	cost_usd=0.039270349999999996
+p1-sub-r3	p1-sub-r3	exit=0	wall_ms=15838	cost_usd=0.06313355000000001
+p2-control-edit	p2control	exit=1	wall_ms=1344	cost_usd=0
+p2-cfgdir-control-edit	p2control	exit=1	wall_ms=1479	cost_usd=0
+p3-unrelated-edit	p3unrelated	exit=0	wall_ms=9851	cost_usd=0.0253339
+p3-case-edit	p3case	exit=0	wall_ms=10768	cost_usd=0.0253127
+p3-unrelated-write	p3unrelated	exit=0	wall_ms=13936	cost_usd=0.0328014
+p2b-control-edit	p2bcontrol	exit=0	wall_ms=4661	cost_usd=0.0166354
+p2b-control-edit-2	p2bcontrol	exit=0	wall_ms=8284	cost_usd=0.023510999999999997
+p2b-control-edit-bypass	p2bcontrol	exit=0	wall_ms=8308	cost_usd=0.023475100000000002
+p2b-deny-edit	p2bdeny	exit=0	wall_ms=10183	cost_usd=0.0243496
+p2b-deny-write	p2bdeny	exit=0	wall_ms=8305	cost_usd=0.023419500000000003
+p2b-deny-edit-bypass	p2bdeny	exit=0	wall_ms=11760	cost_usd=0.025812300000000003
+p2b-win-edit-bypass	p2bwin	exit=0	wall_ms=8023	cost_usd=0.0238156
