@@ -73,7 +73,11 @@ export function world(o: WorldOptions): TrustPorts & { calls: string[] } {
     },
     lstat(p) {
       calls.push(`lstat ${p}`);
-      return stats.get(k(p)) ?? { uid: 0, mode: 0o40755 };
+      const known = stats.get(k(p));
+      if (known !== undefined) return known;
+      // a path that is neither a known directory nor a listed entry does not exist (the real lstat says ENOENT)
+      if (!exists(p)) throw fsError("ENOENT");
+      return { uid: 0, mode: 0o40755 };
     },
   };
 }

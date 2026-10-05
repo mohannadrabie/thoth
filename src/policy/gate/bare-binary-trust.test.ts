@@ -377,7 +377,10 @@ test("TRUST-2d-real-shell-resolution-covered-by-matchesName: every file name the
 function absentUnder<T extends TrustPorts>(w: T, dir: string, code = "ENOENT", present: readonly string[] = []): T {
   const base = w.lstat.bind(w);
   w.lstat = (p: string) => {
-    if (p.startsWith(`${dir}/`) && !present.includes(p.slice(dir.length + 1))) throw fsError(code);
+    if (p.startsWith(`${dir}/`)) {
+      if (present.includes(p.slice(dir.length + 1))) return { uid: 0, mode: 0o100755 };
+      throw fsError(code);
+    }
     return base(p);
   };
   return w;
@@ -456,4 +459,39 @@ test("TRUST-20-dotdot-path-entry-denies: a PATH entry with a .. segment is folde
   }
   // a name that merely contains dots is not a .. segment
   assert.deepEqual(checkBareBinaries(["ls"], posixWorld({ path: `${POSIX_PATH}:/home/u/..bin:/home/u/a..b` })), { ok: true });
+});
+
+test("TRUST-21-case-insensitive-fs-probe-in-untrusted-dirs: on POSIX every untrusted directory is also probed by lstat(dir/name), because a case-insensitive file system lists LS but runs it for ls", () => {
+  const mk = (code: string, present: readonly string[]) => absentUnder(posixWorld({ dirs: { "/home/u/bin": ["LS"] } }), "/home/u/bin", code, present);
+  assert.equal(denied(checkBareBinaries(["ls"], mk("ENOENT", ["ls"]))).kind, "shadow", "readdir shows LS (no exact match) but lstat(ls) succeeds");
+  assert.deepEqual(checkBareBinaries(["ls"], mk("ENOENT", [])), { ok: true });
+  for (const code of ["ENOENT", "ENOTDIR", "EACCES", "EPERM"]) assert.deepEqual(checkBareBinaries(["ls"], mk(code, [])), { ok: true }, code);
+  for (const code of ["EIO", "ELOOP", "EMFILE", "UNKNOWN"]) assert.equal(denied(checkBareBinaries(["ls"], mk(code, []))).kind, "unreadable-dir", code);
+  // the exact readdir match still works on its own
+  const exact = absentUnder(posixWorld({ dirs: { "/home/u/bin": ["ls"] } }), "/home/u/bin");
+  assert.equal(denied(checkBareBinaries(["ls"], exact)).kind, "shadow");
+  // every wanted name is probed
+  assert.equal(denied(checkBareBinaries(["ls", "sh"], mk("ENOENT", ["sh"]))).kind, "shadow");
+  // Windows is unchanged (no lstat probe; it has the name.* match)
+  const win = winWorld();
+  assert.deepEqual(checkBareBinaries(["kubectl"], win), { ok: true });
+  assert.ok(!win.calls.some((c) => c.startsWith("lstat")), "no lstat probe on Windows");
+});
+
+test("TRUST-20b-tilde-path-entry-denies: a POSIX PATH entry starting with ~ is expanded by the shell in ways the gate cannot mirror, so it denies", () => {
+  for (const entry of ["~/x", "~user/x", "~+/x", "~", "~-/bin"]) {
+    const d = denied(checkBareBinaries(["ls"], posixWorld({ path: `${POSIX_PATH}:${entry}` })));
+    assert.equal(d.kind, "unreadable-dir", entry);
+    assert.match(d.reason, /~/, entry);
+  }
+  assert.deepEqual(checkBareBinaries(["ls"], posixWorld({ path: `${POSIX_PATH}:/home/u/a~b` })), { ok: true }, "a ~ inside a name is not an expansion");
+});
+
+test("TRUST-20c-dotdot-home-denies: a .. segment in the home directory (which derives the login-profile directories) denies like a PATH entry", () => {
+  for (const home of ["/home/u/../v", "/home/..", "C:\\Users\\u\\..\\v"]) {
+    const w = home.startsWith("C:") ? winWorld({ home }) : posixWorld({ home });
+    const d = denied(checkBareBinaries(["ls"], w));
+    assert.equal(d.kind, "unreadable-dir", home);
+    assert.match(d.reason, /\.\./, home);
+  }
 });
