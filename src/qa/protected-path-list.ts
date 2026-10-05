@@ -310,6 +310,12 @@ function namedPaths(root: string): string[] {
     "~/.claude.json",
     "docs/qa/claude-code-write-deny-judgment.json",
     "src/qa/claude-code-write-deny-extract.ts",
+    // #308 story K stage 0 (app-security round 1, refs #456): what generates and certifies the K gate text, and the proposal it compares against.
+    "src/qa/k-settings-merge.ts",
+    "src/qa/k3-edit-deny-covers-fixture.ts",
+    "src/qa/k5-pretooluse-entry-uses-launcher.ts",
+    "src/qa/k-readiness.ts",
+    "docs/plans/s308-K-proposed-entry-2026-10-05.json",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 

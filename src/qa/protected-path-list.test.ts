@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { absoluteEditBody, runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
+import { fileURLToPath } from "node:url";
+import { absoluteEditBody, protectedPaths, runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
 
 const posix = (p: string): string => p.split("\\").join("/");
 
@@ -117,5 +118,15 @@ test("worktree-targets: main checkout empty (exit 0, says so on stderr)", () => 
     }
   } finally {
     fx.cleanup();
+  }
+});
+
+// App-security round 1 finding 1 (refs #456): the files that generate and certify the gate text, and the proposal they compare
+// against, are protected paths, so a wired session cannot edit what future verification certifies.
+test("protected-path-list: K certifiers are protected paths", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const all = protectedPaths(root).all;
+  for (const want of ["src/qa/k-settings-merge.ts", "src/qa/k3-edit-deny-covers-fixture.ts", "src/qa/k5-pretooluse-entry-uses-launcher.ts", "src/qa/k-readiness.ts", "docs/plans/s308-K-proposed-entry-2026-10-05.json".toLowerCase()]) {
+    assert.ok(all.includes(want), `${want} is on the protected list`);
   }
 });
