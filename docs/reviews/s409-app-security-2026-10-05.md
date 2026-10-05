@@ -7,10 +7,10 @@ Ran: `node --test src/qa/git-rg-lever-seal.test.ts` -> 125 pass / 0 fail / 0 ski
 
 ## Findings (ranked)
 
-1. [ISSUE][HIGH][demonstrated] Submodule git dir is outside the seal and the preflight. `adr` is a submodule here (`.gitmodules`), so `adr/.git` points to `.git/modules/adr/`, and git run in `adr/` reads `.git/modules/adr/config`, `hooks/`, `info/attributes`. None is in `protected-path-list.ts:232-242` (exact or directory-prefix: `.git/config`, `.git/hooks/`, `.git/info/attributes` only), and `gitDirs()` in `git-rg-lever-preflight.ts` never visits modules. Same for `.git/config.worktree` and `.git/worktrees/*` (git-dir-local config that executes when `extensions.worktreeConfig` is on).
+1. [ISSUE][HIGH][demonstrated] Submodule git dir is outside the seal and the preflight. `adr` is a submodule here (`.gitmodules`), so `adr/.git` points to `.git/modules/adr/`, and git run in `adr/` reads `.git/modules/adr/config`, `hooks/`, `info/attributes`. None is in `protected-path-list.ts:232-242` (exact or directory-prefix: `.git/config`, `.git/hooks/`, `.git/info/attributes` only), and `gitDirs()` in `git-rg-lever-preflight.ts` never visits modules. Same for .git/config.worktree and `.git/worktrees/*` (git-dir-local config that executes when `extensions.worktreeConfig` is on).
    Attack: a session writes `.git/modules/adr/config` (`core.fsmonitor=<cmd>`), then any git call in `adr/` runs it. Probe (scratch repo with a submodule, same layout): appended `[core] fsmonitor="echo PWNED > ../../../pwned.txt; true"` to `.git/modules/adr/config`, ran `git status` in the submodule; `pwned.txt` appeared containing `PWNED` (timestamp seconds old).
    Exposure: ~100% of git invocations inside `adr/` once git is re-added to the resolved set, basis counted in code (1 submodule in `.gitmodules`); dormant while git is off the set (gate unwired until K), irreversible (code exec), silent.
-   Minimal fix: add `.git/modules/` (directory prefix covers config, hooks, info), `.git/config.worktree`, `.git/worktrees/` to `namedPaths`; make `runPreflight` scan `<gitdir>/modules/*/{config,hooks,info/attributes}`. Failing tests: `S409-submodule-gitdir-protected`, `S409-preflight-detects-planted-submodule-config`.
+   Minimal fix: add `.git/modules/` (directory prefix covers config, hooks, info), .git/config.worktree, `.git/worktrees/` to `namedPaths`; make `runPreflight` scan `<gitdir>/modules/*/{config,hooks,info/attributes}`. Failing tests: `S409-submodule-gitdir-protected`, `S409-preflight-detects-planted-submodule-config`.
 
 2. [ISSUE][MED][demonstrated] Preflight `executingKey` has false negatives, so a planted lever yields a clean PASS. Probed `parseGitConfig`; all returned `executing:false`: `core.alternateRefsCommand`, `tar.<fmt>.command`, `submodule.<n>.update = !cmd`, `browser.<t>.cmd`, `web.browser`, `gpg.ssh.defaultKeyCommand`. Correctly caught: continuation lines, BOM, mixed case, `[a.b]` header form, trailing-comment header, quoted values, alias `!`. `S409-precondition-preflight-clean` gates the git re-add, so a miss matters. The write seal is unaffected (config is protected); this is the pre-existing-config half (R3).
    Exposure: 1 preflight run per activation; 6 exec keys missed, basis counted by probe.
@@ -31,7 +31,7 @@ Ran: `node --test src/qa/git-rg-lever-seal.test.ts` -> 125 pass / 0 fail / 0 ski
 Blocker: 1. Hardening: 2 (cheap, same pass), 3, 4.
 
 ## Single next action
-Add `.git/modules/`, `.git/config.worktree`, `.git/worktrees/` to the protected list, scan them in the preflight, extend `executingKey`; regenerate shipped-defaults.json and the K proposal; rerun.
+Add `.git/modules/`, .git/config.worktree, `.git/worktrees/` to the protected list, scan them in the preflight, extend `executingKey`; regenerate shipped-defaults.json and the K proposal; rerun.
 
 ## Editorial
 None.

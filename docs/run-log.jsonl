@@ -225,3 +225,4 @@
 {"at":"2026-10-05T14:44:48.928Z","event":"tier-ratified","scope":"s428","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"new gate allow-decision port; closes exec under allowed record"}
 {"at":"2026-10-05T14:47:58.199Z","event":"tier-ratified","scope":"s429","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"changes protected write list and K routed-tool set"}
 {"at":"2026-10-05T17:03:38.517Z","event":"story-shipped","scope":"s308-E0","rounds":"0","reports":"5","findings":"7","adrTokensSaved":"18800","councilFired":"false"}
+{"at":"2026-10-05T18:39:34.885Z","event":"tier-ratified","scope":"s308-K","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"wires live enforcement hook into this repo's settings"}
