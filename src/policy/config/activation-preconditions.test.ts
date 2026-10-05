@@ -35,6 +35,7 @@ import { normalize } from "../normalizer/registry.ts";
 import "../normalizer/shell.ts";
 import { moduleRelativeFixtureLocation } from "../tools/classification-catalog.ts";
 import {
+  NESTED_EDIT_GLOBS,
   PROTECTED_VERBS,
   buildDenyRules,
   buildParentRules,
@@ -195,6 +196,7 @@ test("F5 F5-ap10-paths-edit-deny: every protected path has an Edit(...) deny ent
   assert.equal(text, buildSettingsProposal(PATHS.all));
   const parsed = JSON.parse(text) as { permissions: { deny: string[] } };
   for (let i = 0; i < parsed.permissions.deny.length; i++) {
+    if (NESTED_EDIT_GLOBS.includes(parsed.permissions.deny[i]!)) continue; // glob entries (#449) belong to no path; F1-nested-edit-globs-in-proposal pins them
     const mutant = JSON.stringify({ permissions: { deny: parsed.permissions.deny.filter((_, j) => j !== i) } });
     assert.equal(missingEditDenies(mutant, PATHS.all).length, 1, `F5 mutant ${String(i)}`);
   }

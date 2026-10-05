@@ -57,7 +57,32 @@ export function extractFromInstalled(env: NodeJS.ProcessEnv = process.env): (Ext
   return { binary, ...extractWriteDeny(readFileSync(binary)) };
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
+export interface JudgedEntry {
+  name: string;
+  judgment: "protected" | "residual";
+  reason: string;
+  /** The named protected path (protected entries only), in the project-relative or ~/ form of namedPaths. */
+  path?: string;
+}
+export interface Judged {
+  claudeCodeVersion: string;
+  user: JudgedEntry[];
+  project: JudgedEntry[];
+  projectRoot?: JudgedEntry[];
+}
+
+/** One line per extracted entry that has no judgment; empty when every entry is judged. */
+export function unjudged(ex: Extracted, j: Judged): string[] {
+  const out: string[] = [];
+  const user = new Set(j.user.map((e) => e.name));
+  const project = new Set(j.project.map((e) => e.name));
+  for (const n of ex.user) if (!user.has(n)) out.push(`user:${n}`);
+  for (const n of ex.project) if (!project.has(n)) out.push(`project:${n}`);
+  if (ex.mcpJson && !(j.projectRoot ?? []).some((e) => e.name === ".mcp.json")) out.push("projectRoot:.mcp.json");
+  return out;
+}
+
+if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
   const r = extractFromInstalled();
   if (r === undefined) console.log("claude-code-write-deny-extract: no installed Claude Code binary found");
   else console.log(JSON.stringify({ user: r.user, project: r.project, mcpJson: r.mcpJson }, null, 2));

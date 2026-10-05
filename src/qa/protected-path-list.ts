@@ -275,6 +275,41 @@ function namedPaths(root: string): string[] {
     "docs/qa/tool-exec-judgment.json",
     "src/qa/tool-exec-judgment.ts",
     "src/qa/protected-path-list.ts",
+    // #451 and #429 round 2 (S7): every entry the installed Claude Code lists as write-protected for its own sandbox that is sourced,
+    // executed or loaded as instructions or config (judged in docs/qa/claude-code-write-deny-judgment.json, extracted by
+    // src/qa/claude-code-write-deny-extract.ts), plus ~/.claude.json (user MCP declarations) and the two instruments.
+    "~/.claude/session-env/",
+    "~/.claude/hooks/",
+    "~/.claude/workflows/",
+    "~/.claude/routines/",
+    "~/.claude/rules/",
+    "~/.claude/output-styles/",
+    "~/.claude/scheduled_tasks.json",
+    "~/.claude/launch.json",
+    "~/.claude/CLAUDE.md",
+    "~/.claude/projects/",
+    "~/.claude/daemon.json",
+    "~/.claude/policy-limits.json",
+    "~/.claude/loop.md",
+    "~/.claude/cowork_plugins/",
+    "~/.claude/local/",
+    "~/.claude/jobs/",
+    "~/.claude/seed-admin/",
+    "~/.claude/daemon/",
+    "~/.claude/remote-settings.json",
+    "~/.claude/remote-settings-consent.json",
+    "~/.claude/remote-settings-helper-consent/",
+    ".claude/hooks/",
+    ".claude/workflows/",
+    ".claude/routines/",
+    ".claude/output-styles/",
+    ".claude/launch.json",
+    ".claude/loop.md",
+    ".claude/scheduled_tasks.json",
+    ".mcp.json",
+    "~/.claude.json",
+    "docs/qa/claude-code-write-deny-judgment.json",
+    "src/qa/claude-code-write-deny-extract.ts",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
@@ -404,8 +439,12 @@ export function editDenyEntries(p: string): string[] {
 }
 
 /** The PROPOSED settings text (shipped by story K under the human's approval; never the real settings file). */
+/** Nested authorable directories (#449): kernel targets are exact or trailing-slash prefix (no globs), but Claude Code Edit rules
+ * accept ** globs. Whether these globs match is a K live-spike item. */
+export const NESTED_EDIT_GLOBS: readonly string[] = ["skills", "commands", "agents", "hooks", "workflows", "routines", "output-styles"].map((d) => `Edit(/**/.claude/${d}/**)`);
+
 export function buildSettingsProposal(paths: readonly string[]): string {
-  return `${JSON.stringify({ permissions: { deny: paths.flatMap(editDenyEntries) } }, null, 2)}\n`;
+  return `${JSON.stringify({ permissions: { deny: [...paths.flatMap(editDenyEntries), ...NESTED_EDIT_GLOBS] } }, null, 2)}\n`;
 }
 
 export function missingEditDenies(settingsText: string, paths: readonly string[]): string[] {

@@ -80,7 +80,7 @@ export function deriveMatcher(file: JudgmentFile): string {
 const NESTED_NAMES: ReadonlySet<string> = new Set(["skills", "commands", "agents"]);
 
 /** Read-only enumerator (#449): existing nested .claude/{skills,commands,agents} directories below the root (root-level
- * ones are protected by name; node_modules and .git are skipped). A kernel target is exact or a trailing-/ prefix, so a
+ * ones are protected by name; node_modules and .git are skipped; .claude and the child names match case-insensitively; symlinks and junctions are NOT followed, a disclosed limit). A kernel target is exact or a trailing-/ prefix, so a
  * nested directory cannot be one rule; K activation reviews this list. Sorted, project-relative, forward slashes. */
 export function findNestedSkillDirs(root: string): string[] {
   const out: string[] = [];
@@ -94,7 +94,8 @@ export function findNestedSkillDirs(root: string): string[] {
     for (const e of entries) {
       if (!e.isDirectory() || e.name === "node_modules" || e.name === ".git") continue;
       const child = rel === "" ? e.name : `${rel}/${e.name}`;
-      if (rel.endsWith(".claude") && NESTED_NAMES.has(e.name) && rel !== ".claude") out.push(child);
+      const parent = rel.slice(rel.lastIndexOf("/") + 1).toLowerCase();
+      if (parent === ".claude" && NESTED_NAMES.has(e.name.toLowerCase()) && rel.toLowerCase() !== ".claude") out.push(child);
       walk(child);
     }
   };
