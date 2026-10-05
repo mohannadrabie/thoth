@@ -335,6 +335,15 @@ export function worktreeExtraPaths(root: string, read: Reader = readReal): strin
 
 export type WorktreeForm = "relative" | "absolute";
 
+/** The body after `Edit(//` for an absolute path. Vendor permissions doc: on Windows, paths are normalized to POSIX form before matching
+ * (`C:Usersalice` becomes `/c/Users/alice`, so the rule is `//c/Users/alice`): lower-case drive letter, no colon (#460).
+ * Elsewhere it is the absolute path without its leading slash. */
+export function absoluteEditBody(abs: string, platform: string = process.platform): string {
+  const posix = abs.split("\\").join("/");
+  if (platform === "win32" && posix.length >= 2 && posix.charAt(1) === ":") return `${posix.charAt(0).toLowerCase()}${posix.slice(2)}`;
+  return posix.startsWith("/") ? posix.slice(1) : posix;
+}
+
 /** Ready-to-paste permissions.deny Edit(...) lines for the worktree targets (#442), one per line, sorted.
  * relative: `/x` is project-root relative (so `/../main/.git/**`); absolute: the `//`-prefixed absolute form. Which form
  * Claude Code honors for a path outside the project root is live probe P-K4 (stage 1), so both are emitted on request. */
@@ -346,8 +355,7 @@ export function worktreeEditLines(root: string, form: WorktreeForm, read: Reader
       for (const e of editDenyEntries(t)) lines.add(e);
       continue;
     }
-    const abs = resolve(root, t).split(sep).join("/");
-    const body = abs.startsWith("/") ? abs.slice(1) : abs;
+    const body = absoluteEditBody(resolve(root, t));
     lines.add(`Edit(//${body})`);
     if (t.endsWith("/")) lines.add(`Edit(//${body}/**)`);
   }
