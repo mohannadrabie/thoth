@@ -31,6 +31,7 @@
       "Edit(/src/policy/normalizer/action-catalog.ts)",
       "Edit(/src/policy/normalizer/flag-catalog.ts)",
       "Edit(/src/policy/normalizer/path-canonical.ts)",
+      "Edit(/src/policy/normalizer/readonly-catalog.ts)",
       "Edit(/src/policy/normalizer/registry.ts)",
       "Edit(/src/policy/normalizer/shell-scanner.ts)",
       "Edit(/src/policy/normalizer/shell.ts)",

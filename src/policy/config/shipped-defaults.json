@@ -521,6 +521,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-policy-normalizer-readonly-catalog-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/policy/normalizer/readonly-catalog.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-policy-normalizer-registry-ts",
       "effect": "deny",
       "verbs": [

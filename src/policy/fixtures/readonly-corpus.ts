@@ -37,6 +37,8 @@ export const ACCEPT_ROWS: readonly AcceptRow[] = [
   { command: "grep '[0-9]' README.md", verb: "read", target: "readme.md" },
   { command: "grep -e 'x|y' README.md", verb: "read", target: "readme.md" },
   { command: "grep -r foo", verb: "read", target: "." },
+  { command: "grep 'foo$' README.md", verb: "read", target: "readme.md" },
+  { command: "grep 'a`b' README.md", verb: "read", target: "readme.md" },
 ];
 
 // Every row below must NEVER yield a clean read or list record (empty `unresolved`), and must be denied by the real hook.
@@ -87,7 +89,7 @@ export const DENY_GROUPS: Readonly<Record<string, readonly string[]>> = {
     "cat a\u0000b", "cat a\tb\u0007", "cat a;b", "cat a(b", "cat a<b", "cat a>b", "cat a|b", "cat a&b", "ls `x`",
     "cat a b", "cat a b c d e f g h", "cat a b c d e f g h i", "ls a b", "grep p a b", "wc -l a b", "head -n 1 a b", "tail -n 1 a b",
   ],
-  "B-18b-grep-pattern-slot": ["grep * README.md", "grep [0-9] README.md", 'grep "$x" README.md', 'grep "a.*b" README.md', "grep '-x' README.md", "grep '' README.md", "grep -e '' README.md", "grep 'a`b' README.md", "grep 'caf\u00e9' README.md"],
+  "B-18b-grep-pattern-slot": ["grep * README.md", "grep [0-9] README.md", 'grep "$x" README.md', 'grep "a.*b" README.md', "grep '-x' README.md", "grep '' README.md", "grep -e '' README.md", "grep 'caf\u00e9' README.md"],
   "B-19-unterminated-quote": ["ls 'x", 'cat "x', "grep 'x README.md"],
   "B-20-colon-and-drive-forms": ["cat a:b", "cat c:x", "cat c:/x", "cat policy.json::data", "ls c:"],
 };
