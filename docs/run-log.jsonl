@@ -230,3 +230,4 @@
 {"at":"2026-10-05T20:02:02.701Z","event":"story-shipped","scope":"s409","rounds":"2","reports":"6","findings":"21","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-05T20:02:02.758Z","event":"story-shipped","scope":"s429","rounds":"2","reports":"5","findings":"19","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-05T22:02:30.974Z","event":"tier-ratified","scope":"s308-K0","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"guard-adjacent policy-delivery tooling"}
+{"at":"2026-10-05T22:10:38.499Z","event":"tier-ratified","scope":"s308-452","proposed":"STANDARD","ratified":"CRITICAL","changed":"true","reason":"certifies K Edit-deny completeness; evidence surface; skip seam needs red-team"}
