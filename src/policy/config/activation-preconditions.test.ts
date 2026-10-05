@@ -335,3 +335,18 @@ test("F1-judgment-instruments-protected: the judgment file and the two generator
     assert.equal(decide(WORLD(shipped()), writeRecord(f)).outcome, "deny", f);
   }
 });
+
+// #451 (HIGH, red-team round 2): the harness creates ~/.claude/session-env/<session>/ and loads from it; a sibling of #448.
+test("F1-session-env-dir-protected: ~/.claude/session-env/ is on the protected list, denied for every write verb, and has its K Edit entry", () => {
+  const d = "~/.claude/session-env/";
+  assert.ok(PATHS.named.includes(d), "named protected directory missing");
+  assert.deepEqual(missingEditDenies(readFileSync(PROPOSAL_PATH, "utf8"), [d]), []);
+  for (const verb of PROTECTED_VERBS) assert.equal(decide(WORLD(shipped()), { ...writeRecord(`${d}abc/sessionstart-hook-1.sh`), verbs: [verb] }).outcome, "deny", verb);
+});
+
+// #449 (refs, round 2): Claude Code Edit rules accept ** globs, so K's Edit-deny can cover nested authorable directories
+// that a kernel rule (exact or trailing-slash prefix) cannot. Matching of these globs is a K live-spike item.
+test("F1-nested-edit-globs-in-proposal: the K proposal carries a glob Edit-deny for each nested authorable .claude directory", () => {
+  const deny = (JSON.parse(readFileSync(PROPOSAL_PATH, "utf8")) as { permissions: { deny: string[] } }).permissions.deny;
+  for (const d of ["skills", "commands", "agents", "hooks", "workflows", "routines", "output-styles"]) assert.ok(deny.includes(`Edit(/**/.claude/${d}/**)`), `glob entry missing for ${d}`);
+});

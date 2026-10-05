@@ -6,7 +6,7 @@
 // time, so the judgment table carries an alias pair; a test fails if only one name is present.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -215,4 +215,17 @@ test("F1-nested-skill-dirs-covered-or-disclosed (#449): the nested-dir residual 
     rmSync(root, { recursive: true, force: true });
   }
   assert.ok(Array.isArray(findNestedSkillDirs(ROOT)), "runs over the real tree");
+});
+
+test("F1-nested-skill-dirs-enumerator-case-and-links (#449 LOW): .claude matches case-insensitively; symlinks and junctions are not followed, and that is disclosed", () => {
+  const root = mkdtempSync(join(tmpdir(), "nested2-"));
+  try {
+    for (const d of ["pkg/.Claude/Skills", "pkg2/.CLAUDE/commands", "real/.claude/agents"]) mkdirSync(join(root, d), { recursive: true });
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
+    assert.deepEqual(findNestedSkillDirs(root), ["pkg2/.CLAUDE/commands", "pkg/.Claude/Skills", "real/.claude/agents"].sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  assert.ok(/symlink|junction/i.test(readFileSync(PROPOSAL_MD, "utf8")), "the K md discloses that links are not followed");
+  assert.ok(/symlink|junction/i.test(loadJudgments().judgments.find((j) => j.tool === "Skill")!.reason), "the Skill reason discloses that links are not followed");
 });
