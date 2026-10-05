@@ -229,6 +229,17 @@ function namedPaths(root: string): string[] {
     ".claude/settings.local.json", // project local settings
     "~/.claude/settings.json", // user settings (env reach unproven, treated as reachable)
     ".thoth/halt-state/", // named sensitive area: session-readable, secrets-adjacent derivation
+    // #409 (S7): the config, attribute and hook files git reads, each able to name a program git then runs (core.fsmonitor,
+    // diff/filter drivers, hooks). Deny-rule targets are exact or directory-prefix (no globs, rule-types.ts), so nested
+    // .gitattributes files are not listed: an attribute can only select a driver that config defines, and config is sealed.
+    ".git/config",
+    ".git/hooks/",
+    ".githooks/", // this repo's own core.hooksPath target (src/lib/git-hooks-install.ts): the hooks git actually runs here
+    ".git/info/attributes",
+    ".gitattributes",
+    "~/.gitconfig",
+    "~/.config/git/config",
+    "~/.config/git/attributes",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 

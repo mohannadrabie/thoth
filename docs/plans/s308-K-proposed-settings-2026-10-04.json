@@ -3,6 +3,11 @@
     "deny": [
       "Edit(/.claude/settings.json)",
       "Edit(/.claude/settings.local.json)",
+      "Edit(/.git/config)",
+      "Edit(/.git/hooks/**)",
+      "Edit(/.git/info/attributes)",
+      "Edit(/.gitattributes)",
+      "Edit(/.githooks/**)",
       "Edit(/.mcp.json)",
       "Edit(/.thoth/halt-state/**)",
       "Edit(/.thoth/policy.json)",
@@ -48,7 +53,10 @@
       "Edit(/src/policy/tools/mcp-enumeration.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
       "Edit(~/.claude.json)",
-      "Edit(~/.claude/settings.json)"
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.config/git/attributes)",
+      "Edit(~/.config/git/config)",
+      "Edit(~/.gitconfig)"
     ]
   }
 }

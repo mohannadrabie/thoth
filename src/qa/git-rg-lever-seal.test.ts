@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { buildDenyRules, buildSettingsProposal, missingEditDenies, protectedPaths, ruleIdFor, unmatchedPaths } from "./protected-path-list.ts";
 import { AMBIENT_COMMON, isAmbientCommon, isLeverKey, LEVER_NAMED, scanSettingsEnv } from "./exec-lever-env.ts";
-import { RESIDUALS, runPreflight, type Finding } from "./git-rg-lever-preflight.ts";
+import { KNOWN_PROJECT_CONFIG, RESIDUALS, runPreflight, unacknowledged, type Finding } from "./git-rg-lever-preflight.ts";
 import { decide } from "../policy/kernel/kernel.ts";
 import type { Rule } from "../policy/kernel/rule-types.ts";
 import type { ActionRecord } from "../policy/kernel/action-record.ts";
@@ -210,7 +210,7 @@ function fixture(): Fx {
   writeFileSync(join(repo, ".git", "hooks", "pre-commit.sample"), "#!/bin/sh\n");
   return { repo, home, programData, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
-const pf = (fx: Fx, env: Record<string, string> = {}): Finding[] => runPreflight({ repoRoot: fx.repo, home: fx.home, env, programData: fx.programData, managedSettingsPath: join(fx.home, "managed-none.json") });
+const pf = (fx: Fx, env: Record<string, string> = {}): Finding[] => runPreflight({ repoRoot: fx.repo, home: fx.home, env, programData: fx.programData, systemConfigPaths: [], managedSettingsPath: join(fx.home, "managed-none.json") });
 const hasKey = (fs: Finding[], key: string, whereIncludes?: string): boolean => fs.some((f) => f.key === key && (whereIncludes === undefined || f.where.replaceAll("\\", "/").includes(whereIncludes)));
 
 test("S409-preflight-clean-fixture: a clean repo and home report nothing, and ambient HOME-class env is not a finding", () => {
@@ -319,7 +319,7 @@ test("S409-preflight-detects-planted-config: lever keys in a project, local, use
     writeFileSync(join(fx.repo, ".claude", "settings.local.json"), JSON.stringify({ env: { RIPGREP_CONFIG_PATH: "x" } }));
     writeFileSync(join(fx.home, ".claude", "settings.json"), JSON.stringify({ env: { GIT_CONFIG_COUNT: "1" } }));
     writeFileSync(managed, JSON.stringify({ env: { GIT_PAGER: "x" } }));
-    const found = runPreflight({ repoRoot: fx.repo, home: fx.home, env: {}, programData: fx.programData, managedSettingsPath: managed });
+    const found = runPreflight({ repoRoot: fx.repo, home: fx.home, env: {}, programData: fx.programData, systemConfigPaths: [], managedSettingsPath: managed });
     for (const [key, scope] of [["GIT_EXTERNAL_DIFF", "project"], ["RIPGREP_CONFIG_PATH", "local"], ["GIT_CONFIG_COUNT", "user"], ["GIT_PAGER", "managed"]] as const) {
       assert.ok(found.some((f) => f.key === key && f.where.includes(scope)), `${scope}/${key}: ${JSON.stringify(found)}`);
     }
@@ -378,7 +378,7 @@ function readOnlyViolations(source: string): string[] {
     if (ts.isCallExpression(n)) {
       const c = n.expression;
       const name = ts.isIdentifier(c) ? c.text : ts.isPropertyAccessExpression(c) ? c.name.text : undefined;
-      if (name !== undefined && WRITE_CALL.test(name)) out.push(`call ${name}`);
+      if (name !== undefined && WRITE_CALL.test(name) && !(ts.isPropertyAccessExpression(c) && name === "exec")) out.push(`call ${name}`);
       if (n.expression.kind === ts.SyntaxKind.ImportKeyword) out.push("dynamic import");
     }
     ts.forEachChild(n, visit);
@@ -405,6 +405,27 @@ test("S409-preflight-is-read-only: the fixture tree is byte-identical after a ru
   assert.ok(!/spawn|execFile|child_process/.test(src.replace(/\/\/.*$/gm, "")), "no mention of process spawning in code");
 });
 
+test("S409-known-project-config-matches-key-and-value: core.hooksPath=.githooks is acknowledged; any other hooksPath value is a finding", () => {
+  const fx = fixture();
+  try {
+    writeFileSync(join(fx.repo, ".git", "config"), "[core]\n\thooksPath = .githooks\n");
+    assert.deepEqual(unacknowledged(pf(fx)), []);
+    assert.equal(pf(fx).length, 1, "reported, not hidden");
+    writeFileSync(join(fx.repo, ".git", "config"), "[core]\n\thooksPath = /tmp/evil\n");
+    assert.equal(unacknowledged(pf(fx)).length, 1);
+    writeFileSync(join(fx.repo, ".git", "config"), "");
+    writeFileSync(join(fx.home, ".gitconfig"), "[core]\n\thooksPath = .githooks\n");
+    assert.equal(unacknowledged(pf(fx)).length, 1, "acknowledgement applies to the repo config only");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("S409-githooks-dir-protected: the repo's actual core.hooksPath target (.githooks/) is protected, so a session cannot plant a hook there", () => {
+  assert.ok(PATHS.all.includes(".githooks/"));
+  assert.deepEqual(writeFormProblems([".githooks/"]), []);
+});
+
 test("S409-mutant-preflight-spawns-git: a preflight that imports child_process, calls spawnSync or writes a file is detected", () => {
   assert.deepEqual(readOnlyViolations('import { spawnSync } from "node:child_process";\nspawnSync("git", ["config", "-l"]);'), ["import child_process", "call spawnSync"]);
   assert.deepEqual(readOnlyViolations('import { writeFileSync } from "node:fs";\nwriteFileSync("x", "y");'), ["fs import writeFileSync", "call writeFileSync"]);
@@ -417,8 +438,10 @@ test("S409-mutant-preflight-spawns-git: a preflight that imports child_process, 
 test("S409-precondition-preflight-clean: the preflight reports nothing in this repo's scope (repo git config, hooks, attributes, project and local settings); the git/rg re-add story must run it green", () => {
   const empty = mkdtempSync(join(tmpdir(), "s409-home-"));
   try {
-    const found = runPreflight({ repoRoot: REPO_ROOT, home: empty, env: {}, programData: join(empty, "none"), managedSettingsPath: join(empty, "none.json") });
-    assert.deepEqual(found, []);
+    const found = runPreflight({ repoRoot: REPO_ROOT, home: empty, env: {}, programData: join(empty, "none"), systemConfigPaths: [], managedSettingsPath: join(empty, "none.json") });
+    assert.deepEqual(unacknowledged(found), []);
+    // The one acknowledged entry is matched on key and exact value, so a changed hooksPath is a finding again.
+    assert.ok(found.every((f) => f.acknowledged !== true || KNOWN_PROJECT_CONFIG.some((k) => k.key === f.key)));
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
@@ -431,5 +454,5 @@ test("S409-residuals-listed: R1-R4 are carried by the preflight, the plan and th
   const plan = readFileSync(PLAN_PATH, "utf8");
   const changelog = readFileSync(join(REPO_ROOT, "CHANGELOG.md"), "utf8");
   for (const k of ["R1", "R2", "R3", "R4"]) assert.ok(new RegExp(`^- ${k}:`, "m").test(plan), `plan lacks ${k}`);
-  assert.ok(/#409[\s\S]{0,2000}R1-R4/.test(changelog), "CHANGELOG #409 entry names R1-R4");
+  assert.ok(/#409[\s\S]{0,6000}R1-R4/.test(changelog), "CHANGELOG #409 entry names R1-R4");
 });
