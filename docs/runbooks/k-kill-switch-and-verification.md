@@ -18,6 +18,10 @@ npm run qa:k-readiness
 
 It prints one row per precondition (PASS, FAIL or MISSING) and exits 1 unless every row passes. It is red by design until K is wired. Open blockers come from the `k-blocker` Issue label; if the label is missing or `gh` is unavailable the row fails.
 
+Readiness checks every installed Claude Code binary (the standalone install, the newest versions entry, the newest VS Code, VS Code Insiders and Cursor extension binaries, and `claude` on PATH), and the final line of `qa:cc-extraction-covers-judged` names each one with its version; a THOTH_CLAUDE_BIN override is checked in addition and marked `[override]`. Each must pass on its own, so a stale binary cannot hide a newer one.
+
+CLI drift: when `qa:cc-extraction-covers-judged` FAILs on a new version, re-vendor and re-judge (Issue #463) with the human reviewing the judgment. Do not bump the pin by hand.
+
 Disclosed residual: the blocker row accepts an empty list only when two independent `gh` queries agree. If GitHub's list endpoints show list lag on both at once (for example right after you edit labels), a stale empty answer could pass. Re-run readiness after any label edit, and again just before wiring.
 
 ## 3. Build the settings text, never by hand
@@ -56,7 +60,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 
 ## 7. Residuals not measured here
 
-- Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. The version measured on this machine is 2.1.267, which predates that. Measure before upgrading.
+- Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. Governed sessions here run the VS Code extension's native binary, 2.1.289, which is past that default, so the residual is live, not a future upgrade risk. Issue #464 is the open K blocker that measures it; K does not activate until it is resolved.
 - The blocker row's joint-lag residual is described in section 2.
 
 ## 8. Kill switch (rollback)

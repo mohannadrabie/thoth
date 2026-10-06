@@ -75,8 +75,24 @@ test("k-runbook: K wiring steps include fixture regeneration and retiring the re
   assert.ok(text.includes("never by hand"));
 });
 
-test("k-runbook: lists the mods residual with the measured local version", () => {
-  assert.ok(text.includes("2.1.287"));
-  assert.ok(text.includes("2.1.267"));
-  assert.ok(text.toLowerCase().includes("mods"));
+test("k-runbook: mods residual names the governed-session binary 2.1.289, past the 2.1.287 default, and open blocker #464", () => {
+  const l = lines.find((x) => x.toLowerCase().includes("mods") && x.includes("2.1.287"));
+  assert.ok(l !== undefined, "a mods line naming 2.1.287 exists");
+  assert.ok(l.includes("2.1.289"), "names the version governed sessions run");
+  assert.ok(/VS Code extension/i.test(l), "names the extension native binary");
+  assert.ok(l.includes("#464"), "references the open K blocker #464");
+  assert.ok(!/against local 2.1.267|predates that/.test(l), "the old local-2.1.267 claim is gone");
+});
+
+test("k-runbook: CLI drift line sends a failing version to re-vendor and re-judge (#463), human-reviewed, pin never bumped by hand", () => {
+  const l = lines.find((x) => x.includes("qa:cc-extraction-covers-judged") && x.includes("#463"));
+  assert.ok(l !== undefined, "a drift line cites the check and #463");
+  assert.ok(/re-vendor/i.test(l) && /re-judge/i.test(l));
+  assert.ok(/human/i.test(l) && /(never|not|do not)[^.]*bump/i.test(l));
+});
+
+test("k-runbook: readiness checks every installed Claude Code binary and its final line names each one", () => {
+  const l = lines.find((x) => /every installed Claude Code binary/i.test(x));
+  assert.ok(l !== undefined, "states every installed binary is checked");
+  assert.ok(/final line/i.test(l) && /names? each/i.test(l));
 });
