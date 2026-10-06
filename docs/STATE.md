@@ -5,7 +5,7 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 
 ## Update 2026-10-05 (newest): #452 write-deny extraction check built on `s308/452-build`
 
-- The check now fails in both directions and on a version change; the K readiness row `CC-extraction-covers-judged (#452)` reads PASS on 2.1.267 (31/31 user, 12/12 project). Judgment file unchanged. Review chain (code-reviewer, cross-domain-reviewer, red-team on the skip/require seam) and the human's merge are next. Plan `docs/plans/s308-452-extractor-plan-2026-10-05.md`.
+- The check fails in both directions, on a version change, and now checks EVERY installed Claude Code binary (#462), naming each on its final line. On this machine the K readiness row `CC-extraction-covers-judged (#452)` FAILs: the running VS Code extension binary is 2.1.289 (user 33/31: `localSettings`, `projectSettings` unjudged) against the judged 2.1.267. It stays red until the human re-judges (#463); the local `installed-live` test is red for the same reason. Judgment file unchanged. The certifier is on the protected-path list (117). Runbook mods residual corrected (#464 open). Review chain and the human's merge are next. Plan `docs/plans/s308-452-extractor-plan-2026-10-05.md`.
 
 ## Resume point — 2026-10-05, after PR #453 merged (newest): S7 K blockers on master; K waits for the human
 
