@@ -44,8 +44,10 @@ Call counts are estimates; the ledger is the real count.
 | P-K1c | matcher scope: the proposed matcher is an unanchored regex and also matches BashOutput (red-team s308-K0 #6); call BashOutput in the wired clone, then repeat with the anchored form `^(Bash\|Monitor\|PowerShell\|RemoteTrigger)$\|^mcp__` | 2 | record which tools the gate sees under each form; the anchored form is adopted only if it still covers every intended token |
 | P-K2 | inside a subagent: Bash, PowerShell, mcp__; Monitor and RemoteTrigger refused | 5 | gate fires in the subagent for all three; both refusals carry the gate's text |
 | P-K2b | Bash inside a nested subagent (a subagent that spawns a subagent) and inside one non-general-purpose agent type (a review agent); P1 measured only a general-purpose subagent | 2 | gate fires at both depths and agent types |
+| P-K2c | parallel PreToolUse hooks: the org-synced plugins' PreToolUse[Bash] guard runs in parallel with the gate, and K5 sees only project settings; wire a second hook in the clone's user scope that returns `updatedInput` rewriting `ls` into a gated command, and observe what runs (red-team s308-K0 #4) | 2 | the gate's verdict applies to the command that actually runs; otherwise K is blocked and the question returns to the human |
 | P-K3 | #406: Edit and Write of the settings env block (NODE_OPTIONS) refused | 2 | both refused; settings file hash unchanged |
 | P-K4 | `Edit(~/.claude/settings.json)` on the real user path (hash before and after, no content read); Write under bypassPermissions; NotebookEdit; MultiEdit; linked-worktree targets in `--form=relative` and `--form=absolute` | 6 | all refused, hashes unchanged; the form that is refused becomes #442's answer (if neither, #442 stays disclosed) |
+| P-K4 form note | P-K4's absolute candidate is the corrected `--form=absolute` output (`Edit(//c/...)`, #460 fix 9452cf4), not the round-1 `//C:/` form | 0 | the form P-K4 refuses is #442's answer |
 | Case spike | every lowercased Edit-deny entry (list generated at run time from the merge output, not typed), tried with a case-changed path | about 4 to 6 | each case-changed write refused on Windows; see residual R1 |
 | Alias probe | PreToolUse `tool_name` as logged by `log-hook.mjs` for SendMessage, Workflow, PowerShell, Monitor, RemoteTrigger | 2 to 3 (most names come free from P-K2's logs) | each name recorded; any name not in the K matcher or the residual table returns to the human |
 | P-K5 | kill switch: entry removed from outside; a running session keeps the old hooks; a new session is unwired; `disableAllHooks` measured; `--setting-sources user,local` measured | 5 | measured results replace the runbook's "Unmeasured until P-K5" section |
@@ -56,6 +58,8 @@ Call counts are estimates; the ledger is the real count.
 Total estimate: about 41 to 46 calls, USD 1.00 to 1.40 at the measured USD 0.024 to 0.037 per call.
 
 ## 4. Residuals stated before running
+
+- R0. #444 (Program Files writability on Windows) is a human-run probe with no model spend. The human runs it at activation, before stage 2, and the result is recorded in the stage 1 report. It is not a P-K row because it needs no session.
 
 - R1. The case spike's Linux leg cannot run here: this machine has only the `docker-desktop` WSL distro and no general Linux host. The Linux result stays disclosed unless the human runs the same probe on a Linux machine.
 - R1b. The macOS extended-ACL probe (K plan line 105, red-team #428 R4) needs a Mac. K covers only this Windows host today, so the probe stays a disclosed residual; it becomes a precondition before K is wired on any macOS host.
