@@ -1,7 +1,7 @@
 {
   "scope": "s308-K0",
   "tier": "CRITICAL",
-  "reviewRoundsSinceClean": 1,
+  "reviewRoundsSinceClean": 0,
   "reviewRoundsTotal": 1,
   "humanRulingRequired": false,
   "councilHeld": false,
@@ -815,5 +815,6 @@
       "sinceClean": 0,
       "total": 2
     }
-  }
+  },
+  "note_2026-10-05-k0": "s308-K0 and s308-452 (integrated on s308/k-stage0): round 1 REWORK each (red-team no-go #458, #462); round 2 clean (red-team go, app-security and cross-domain APPROVE-WITH-CONDITIONS); round-3 fix-now for #465 and LOW hardening routed, re-confirm by red-team and app-security on the delta only."
 }
