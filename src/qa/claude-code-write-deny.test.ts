@@ -70,7 +70,7 @@ test("CC-installed-extraction-fully-judged: the list extracted from the installe
 // ---- #452: both directions plus the installed version ------------------------------------------------------------------
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { checkExtraction, coverage, discoverClaudeBinaries, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
@@ -193,7 +193,7 @@ test("CC-extraction-covers-judged/cli-exit-codes: exit 0 PASS / 1 FAIL / 3 SKIPP
   // the real script, spawned: no binary -> 3, required -> 1
   const run = (extra: NodeJS.ProcessEnv): { status: number | null; out: string } => {
     const home = isolatedHome();
-    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, PATH: "", THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
+    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), PATH: "", THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
     return { status: r.status, out: r.stdout.trim().split(/\r?\n/).at(-1) ?? "" };
   };
   const s = run({});
@@ -234,25 +234,66 @@ test("CC-extraction-covers-judged/every-installed-binary-checked: a stale ~/.loc
   assert.deepEqual(r.binaries.map((b) => b.status).sort(), ["FAIL", "PASS"]);
 });
 
-test("CC-extraction-covers-judged/discovery-locations: local bin, newest versions entry, newest extension per editor, PATH, and the override in addition", () => {
+test("CC-extraction-covers-judged/discovery-locations: local bin, EVERY versions entry, EVERY extension per editor, Desktop bundles, PATH, and the override in addition", () => {
   const j = judged();
   const home = isolatedHome();
   const mk = (rel: string): string => place(home, rel, names(j.user), names(j.project));
   const local = mk(".local/bin/claude.exe");
-  mk(".local/share/claude/versions/2.1.9");
-  const newestVer = mk(".local/share/claude/versions/2.1.100");
-  mk(".vscode/extensions/anthropic.claude-code-2.1.9-win32-x64/resources/native-binary/claude.exe");
-  const vs = mk(".vscode/extensions/anthropic.claude-code-2.1.100-win32-x64/resources/native-binary/claude.exe");
+  const v9 = mk(".local/share/claude/versions/2.1.9");
+  const v100 = mk(".local/share/claude/versions/2.1.100");
+  const vs9 = mk(".vscode/extensions/anthropic.claude-code-2.1.9-win32-x64/resources/native-binary/claude.exe");
+  const vs100 = mk(".vscode/extensions/anthropic.claude-code-2.1.100-win32-x64/resources/native-binary/claude.exe");
   const ins = mk(".vscode-insiders/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
   const cur = mk(".cursor/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
+  const d1 = mk("AppData/Roaming/Claude/claude-code/2.1.284/3f4bed3e44ad/claude.exe");
+  const d2 = mk("AppData/Local/Packages/Claude_abc123/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe");
   const pathDir = join(home, "pathbin");
   const onPath = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
   const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
-  const found = discoverClaudeBinaries({ HOME: home, USERPROFILE: home, PATH: pathDir, THOTH_CLAUDE_BIN: override });
-  assert.deepEqual(found.map((b) => b.path).sort(), [local, newestVer, vs, ins, cur, onPath, override].sort());
+  const base = { HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local") };
+  const found = discoverClaudeBinaries({ ...base, PATH: pathDir, THOTH_CLAUDE_BIN: override });
+  assert.deepEqual(found.map((b) => b.path).sort(), [local, v9, v100, vs9, vs100, ins, cur, d1, d2, onPath, override].sort());
   assert.deepEqual(found.filter((b) => b.override).map((b) => b.path), [override]);
-  assert.deepEqual(discoverClaudeBinaries({ HOME: home, USERPROFILE: home, PATH: "" }).length, 5, "override absent: five found without PATH");
+  assert.equal(discoverClaudeBinaries({ ...base, PATH: "" }).length, 9, "override and PATH absent: nine found");
   assert.deepEqual(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: "" }), []);
+});
+
+test("CC-extraction-covers-judged/desktop-bundled-binary-checked: a Claude Desktop bundled binary that differs fails the check, named", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const env = { HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), PATH: "" };
+  const ok = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const roaming = place(home, "AppData/Roaming/Claude/claude-code/2.1.284/3f4bed3e44ad/claude.exe", names(j.user), names(j.project));
+  const msix = place(home, "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe", names(j.user), names(j.project));
+  const r = checkExtraction(env, versionByPath({ [ok]: j.claudeCodeVersion, [roaming]: j.claudeCodeVersion, [msix]: "2.1.286" }));
+  assert.equal(r.status, "FAIL");
+  assert.ok(r.reasons.join("; ").includes(msix));
+  assert.deepEqual(r.binaries.map((b) => b.path).sort(), [ok, roaming, msix].sort());
+});
+
+test("CC-extraction-covers-judged/every-entry-not-newest-only: a downgraded active extension next to an obsolete newer judged one still FAILs", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const obsoleteNewer = place(home, ".vscode/extensions/anthropic.claude-code-2.1.300-win32-x64/resources/native-binary/claude.exe", names(j.user), names(j.project));
+  const active = place(home, ".vscode/extensions/anthropic.claude-code-2.1.250-win32-x64/resources/native-binary/claude.exe", names(j.user), names(j.project));
+  const oldVersionsEntry = place(home, ".local/share/claude/versions/2.1.240", names(j.user), names(j.project));
+  const newVersionsEntry = place(home, ".local/share/claude/versions/2.1.267", names(j.user), names(j.project));
+  const r = checkExtraction(env, versionByPath({ [obsoleteNewer]: j.claudeCodeVersion, [active]: "2.1.250", [oldVersionsEntry]: "2.1.240", [newVersionsEntry]: j.claudeCodeVersion }));
+  assert.equal(r.status, "FAIL");
+  const failing = r.binaries.filter((b) => b.status === "FAIL").map((b) => b.path).sort();
+  assert.deepEqual(failing, [active, oldVersionsEntry].sort());
+});
+
+test("CC-extraction-covers-judged/discovery skips relative PATH entries", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const dir = join(home, "relbin");
+  place(home, "relbin/claude.exe", names(j.user), names(j.project));
+  const rel = relative(process.cwd(), dir);
+  assert.ok(!isAbsolute(rel), "fixture is a relative path");
+  assert.deepEqual(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: rel }), []);
+  assert.equal(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: dir }).length, 1, "the same directory as an absolute entry is found");
 });
 
 test("CC-extraction-covers-judged/final-line-names-binary: the final line names every binary path checked with its version, and marks the override", () => {

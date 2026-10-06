@@ -48,7 +48,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 
 ## 5. Recording the K1 approval
 
-`qa:k-readiness` passes the K1 row only for a row in docs/decisions.md (then docs/decisions-archive.md) whose decision text starts with `K1 approved` (bold is optional) and whose Human ratified cell starts with Y. The house form is accepted, for example the cell `Y (human, 2026-10-06: "approved")`. A row that starts `K1 declined` or `K1 deferred`, or a Human ratified cell that is not Y, never passes. The Manager writes the row; the cell records the human's own words.
+`qa:k-readiness` passes the K1 row only for a row in docs/decisions.md (then docs/decisions-archive.md) whose decision text starts with `K1 approved` (bold is optional) and whose Human ratified cell is exactly `Y` or the house form `Y (human, YYYY-MM-DD: "<words>")`, for example `Y (human, 2026-10-06: "approved")`. Any other cell never passes: `YES`, `Y-pending`, `Y (pre-approved ...)` and `Y (delegated ...)` are rejected (a delegation is not the human's own act, #465). A row that starts `K1 declined` or `K1 deferred` never passes. The same cell rule applies to the K4 row. The Manager writes the row; the cell records the human's own words.
 
 ## 6. Steps in the K wiring commit (human-approved)
 
@@ -61,6 +61,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 ## 7. Residuals not measured here
 
 - Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. Governed sessions here run the VS Code extension's native binary, 2.1.289, which is past that default, so the residual is live, not a future upgrade risk. Issue #464 is the open K blocker that measures it; K does not activate until it is resolved.
+- Claude Desktop's bundled binaries (the `claude-code/<version>/<hash>/` directories under the Roaming Claude folder and under the MSIX package's redirected copy) are checked by readiness but their directories are unprotected: the MSIX package name carries a machine-specific suffix, so the protected-path list cannot name it. A session able to write there could plant a binary the certifier would run.
 - The blocker row's joint-lag residual is described in section 2.
 
 ## 8. Kill switch (rollback)

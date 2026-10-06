@@ -237,3 +237,28 @@ test("k-readiness: script rows bind to fixed file paths, not npm script names", 
   assert.equal(new Set(SCRIPT_ROWS.map((r) => r.file)).size, SCRIPT_ROWS.length);
   assert.ok(SCRIPT_ROWS.every((r) => r.file.startsWith("src/qa/") && r.file.endsWith(".ts")));
 });
+
+// #465 (red-team round 2 finding 1): the Human-ratified cell is a bare Y or the house form only; delegated and pre-approved forms never pass.
+test("k-readiness: K1 fails on a delegated, pre-approved or hyphen-suffixed Human cell", () => {
+  const k1 = (cell: string): string => `| 2026-10-06 | **K1 approved** (#308 story K) | Manager | none | ${cell} | 2026-11-06 |`;
+  const k4 = (cell: string): string => `| 2026-10-06 | **THOTH-ADR-0003 accepted** | Manager | none | ${cell} | 2026-11-06 |`;
+  for (const bad of ["Y (pre-approved)", "Y (pre-approved; human items left open)", "Y (delegated: human said go)", "Y-pending", "YES", "y", "Y (Pre-Approved)", 'Y (human, 2026-10-06: "pre-approved by the Manager")', "Y (human)"]) {
+    assert.equal(k1Row(withDecisions(k1(bad))).status, "FAIL", `K1 ${bad}`);
+    assert.equal(k4Row(withDecisions(k4(bad))).status, "FAIL", `K4 ${bad}`);
+  }
+  for (const good of ["Y", 'Y (human, 2026-10-06: "approved")']) {
+    assert.equal(k1Row(withDecisions(k1(good))).status, "PASS", `K1 ${good}`);
+    assert.equal(k4Row(withDecisions(k4(good))).status, "PASS", `K4 ${good}`);
+  }
+});
+// #465 / red-team round 2 finding 4: the CC row carries the whole final line, so every checked binary path and version is visible.
+test("k-readiness: CC row shows every checked binary path", () => {
+  const paths = Array.from({ length: 6 }, (_, i) => `C:/Users/someone/.vscode/extensions/anthropic.claude-code-2.1.${String(280 + i)}-win32-x64/resources/native-binary/claude.exe (version 2.1.${String(280 + i)}, user 33/31, project 12/12) FAIL`);
+  const finalLine = `CC-extraction-covers-judged: FAIL some reason | checked: ${paths.join("; ")}`;
+  assert.ok(finalLine.length > 600);
+  const rows = runReadiness(deps({ node: { "src/qa/cc-extraction-covers-judged.ts": { status: 1, stdout: `  detail one\n  detail two\n${finalLine}\n`, stderr: "" } } }));
+  const cc = rows.find((r) => r.id.startsWith("CC-extraction-covers-judged"))!;
+  assert.equal(cc.status, "FAIL");
+  for (const p of paths) assert.ok(cc.detail.includes(p), `row shows ${p.slice(0, 60)}...`);
+  assert.ok(cc.detail.includes(finalLine));
+});

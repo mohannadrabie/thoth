@@ -253,6 +253,13 @@ function namedPaths(root: string): string[] {
     "~/.claude/skills/",
     "~/.claude/agents/",
     "~/.claude/plugins/", // plugin skills and commands load from here
+    // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from. The two Claude
+    // Desktop bundle roots are NOT listed: the MSIX package name carries a machine-specific suffix (runbook residual).
+    "~/.local/bin/",
+    "~/.local/share/claude/",
+    "~/.vscode/extensions/",
+    "~/.vscode-insiders/extensions/",
+    "~/.cursor/extensions/",
     // #446 (S7, Manager ruling on the #428 cross-domain finding): login-shell profile files. A session that can write one can
     // prepend a planted PATH directory for its next shell. Residual R1 of #409 is now owned by #429/#446 (this list).
     "~/.bashrc",
@@ -343,7 +350,7 @@ export function worktreeExtraPaths(root: string, read: Reader = readReal): strin
 export type WorktreeForm = "relative" | "absolute";
 
 /** The body after `Edit(//` for an absolute path. Vendor permissions doc: on Windows, paths are normalized to POSIX form before matching
- * (`C:Usersalice` becomes `/c/Users/alice`, so the rule is `//c/Users/alice`): lower-case drive letter, no colon (#460).
+ * (`C:\Users\alice` becomes `/c/Users/alice`, so the rule is `//c/Users/alice`): lower-case drive letter, no colon (#460).
  * Elsewhere it is the absolute path without its leading slash. */
 export function absoluteEditBody(abs: string, platform: string = process.platform): string {
   const posix = abs.split("\\").join("/");

@@ -130,3 +130,13 @@ test("protected-path-list: K certifiers are protected paths", () => {
     assert.ok(all.includes(want), `${want} is on the protected list`);
   }
 });
+
+// App-security round 2 finding 1 (refs #456): discovery EXECUTES binaries from these install directories (`--version`), so a session
+// able to write there could plant one the certifier would run. The two Claude Desktop paths stay unprotected (machine-specific MSIX suffix).
+test("protected-path-list: Claude Code install dirs are protected", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const all = protectedPaths(root).all;
+  for (const want of ["~/.local/bin/", "~/.local/share/claude/", "~/.vscode/extensions/", "~/.vscode-insiders/extensions/", "~/.cursor/extensions/"]) {
+    assert.ok(all.includes(want), `${want} is on the protected list`);
+  }
+});

@@ -66,6 +66,7 @@ test("k-runbook: names the exact K1 Human-ratified cell form", () => {
   assert.ok(text.includes("Human ratified"), "names the cell");
   assert.ok(text.includes('Y (human, 2026-10-06: "approved")'), "the exact accepted cell example");
   assert.ok(text.includes("docs/decisions-archive.md"), "says the archive is read too");
+  assert.ok(text.includes("Y (pre-approved") && text.includes("Y (delegated") && text.includes("#465"), "says pre-approved and delegated cells are rejected");
 });
 
 test("k-runbook: K wiring steps include fixture regeneration and retiring the real-run file", () => {
@@ -95,4 +96,10 @@ test("k-runbook: readiness checks every installed Claude Code binary and its fin
   const l = lines.find((x) => /every installed Claude Code binary/i.test(x));
   assert.ok(l !== undefined, "states every installed binary is checked");
   assert.ok(/final line/i.test(l) && /names? each/i.test(l));
+});
+
+test("k-runbook: states the Claude Desktop bundle paths are an unprotected residual (machine-specific MSIX suffix)", () => {
+  const l = lines.find((x) => /Claude Desktop/i.test(x) && /unprotected/i.test(x));
+  assert.ok(l !== undefined, "a residual line about the Desktop bundle paths exists");
+  assert.ok(/MSIX/.test(l) && /suffix/i.test(l) && l.includes("claude-code"));
 });

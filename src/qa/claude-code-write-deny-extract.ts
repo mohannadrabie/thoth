@@ -10,7 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ANCHOR = '"shell-snapshots","session-env","plugins"';
@@ -34,7 +34,7 @@ export function locateClaudeBinary(env: NodeJS.ProcessEnv = process.env): string
 
 export interface FoundBinary {
   path: string;
-  /** Where it was found: override, local-bin, versions, vscode, vscode-insiders, cursor, PATH. */
+  /** Where it was found: override, local-bin, versions, vscode, vscode-insiders, cursor, desktop, PATH. */
   source: string;
   /** True only for THOTH_CLAUDE_BIN, which is checked in addition to the discovered ones, never instead. */
   override: boolean;
@@ -55,7 +55,7 @@ const isFile = (p: string): boolean => {
 };
 const firstFile = (dir: string): string | undefined => [join(dir, "claude.exe"), join(dir, "claude")].find(isFile);
 
-/** #462: EVERY installed Claude Code binary, not the first one found. Order: override, local bin, newest versions/ entry, newest extension per editor, PATH (resolved without a shell). */
+/** #462: EVERY installed Claude Code binary, not the first one found. Order: override, local bin, every versions/ entry, every extension per editor, Claude Desktop bundles, absolute PATH entries (resolved without a shell). */
 export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): FoundBinary[] {
   const home = env["USERPROFILE"] || env["HOME"] || homedir();
   const out: FoundBinary[] = [];
@@ -69,27 +69,29 @@ export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): Fo
   };
   add(env["THOTH_CLAUDE_BIN"], "override", true);
   add(firstFile(join(home, ".local", "bin")), "local-bin");
-  try {
-    const dir = join(home, ".local", "share", "claude", "versions");
-    const newest = readdirSync(dir).filter((n) => /^\d+\.\d+\.\d+$/.test(n)).sort(cmpVersion).at(-1);
-    if (newest !== undefined) add(join(dir, newest), "versions");
-  } catch {
-    // no versions directory
-  }
-  for (const [root, source] of [[".vscode", "vscode"], [".vscode-insiders", "vscode-insiders"], [".cursor", "cursor"]] as const) {
+  const list = (dir: string): string[] => {
     try {
-      const dir = join(home, root, "extensions");
-      const cands = readdirSync(dir)
-        .map((n) => ({ n, v: /^anthropic\.claude-code-(\d+\.\d+\.\d+)/.exec(n)?.[1] }))
-        .filter((c): c is { n: string; v: string } => c.v !== undefined && firstFile(join(dir, c.n, "resources", "native-binary")) !== undefined)
-        .sort((a, b) => cmpVersion(a.v, b.v));
-      const best = cands.at(-1);
-      if (best !== undefined) add(firstFile(join(dir, best.n, "resources", "native-binary")), source);
+      return readdirSync(dir);
     } catch {
-      // no extensions directory
+      return []; // directory absent
     }
+  };
+  // every versions/ entry, not the newest only (a downgraded active binary must not hide behind an obsolete newer one)
+  const versions = join(home, ".local", "share", "claude", "versions");
+  for (const n of list(versions).filter((x) => /^\d+\.\d+\.\d+$/.test(x)).sort(cmpVersion)) add(join(versions, n), "versions");
+  for (const [root, source] of [[".vscode", "vscode"], [".vscode-insiders", "vscode-insiders"], [".cursor", "cursor"]] as const) {
+    const dir = join(home, root, "extensions");
+    for (const n of list(dir).filter((x) => x.startsWith("anthropic.claude-code-")).sort()) add(firstFile(join(dir, n, "resources", "native-binary")), source);
   }
-  for (const d of (env["PATH"] ?? env["Path"] ?? "").split(delimiter)) if (d !== "") add(firstFile(d), "PATH");
+  // Claude Desktop bundles: <root>/<version>/<hash>/claude(.exe), classic install and the MSIX package's redirected AppData
+  const roaming = env["APPDATA"] || join(home, "AppData", "Roaming");
+  const local = env["LOCALAPPDATA"] || join(home, "AppData", "Local");
+  const desktopRoots = [join(roaming, "Claude", "claude-code")];
+  const packages = join(local, "Packages");
+  for (const p of list(packages).filter((x) => x.startsWith("Claude_"))) desktopRoots.push(join(packages, p, "LocalCache", "Roaming", "Claude", "claude-code"));
+  for (const root of desktopRoots) for (const v of list(root)) for (const h of list(join(root, v))) add(firstFile(join(root, v, h)), "desktop");
+  // PATH: absolute entries only (a relative entry would resolve against whatever the current directory is)
+  for (const d of (env["PATH"] ?? env["Path"] ?? "").split(delimiter)) if (d !== "" && isAbsolute(d)) add(firstFile(d), "PATH");
   return out;
 }
 

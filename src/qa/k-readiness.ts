@@ -171,6 +171,11 @@ export function scriptRow(deps: Deps, row: { id: string; script: string; file: s
   if (typeof cmd !== "string") return { id, status: "MISSING", detail: `npm script ${script} does not exist yet` };
   if (cmd !== `node ${file}`) return { id, status: "FAIL", detail: `npm script ${script} is ${JSON.stringify(cmd)}, not the fixed instrument "node ${file}" (repointed?)` };
   const r = deps.run("node", [file]);
+  if (script === "qa:cc-extraction-covers-judged") {
+    // #465 (red-team round 2 finding 4): its final line names every checked binary path and version; never cut it.
+    const last = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").at(-1) ?? firstLines(r, 1);
+    return r.status === 0 ? { id, status: "PASS", detail: last } : { id, status: "FAIL", detail: `${file} exited ${String(r.status)}: ${last}` };
+  }
   if (r.status === 0) return { id, status: "PASS", detail: firstLines(r, 1) };
   return { id, status: "FAIL", detail: `${file} exited ${String(r.status)}: ${firstLines(r)}` };
 }
@@ -197,8 +202,9 @@ function allDecisionRows(deps: Deps): DecisionRow[] | undefined {
   return [...parseDecisionRows(active), ...parseDecisionRows(deps.readFile("docs/decisions-archive.md") ?? "")];
 }
 
-/** The human-ratified cell: Y alone or the house form `Y (human, 2026-10-05: "...")`. */
-const isHumanY = (cell: string): boolean => /^Y\b/.test(cell);
+/** The human-ratified cell (#465): exactly `Y`, or the house form `Y (human, YYYY-MM-DD: "<words>")`. Anything else never passes: `YES`,
+ * `Y-<x>`, `Y (pre-approved ...)`, `Y (delegated ...)` (a delegation is not the human's own act). */
+const isHumanY = (cell: string): boolean => !/pre-approved|delegated/i.test(cell) && (cell === "Y" || /^Y \(human, \d{4}-\d{2}-\d{2}: ".+"\)$/.test(cell));
 
 /** K1: a decisions row whose decision text STARTS with "K1 approved" (bold optional) and whose Human ratified cell starts with Y.
  * A "K1 declined" or "K1 deferred" row never passes. The row form is documented in the runbook. */
