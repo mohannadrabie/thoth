@@ -1,9 +1,19 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-05, session `s308/k-stage0` (K stage 0 and #452 review-complete, not merged; nothing wired)
+**Last updated:** 2026-10-06, session `s308/k-blockers` (PRs #468 and #469 merged; K blockers in progress; nothing wired)
 
-## Resume point — 2026-10-05, session `s308/k-stage0` (newest): K stage 0 and #452 review-complete; not merged; nothing wired
+## Resume point — 2026-10-06, session `s308/k-blockers` (newest): K blockers in progress; nothing wired
+
+- **Merged by the human:** PR #468 (K stage 0 and #452) and PR #469 (#463/#464 prep, plan docs/plans/s308-463-464-prep-2026-10-06.md) to `master` at `6a780a4`. CI green on that commit (run 37547346222).
+- **This session:** branch `s308/k-blockers`, cut from `6a780a4`. ONE PR. It clears the K blockers that need code (#463 with #467, #455, #466, the decisions archive sweep) and stops before any live probe or wiring.
+- **#308:** open. Commit subjects and bodies must never put fix/close/resolve in front of #308.
+- **Open `k-blocker` Issues:** #438, #442, #444, #455, #463, #464, #467.
+
+**Single next action:** the human answers the session rulings (#467 certified binaries, the 2.1.289 judgments, #464 option, the binary extractions), then the builds start.
+
+## Prior entry (superseded above): 2026-10-05, session `s308/k-stage0`: K stage 0 and #452 review-complete; merged as PR #468
+
 
 - **Branch:** `s308/k-stage0` (local, not pushed). ONE PR for the session; push and merge are the human's. Commit subjects must never start with fix/close/resolve followed by #308.
 - **Built and review-complete (CRITICAL, 3 rounds; REWORK rounds: 1 each, then clean):**
