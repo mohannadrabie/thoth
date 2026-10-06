@@ -254,7 +254,7 @@ function namedPaths(root: string): string[] {
     "~/.claude/agents/",
     "~/.claude/plugins/", // plugin skills and commands load from here
     // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from. The two Claude
-    // Desktop bundle roots are NOT listed: the MSIX package name carries a machine-specific suffix (runbook residual).
+    // Desktop bundle roots are not yet protected and discovery executes from them; Issue #466 will protect both roots and hash-and-flag instead of executing (runbook residual).
     "~/.local/bin/",
     "~/.local/share/claude/",
     "~/.vscode/extensions/",
