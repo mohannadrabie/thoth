@@ -251,3 +251,14 @@ test("k-readiness: K1 fails on a delegated, pre-approved or hyphen-suffixed Huma
     assert.equal(k4Row(withDecisions(k4(good))).status, "PASS", `K4 ${good}`);
   }
 });
+// #465 / red-team round 2 finding 4: the CC row carries the whole final line, so every checked binary path and version is visible.
+test("k-readiness: CC row shows every checked binary path", () => {
+  const paths = Array.from({ length: 6 }, (_, i) => `C:/Users/someone/.vscode/extensions/anthropic.claude-code-2.1.${String(280 + i)}-win32-x64/resources/native-binary/claude.exe (version 2.1.${String(280 + i)}, user 33/31, project 12/12) FAIL`);
+  const finalLine = `CC-extraction-covers-judged: FAIL some reason | checked: ${paths.join("; ")}`;
+  assert.ok(finalLine.length > 600);
+  const rows = runReadiness(deps({ node: { "src/qa/cc-extraction-covers-judged.ts": { status: 1, stdout: `  detail one\n  detail two\n${finalLine}\n`, stderr: "" } } }));
+  const cc = rows.find((r) => r.id.startsWith("CC-extraction-covers-judged"))!;
+  assert.equal(cc.status, "FAIL");
+  for (const p of paths) assert.ok(cc.detail.includes(p), `row shows ${p.slice(0, 60)}...`);
+  assert.ok(cc.detail.includes(finalLine));
+});

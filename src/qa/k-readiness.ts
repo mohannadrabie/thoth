@@ -171,6 +171,11 @@ export function scriptRow(deps: Deps, row: { id: string; script: string; file: s
   if (typeof cmd !== "string") return { id, status: "MISSING", detail: `npm script ${script} does not exist yet` };
   if (cmd !== `node ${file}`) return { id, status: "FAIL", detail: `npm script ${script} is ${JSON.stringify(cmd)}, not the fixed instrument "node ${file}" (repointed?)` };
   const r = deps.run("node", [file]);
+  if (script === "qa:cc-extraction-covers-judged") {
+    // #465 (red-team round 2 finding 4): its final line names every checked binary path and version; never cut it.
+    const last = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").at(-1) ?? firstLines(r, 1);
+    return r.status === 0 ? { id, status: "PASS", detail: last } : { id, status: "FAIL", detail: `${file} exited ${String(r.status)}: ${last}` };
+  }
   if (r.status === 0) return { id, status: "PASS", detail: firstLines(r, 1) };
   return { id, status: "FAIL", detail: `${file} exited ${String(r.status)}: ${firstLines(r)}` };
 }
