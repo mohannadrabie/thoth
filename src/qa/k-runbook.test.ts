@@ -92,14 +92,23 @@ test("k-runbook: CLI drift line sends a failing version to re-vendor and re-judg
   assert.ok(/human/i.test(l) && /(never|not|do not)[^.]*bump/i.test(l));
 });
 
-test("k-runbook: readiness checks every installed Claude Code binary and its final line names each one", () => {
-  const l = lines.find((x) => /every installed Claude Code binary/i.test(x));
-  assert.ok(l !== undefined, "states every installed binary is checked");
+test("k-runbook: readiness checks every Claude Code binary in the enumerated install locations and its final line names each one", () => {
+  const l = lines.find((x) => /every Claude Code binary in the enumerated install locations/i.test(x));
+  assert.ok(l !== undefined, "states every enumerated-location binary is checked");
   assert.ok(/final line/i.test(l) && /names? each/i.test(l));
 });
 
-test("k-runbook: states the Claude Desktop bundle paths are an unprotected residual (machine-specific MSIX suffix)", () => {
-  const l = lines.find((x) => /Claude Desktop/i.test(x) && /unprotected/i.test(x));
-  assert.ok(l !== undefined, "a residual line about the Desktop bundle paths exists");
-  assert.ok(/MSIX/.test(l) && /suffix/i.test(l) && l.includes("claude-code"));
+test("k-runbook: Desktop roots are stated as not yet protected, executed from, tracked in #466 (hash-and-flag instead of executing)", () => {
+  const l = lines.find((x) => /Claude Desktop/i.test(x) && /not yet protected/i.test(x));
+  assert.ok(l !== undefined, "a residual line about the Desktop roots exists");
+  assert.ok(l.includes("#466") && /executes/i.test(l) && /hash-and-flag/.test(l) && l.includes("claude-code"));
+  assert.ok(!/machine-specific|suffix/i.test(text), "the false MSIX-suffix premise is gone");
+});
+
+test("k-runbook: readiness line lists every location the code checks, and says re-judging alone does not turn the row green (#467)", () => {
+  const l = lines.find((x) => /^Readiness checks every Claude Code binary/.test(x));
+  assert.ok(l !== undefined);
+  for (const p of ["~/.local/bin", "~/.local/share/claude/versions", "anthropic.claude-code-*", "VS Code Insiders", "Cursor", "Roaming", "MSIX", "absolute PATH"]) assert.ok(l.includes(p), p);
+  const m = lines.find((x) => /one judged version/i.test(x));
+  assert.ok(m !== undefined && /prunes/i.test(m) && m.includes("#467") && /does not turn the row green/i.test(m));
 });

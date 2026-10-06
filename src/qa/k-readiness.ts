@@ -206,7 +206,7 @@ function allDecisionRows(deps: Deps): DecisionRow[] | undefined {
  * `Y-<x>`, `Y (pre-approved ...)`, `Y (delegated ...)` (a delegation is not the human's own act). */
 const isHumanY = (cell: string): boolean => !/pre-approved|delegated/i.test(cell) && (cell === "Y" || /^Y \(human, \d{4}-\d{2}-\d{2}: ".+"\)$/.test(cell));
 
-/** K1: a decisions row whose decision text STARTS with "K1 approved" (bold optional) and whose Human ratified cell starts with Y.
+/** K1: a decisions row whose decision text STARTS with "K1 approved" (bold optional) and whose Human ratified cell is Y or the human's own `Y (human, date: "words")` form.
  * A "K1 declined" or "K1 deferred" row never passes. The row form is documented in the runbook. */
 export function k1Row(deps: Deps): Row {
   const id = "K1-human-approval";
@@ -214,7 +214,7 @@ export function k1Row(deps: Deps): Row {
   if (rows === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
   const found = rows.filter((r) => /^\**\s*K1 approved\b/.test(r.decision));
   if (found.length === 0) return { id, status: "FAIL", detail: "no row starting 'K1 approved' in docs/decisions.md or decisions-archive.md (human approval not recorded)" };
-  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: "K1 approved row found with Human ratified starting with Y" };
+  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: 'K1 approved row found, Human ratified is Y or the human\'s own Y (human, date: "words") form' };
   return { id, status: "FAIL", detail: `K1 approved row found but Human ratified = ${found.map((r) => JSON.stringify(r.human)).join(", ")}` };
 }
 
@@ -225,7 +225,7 @@ export function k4Row(deps: Deps): Row {
   if (rows === undefined) return { id, status: "FAIL", detail: "docs/decisions.md not readable" };
   const found = rows.filter((r) => /^\**\s*THOTH-ADR-0003 accepted\b/.test(r.decision));
   if (found.length === 0) return { id, status: "FAIL", detail: "no row starting 'THOTH-ADR-0003 accepted' in docs/decisions.md or decisions-archive.md" };
-  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: "THOTH-ADR-0003 acceptance row found, Human ratified starts with Y" };
+  if (found.some((r) => isHumanY(r.human))) return { id, status: "PASS", detail: "THOTH-ADR-0003 acceptance row found, Human ratified is Y or the human's own Y (human, date: \"words\") form" };
   return { id, status: "FAIL", detail: "THOTH-ADR-0003 acceptance row found but not human-ratified" };
 }
 

@@ -18,7 +18,9 @@ npm run qa:k-readiness
 
 It prints one row per precondition (PASS, FAIL or MISSING) and exits 1 unless every row passes. It is red by design until K is wired. Open blockers come from the `k-blocker` Issue label; if the label is missing or `gh` is unavailable the row fails.
 
-Readiness checks every installed Claude Code binary (the standalone install, the newest versions entry, the newest VS Code, VS Code Insiders and Cursor extension binaries, and `claude` on PATH), and the final line of `qa:cc-extraction-covers-judged` names each one with its version; a THOTH_CLAUDE_BIN override is checked in addition and marked `[override]`. Each must pass on its own, so a stale binary cannot hide a newer one.
+Readiness checks every Claude Code binary in the enumerated install locations: `~/.local/bin`, every `~/.local/share/claude/versions` entry, every VS Code, VS Code Insiders and Cursor `anthropic.claude-code-*` extension, Claude Desktop's Roaming and MSIX bundles, and absolute PATH entries. The final line of `qa:cc-extraction-covers-judged` names each one with its version; a THOTH_CLAUDE_BIN override is checked in addition and marked `[override]`. Each must pass on its own, so a stale binary cannot hide a newer one.
+
+With one judged version, every binary at another version FAILs; the human prunes stale versions entries or decides #467. Re-judging alone does not turn the row green.
 
 CLI drift: when `qa:cc-extraction-covers-judged` FAILs on a new version, re-vendor and re-judge (Issue #463) with the human reviewing the judgment. Do not bump the pin by hand.
 
@@ -61,7 +63,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 ## 7. Residuals not measured here
 
 - Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. Governed sessions here run the VS Code extension's native binary, 2.1.289, which is past that default, so the residual is live, not a future upgrade risk. Issue #464 is the open K blocker that measures it; K does not activate until it is resolved.
-- Claude Desktop's bundled binaries (the `claude-code/<version>/<hash>/` directories under the Roaming Claude folder and under the MSIX package's redirected copy) are checked by readiness but their directories are unprotected: the MSIX package name carries a machine-specific suffix, so the protected-path list cannot name it. A session able to write there could plant a binary the certifier would run.
+- Claude Desktop's bundled binaries (the `claude-code/<version>/<hash>/` directories under the Roaming Claude folder and under the MSIX package's redirected copy) are checked by readiness, but the two Desktop roots are not yet protected and discovery executes from them (`--version`): a session able to write there could plant a binary the certifier would run. Issue #466 tracks it: it will protect both roots and hash-and-flag instead of executing.
 - The blocker row's joint-lag residual is described in section 2.
 
 ## 8. Kill switch (rollback)
