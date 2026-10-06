@@ -61,6 +61,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 ## 7. Residuals not measured here
 
 - Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. Governed sessions here run the VS Code extension's native binary, 2.1.289, which is past that default, so the residual is live, not a future upgrade risk. Issue #464 is the open K blocker that measures it; K does not activate until it is resolved.
+- Claude Desktop's bundled binaries (the `claude-code/<version>/<hash>/` directories under the Roaming Claude folder and under the MSIX package's redirected copy) are checked by readiness but their directories are unprotected: the MSIX package name carries a machine-specific suffix, so the protected-path list cannot name it. A session able to write there could plant a binary the certifier would run.
 - The blocker row's joint-lag residual is described in section 2.
 
 ## 8. Kill switch (rollback)

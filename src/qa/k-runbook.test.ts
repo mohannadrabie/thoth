@@ -97,3 +97,9 @@ test("k-runbook: readiness checks every installed Claude Code binary and its fin
   assert.ok(l !== undefined, "states every installed binary is checked");
   assert.ok(/final line/i.test(l) && /names? each/i.test(l));
 });
+
+test("k-runbook: states the Claude Desktop bundle paths are an unprotected residual (machine-specific MSIX suffix)", () => {
+  const l = lines.find((x) => /Claude Desktop/i.test(x) && /unprotected/i.test(x));
+  assert.ok(l !== undefined, "a residual line about the Desktop bundle paths exists");
+  assert.ok(/MSIX/.test(l) && /suffix/i.test(l) && l.includes("claude-code"));
+});
