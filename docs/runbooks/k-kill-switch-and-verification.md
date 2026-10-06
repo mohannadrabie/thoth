@@ -48,7 +48,7 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 
 ## 5. Recording the K1 approval
 
-`qa:k-readiness` passes the K1 row only for a row in docs/decisions.md (then docs/decisions-archive.md) whose decision text starts with `K1 approved` (bold is optional) and whose Human ratified cell starts with Y. The house form is accepted, for example the cell `Y (human, 2026-10-06: "approved")`. A row that starts `K1 declined` or `K1 deferred`, or a Human ratified cell that is not Y, never passes. The Manager writes the row; the cell records the human's own words.
+`qa:k-readiness` passes the K1 row only for a row in docs/decisions.md (then docs/decisions-archive.md) whose decision text starts with `K1 approved` (bold is optional) and whose Human ratified cell is exactly `Y` or the house form `Y (human, YYYY-MM-DD: "<words>")`, for example `Y (human, 2026-10-06: "approved")`. Any other cell never passes: `YES`, `Y-pending`, `Y (pre-approved ...)` and `Y (delegated ...)` are rejected (a delegation is not the human's own act, #465). A row that starts `K1 declined` or `K1 deferred` never passes. The same cell rule applies to the K4 row. The Manager writes the row; the cell records the human's own words.
 
 ## 6. Steps in the K wiring commit (human-approved)
 

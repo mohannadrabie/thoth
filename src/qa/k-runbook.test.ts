@@ -66,6 +66,7 @@ test("k-runbook: names the exact K1 Human-ratified cell form", () => {
   assert.ok(text.includes("Human ratified"), "names the cell");
   assert.ok(text.includes('Y (human, 2026-10-06: "approved")'), "the exact accepted cell example");
   assert.ok(text.includes("docs/decisions-archive.md"), "says the archive is read too");
+  assert.ok(text.includes("Y (pre-approved") && text.includes("Y (delegated") && text.includes("#465"), "says pre-approved and delegated cells are rejected");
 });
 
 test("k-runbook: K wiring steps include fixture regeneration and retiring the real-run file", () => {
