@@ -74,6 +74,7 @@
       "Edit(/src/policy/tools/classification-catalog.ts)",
       "Edit(/src/policy/tools/classification.ts)",
       "Edit(/src/policy/tools/mcp-enumeration.ts)",
+      "Edit(/src/qa/cc-extraction-covers-judged.ts)",
       "Edit(/src/qa/claude-code-write-deny-extract.ts)",
       "Edit(/src/qa/gate-launcher-pin-check.ts)",
       "Edit(/src/qa/k-readiness.ts)",

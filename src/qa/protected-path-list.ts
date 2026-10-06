@@ -315,6 +315,7 @@ function namedPaths(root: string): string[] {
     "src/qa/k3-edit-deny-covers-fixture.ts",
     "src/qa/k5-pretooluse-entry-uses-launcher.ts",
     "src/qa/k-readiness.ts",
+    "src/qa/cc-extraction-covers-judged.ts", // #452 certifier (refs #456)
     "docs/plans/s308-K-proposed-entry-2026-10-05.json",
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }

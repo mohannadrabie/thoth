@@ -126,7 +126,7 @@ test("worktree-targets: main checkout empty (exit 0, says so on stderr)", () => 
 test("protected-path-list: K certifiers are protected paths", () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const all = protectedPaths(root).all;
-  for (const want of ["src/qa/k-settings-merge.ts", "src/qa/k3-edit-deny-covers-fixture.ts", "src/qa/k5-pretooluse-entry-uses-launcher.ts", "src/qa/k-readiness.ts", "docs/plans/s308-K-proposed-entry-2026-10-05.json".toLowerCase()]) {
+  for (const want of ["src/qa/k-settings-merge.ts", "src/qa/k3-edit-deny-covers-fixture.ts", "src/qa/k5-pretooluse-entry-uses-launcher.ts", "src/qa/k-readiness.ts", "src/qa/cc-extraction-covers-judged.ts", "docs/plans/s308-K-proposed-entry-2026-10-05.json".toLowerCase()]) {
     assert.ok(all.includes(want), `${want} is on the protected list`);
   }
 });

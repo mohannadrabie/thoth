@@ -1091,6 +1091,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-qa-cc-extraction-covers-judged-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/cc-extraction-covers-judged.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-qa-claude-code-write-deny-extract-ts",
       "effect": "deny",
       "verbs": [
