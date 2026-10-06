@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed - Issue #452 (S7, #308 K blocker): the write-deny extraction check fails in both directions and pins the installed version
+
+Refs #308. CRITICAL tier (the check certifies K's Edit-deny completeness; an evidence surface). Plan `docs/plans/s308-452-extractor-plan-2026-10-05.md`. No wiring, no judgment-file change (`docs/qa/claude-code-write-deny-judgment.json` is byte-identical).
+
+- `src/qa/claude-code-write-deny-extract.ts`: `coverage()` reports entries extracted but not judged AND judged but not extracted (user, project, `.mcp.json`); `checkExtraction()` is tri-state. A version differing from `claudeCodeVersion`, an unreadable or unparseable version, an extraction error, or any disagreement is FAIL. An absent binary is SKIPPED, or FAIL under `THOTH_REQUIRE_CLAUDE=1`; SKIPPED is never PASS.
+- `npm run qa:cc-extraction-covers-judged` (`src/qa/cc-extraction-covers-judged.ts`): exit 0 PASS, 1 FAIL, 3 SKIPPED; last line `CC-extraction-covers-judged: <status> <detail>` with generated counts. The K readiness row for it now reads PASS.
+- Effect on dev machines: a Claude Code auto-update makes `npm test` red until the new entries are re-judged and `claudeCodeVersion` is bumped. On a runner without the binary the live case skips (counted skipped); the both-direction logic is covered by binary-free cases.
+
 ### Added - #308 story K, stage 0 (tooling only, nothing wired)
 
 Refs #308, #442 (stays open until live probe P-K4 picks the form), #401. CRITICAL tier. No wiring: `.claude/settings.json` and every `.claude/` file are unchanged. Plan `docs/plans/s308-K0-stage0-plan-2026-10-05.md`.
