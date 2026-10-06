@@ -43,6 +43,20 @@ export function parseProposal(text: string): GateProposal {
   return { proposedMatcher, proposedCommand, timeout };
 }
 
+/** The one gate entry the merge writes and K5 compares against (a single builder, so the two cannot drift). */
+export function buildGateEntry(proposal: GateProposal): { matcher: string; hooks: { type: string; command: string; timeout: number }[] } {
+  return { matcher: proposal.proposedMatcher, hooks: [{ type: "command", command: proposal.proposedCommand, timeout: proposal.timeout }] };
+}
+
+/** Input keys that can switch the gate off or steer it. The merge carries them through (existing keys are preserved) but says so. */
+export function inputWarnings(settings: unknown): string[] {
+  if (!isObj(settings)) return [];
+  const out: string[] = [];
+  if ("disableAllHooks" in settings) out.push(`input has disableAllHooks (${JSON.stringify(settings.disableAllHooks)}): Claude Code treats true as "all hooks off", so the gate would not run`);
+  if ("env" in settings) out.push(`input has an env block (keys: ${isObj(settings.env) ? Object.keys(settings.env).join(", ") : "not an object"}): env levers such as NODE_OPTIONS or SystemRoot can steer the gate; review it before wiring`);
+  return out;
+}
+
 /** Every Edit(...) deny entry the protected-path list needs plus the nested globs, sorted and de-duplicated. */
 export function generatedEditDenies(root: string): string[] {
   return [...new Set([...protectedPaths(root).all.flatMap(editDenyEntries), ...NESTED_EDIT_GLOBS])].sort();
@@ -58,7 +72,7 @@ export function mergeSettings(settings: unknown, proposal: GateProposal, editDen
   const pre = hooks.PreToolUse;
   if (pre !== undefined && !Array.isArray(pre)) throw new Error("settings.hooks.PreToolUse is not an array");
   const entries: unknown[] = Array.isArray(pre) ? pre : [];
-  const entry = { matcher: proposal.proposedMatcher, hooks: [{ type: "command", command: proposal.proposedCommand, timeout: proposal.timeout }] };
+  const entry = buildGateEntry(proposal);
   const mentionsGate = (e: unknown): boolean => JSON.stringify(e).includes(GATE_SCRIPT);
   const gateEntries = entries.filter(mentionsGate);
   if (gateEntries.length > 1 || (gateEntries.length === 1 && JSON.stringify(gateEntries[0]) !== JSON.stringify(entry))) {
@@ -80,7 +94,7 @@ export function mergeSettings(settings: unknown, proposal: GateProposal, editDen
 export const renderMerged = (merged: Obj): string => `${JSON.stringify(merged, null, 2)}\n`;
 
 /** The dry-run text for the repo's real settings file and proposal (what the CLI prints by default). */
-export function dryRunMergedText(root: string, settingsRel = DEFAULT_SETTINGS, proposalRel = DEFAULT_PROPOSAL): string {
+export function dryRunMergedText(root: string, settingsRel = DEFAULT_SETTINGS, proposalRel = DEFAULT_PROPOSAL, warn: (m: string) => void = () => undefined): string {
   const abs = (p: string): string => (isAbsolute(p) ? p : resolve(root, p));
   let settings: unknown;
   try {
@@ -88,6 +102,7 @@ export function dryRunMergedText(root: string, settingsRel = DEFAULT_SETTINGS, p
   } catch (e) {
     throw new Error(`cannot read settings ${settingsRel}: ${(e as Error).message}`);
   }
+  for (const w of inputWarnings(settings)) warn(w);
   return renderMerged(mergeSettings(settings, parseProposal(readFileSync(abs(proposalRel), "utf8")), generatedEditDenies(root)));
 }
 
@@ -108,7 +123,7 @@ export function main(argv: readonly string[]): number {
   }
   let text: string;
   try {
-    text = dryRunMergedText(REPO_ROOT, settings, opt("proposal") ?? DEFAULT_PROPOSAL);
+    text = dryRunMergedText(REPO_ROOT, settings, opt("proposal") ?? DEFAULT_PROPOSAL, (m) => console.error(`k-settings-merge: WARNING ${m}`));
   } catch (e) {
     console.error(`k-settings-merge: ${(e as Error).message}`);
     return 1;

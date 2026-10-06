@@ -8,6 +8,8 @@ This runbook states only measured facts and instructions. Two settings-based esc
 
 Every Bash, Monitor, PowerShell, RemoteTrigger and `mcp__` call goes through the gate; anything it cannot resolve is denied. Edit and Write of the protected paths are denied by generated Edit rules, including the settings file, so a session cannot unwire itself. A wired session therefore cannot run this repo's own development loop. Keep one unwired checkout for building and reviewing.
 
+Precondition: start every governed session with the repo root as the working directory. Per the vendor permissions documentation, project hooks and deny rules load only from the working directory's .claude folder, with no parent-directory fallback, so a session started in a subdirectory (for example src) would load neither the gate nor the Edit denies. This is documented, not measured here; stage 1 should probe it.
+
 ## 2. Check readiness (read-only)
 
 ```
@@ -40,7 +42,24 @@ node src/qa/protected-path-list.ts --print-worktree-targets --form=absolute
 
 `--form` is required (without it the command exits nonzero and prints nothing). A main checkout prints nothing and says so on stderr. Which form Claude Code honors for a path outside the project root is settled by stage 1 probe P-K4; until then, paste the chosen form's lines into the `permissions.deny` array of that worktree's local settings file (named settings.local.json, in its .claude directory) yourself. That file is gitignored and protected, so a session must not write it.
 
-## 5. Kill switch (rollback)
+## 5. Recording the K1 approval
+
+`qa:k-readiness` passes the K1 row only for a row in docs/decisions.md (then docs/decisions-archive.md) whose decision text starts with `K1 approved` (bold is optional) and whose Human ratified cell starts with Y. The house form is accepted, for example the cell `Y (human, 2026-10-06: "approved")`. A row that starts `K1 declined` or `K1 deferred`, or a Human ratified cell that is not Y, never passes. The Manager writes the row; the cell records the human's own words.
+
+## 6. Steps in the K wiring commit (human-approved)
+
+1. `node src/qa/k-settings-merge.ts --write` (never by hand), then `npm run qa:k3 -- .claude/settings.json` and `npm run qa:k5 -- .claude/settings.json`.
+2. Regenerate the fixture with the generator, never by hand: `node src/qa/k-settings-merge.ts --out=docs/qa/k-proposed-merged-settings.fixture.txt`. The fixture test compares the dry run with the fixture and fails when they differ.
+3. Rewrite the sentences in the settings file's comment block that say the PreToolUse entry is not present or that exposure is 0 percent; they are false once the entry is written.
+4. Retire `src/qa/k-readiness.real-run.ts` and its npm script `qa:k-readiness-real-test`: the assertion that the real run is red is false once K is wired.
+5. Start a NEW session in the wired checkout, from the repo root.
+
+## 7. Residuals not measured here
+
+- Claude Code mods (on by default from 2.1.287) can, per the vendor documentation, override deny rules and hook blocks on a machine without managed settings. The version measured on this machine is 2.1.267, which predates that. Measure before upgrading.
+- The blocker row's joint-lag residual is described in section 2.
+
+## 8. Kill switch (rollback)
 
 Run in your own terminal. None of it needs the gate.
 
@@ -51,7 +70,7 @@ Run in your own terminal. None of it needs the gate.
 
 Rollback restores the pre-K state. It does not touch the existing SessionStart and UserPromptSubmit hooks.
 
-## 6. Unmeasured until P-K5
+## 9. Unmeasured until P-K5
 
 Not measured for this gate, so not relied on anywhere above. Stage 1 probe P-K5 measures them, and this section is rewritten with the results.
 

@@ -55,3 +55,28 @@ test("runbook: discloses the joint-lag residual of the k-blocker row", () => {
   assert.match(text, /list lag/i);
   assert.match(text, /re-run/i);
 });
+
+test("runbook: states the repo-root working-directory precondition", () => {
+  assert.ok(text.includes("repo root as the working directory"));
+  assert.ok(text.includes("no parent-directory fallback"));
+});
+
+test("k-runbook: names the exact K1 Human-ratified cell form", () => {
+  assert.ok(text.includes("K1 approved"), "the decision text a K1 row starts with");
+  assert.ok(text.includes("Human ratified"), "names the cell");
+  assert.ok(text.includes('Y (human, 2026-10-06: "approved")'), "the exact accepted cell example");
+  assert.ok(text.includes("docs/decisions-archive.md"), "says the archive is read too");
+});
+
+test("k-runbook: K wiring steps include fixture regeneration and retiring the real-run file", () => {
+  assert.ok(text.includes("--out=docs/qa/k-proposed-merged-settings.fixture.txt"), "regenerate the fixture with --out");
+  assert.ok(text.includes("src/qa/k-readiness.real-run.ts"), "retire the real-run file");
+  assert.ok(text.includes("qa:k-readiness-real-test"));
+  assert.ok(text.includes("never by hand"));
+});
+
+test("k-runbook: lists the mods residual with the measured local version", () => {
+  assert.ok(text.includes("2.1.287"));
+  assert.ok(text.includes("2.1.267"));
+  assert.ok(text.toLowerCase().includes("mods"));
+});

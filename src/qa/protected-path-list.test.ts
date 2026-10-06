@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
+import { fileURLToPath } from "node:url";
+import { absoluteEditBody, protectedPaths, runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
 
 const posix = (p: string): string => p.split("\\").join("/");
 
@@ -39,16 +40,38 @@ test("worktree-targets: relative form", () => {
   }
 });
 
+// The expected values below are LITERALS from the vendor permissions doc ("On Windows, paths are normalized to POSIX form before
+// matching. C:\Users\alice becomes /c/Users/alice, so use //c/**/.env"), not produced by the transform under test (refs #460).
+test("worktree-targets: absolute form uses the documented Windows POSIX drive form (//c/...)", () => {
+  assert.equal(`Edit(//${absoluteEditBody("C:\\Users\\alice\\repo\\.git", "win32")})`, "Edit(//c/Users/alice/repo/.git)");
+  assert.equal(`Edit(//${absoluteEditBody("D:/work/Thoth/.git", "win32")}/**)`, "Edit(//d/work/Thoth/.git/**)");
+  assert.equal(`Edit(//${absoluteEditBody("/home/alice/repo/.git", "linux")})`, "Edit(//home/alice/repo/.git)");
+  assert.equal(`Edit(//${absoluteEditBody("/Users/alice/repo/.git", "darwin")})`, "Edit(//Users/alice/repo/.git)");
+  if (process.platform === "win32") {
+    const fx = synthetic();
+    try {
+      for (const l of worktreeEditLines(fx.wt, "absolute")) {
+        const body = l.slice("Edit(//".length, -1);
+        assert.ok(l.startsWith("Edit(//") && l.endsWith(")"), l);
+        assert.ok(!body.includes(":"), `no drive colon: ${l}`);
+        assert.equal(body[0], body[0]!.toLowerCase(), `lower-case drive letter: ${l}`);
+        assert.equal(body[1], "/", l);
+      }
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
 test("worktree-targets: absolute form", () => {
   const fx = synthetic();
   try {
     const lines = worktreeEditLines(fx.wt, "absolute");
-    const body = (p: string): string => {
-      const q = posix(p);
-      return q.startsWith("/") ? q.slice(1) : q;
-    };
-    const want = [`Edit(//${body(join(fx.wt, ".git"))})`, `Edit(//${body(join(fx.main, ".git"))})`, `Edit(//${body(join(fx.main, ".git"))}/**)`];
-    assert.deepEqual(lines, want.sort());
+    assert.equal(lines.length, 3, "the common dir (children and itself) and the worktree pointer file");
+    assert.equal(lines.filter((l) => l.endsWith("/main/.git/**)")).length, 1);
+    assert.equal(lines.filter((l) => l.endsWith("/main/.git)")).length, 1);
+    assert.equal(lines.filter((l) => l.endsWith("/wt/.git)")).length, 1);
+    assert.ok(lines.every((l) => l.startsWith("Edit(//")));
   } finally {
     fx.cleanup();
   }
@@ -95,5 +118,15 @@ test("worktree-targets: main checkout empty (exit 0, says so on stderr)", () => 
     }
   } finally {
     fx.cleanup();
+  }
+});
+
+// App-security round 1 finding 1 (refs #456): the files that generate and certify the gate text, and the proposal they compare
+// against, are protected paths, so a wired session cannot edit what future verification certifies.
+test("protected-path-list: K certifiers are protected paths", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const all = protectedPaths(root).all;
+  for (const want of ["src/qa/k-settings-merge.ts", "src/qa/k3-edit-deny-covers-fixture.ts", "src/qa/k5-pretooluse-entry-uses-launcher.ts", "src/qa/k-readiness.ts", "docs/plans/s308-K-proposed-entry-2026-10-05.json".toLowerCase()]) {
+    assert.ok(all.includes(want), `${want} is on the protected list`);
   }
 });

@@ -31,7 +31,18 @@ const EXPECTED = [
   "PowerShell missing from matcher",
   "Monitor missing from matcher",
   "RemoteTrigger missing from matcher",
+  "handler async true",
+  "handler if never matches",
+  "handler args empty",
+  "handler shell powershell",
+  "handler asyncRewake true",
+  "handler once true",
+  "handler statusMessage added",
+  "handler unknown key",
+  "top-level disableAllHooks true",
+  "second PreToolUse group",
 ];
+const NEUTERING = EXPECTED.slice(8);
 for (const name of EXPECTED) {
   test(`K5 mutant: ${name}`, () => {
     const m = K5_MUTANTS.find((x) => x.name === name);
@@ -85,5 +96,32 @@ test("K5: CLI takes a path argument and exits 1 on a mismatch", () => {
     // The default path (the real settings file) is NOT run here: red by design until K is wired (see qa:k-readiness).
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("K5 mutant set: neutering handler keys and disableAllHooks fail", () => {
+  assert.equal(NEUTERING.length, 10);
+  for (const name of NEUTERING) {
+    const m = K5_MUTANTS.find((x) => x.name === name);
+    assert.ok(m, `mutant ${name} exists`);
+    const mutated = m.apply(merged);
+    assert.notEqual(mutated, merged, name);
+    assert.equal(checkK5(mutated, proposal).ok, false, name);
+  }
+});
+
+test("K5: top-level disableAllHooks false or absent passes, anything else fails", () => {
+  const parsed = JSON.parse(merged) as Record<string, unknown>;
+  assert.equal(checkK5(JSON.stringify({ ...parsed, disableAllHooks: false }), proposal).ok, true);
+  for (const v of [true, "true", 1, null]) assert.equal(checkK5(JSON.stringify({ ...parsed, disableAllHooks: v }), proposal).ok, false, String(v));
+});
+
+test("K5: any PreToolUse group other than the gate entry fails", () => {
+  const parsed = JSON.parse(merged) as { hooks: { PreToolUse: unknown[] } };
+  const other = { matcher: "*", hooks: [{ type: "command", command: "node other.mjs", timeout: 5 }] };
+  for (const groups of [[...parsed.hooks.PreToolUse, other], [other, ...parsed.hooks.PreToolUse]]) {
+    const t = structuredClone(parsed);
+    t.hooks.PreToolUse = groups;
+    assert.equal(checkK5(JSON.stringify(t), proposal).ok, false);
   }
 });
