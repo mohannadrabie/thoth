@@ -350,7 +350,7 @@ export function worktreeExtraPaths(root: string, read: Reader = readReal): strin
 export type WorktreeForm = "relative" | "absolute";
 
 /** The body after `Edit(//` for an absolute path. Vendor permissions doc: on Windows, paths are normalized to POSIX form before matching
- * (`C:Usersalice` becomes `/c/Users/alice`, so the rule is `//c/Users/alice`): lower-case drive letter, no colon (#460).
+ * (`C:\Users\alice` becomes `/c/Users/alice`, so the rule is `//c/Users/alice`): lower-case drive letter, no colon (#460).
  * Elsewhere it is the absolute path without its leading slash. */
 export function absoluteEditBody(abs: string, platform: string = process.platform): string {
   const posix = abs.split("\\").join("/");
