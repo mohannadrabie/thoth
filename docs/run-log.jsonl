@@ -229,3 +229,16 @@
 {"at":"2026-10-05T20:02:02.644Z","event":"story-shipped","scope":"s428","rounds":"0","reports":"6","findings":"20","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-05T20:02:02.701Z","event":"story-shipped","scope":"s409","rounds":"2","reports":"6","findings":"21","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-05T20:02:02.758Z","event":"story-shipped","scope":"s429","rounds":"2","reports":"5","findings":"19","adrTokensSaved":"18800","councilFired":"false"}
+{"at":"2026-10-05T22:02:30.974Z","event":"tier-ratified","scope":"s308-K0","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"guard-adjacent policy-delivery tooling"}
+{"at":"2026-10-05T22:10:38.499Z","event":"tier-ratified","scope":"s308-452","proposed":"STANDARD","ratified":"CRITICAL","changed":"true","reason":"certifies K Edit-deny completeness; evidence surface; skip seam needs red-team"}
+{"at":"2026-10-06T00:58:55.010Z","event":"receipt-reopened","scope":"s308-452","agent":"code-review","trigger":"receipt-check","report":"docs/reviews/s308-452-code-review-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.166Z","event":"receipt-reopened","scope":"s308-452","agent":"cross-domain","trigger":"receipt-check","report":"docs/reviews/s308-452-cross-domain-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.318Z","event":"receipt-reopened","scope":"s308-452","agent":"red-team","trigger":"receipt-check","report":"docs/reviews/s308-452-red-team-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.478Z","event":"receipt-reopened","scope":"s308-K0","agent":"app-security","trigger":"receipt-check","report":"docs/reviews/s308-K0-452-app-security-round2-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.651Z","event":"receipt-reopened","scope":"s308-K0","agent":"cross-domain","trigger":"receipt-check","report":"docs/reviews/s308-K0-452-cross-domain-round2-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.804Z","event":"receipt-reopened","scope":"s308-K0","agent":"red-team","trigger":"receipt-check","report":"docs/reviews/s308-K0-452-red-team-round2-2026-10-05.md"}
+{"at":"2026-10-06T00:58:55.962Z","event":"receipt-reopened","scope":"s308-K0","agent":"app-security","trigger":"receipt-check","report":"docs/reviews/s308-K0-app-security-2026-10-05.md"}
+{"at":"2026-10-06T00:58:56.125Z","event":"receipt-reopened","scope":"s308-K0","agent":"cross-domain","trigger":"receipt-check","report":"docs/reviews/s308-K0-cross-domain-2026-10-05.md"}
+{"at":"2026-10-06T00:58:56.291Z","event":"receipt-reopened","scope":"s308-K0","agent":"red-team","trigger":"receipt-check","report":"docs/reviews/s308-K0-red-team-2026-10-05.md"}
+{"at":"2026-10-06T01:25:14.201Z","event":"story-shipped","scope":"s308-K0","rounds":"1","reports":"8","findings":"44","adrTokensSaved":"18800","councilFired":"false"}
+{"at":"2026-10-06T01:25:14.288Z","event":"story-shipped","scope":"s308-452","rounds":"1","reports":"8","findings":"37","adrTokensSaved":"0","councilFired":"false"}

@@ -66,3 +66,263 @@ test("CC-installed-extraction-fully-judged: the list extracted from the installe
   assert.ok(got.user.includes("shell-snapshots") && got.user.includes("session-env") && got.project.includes("skills"), "sanity: the known entries are extracted (an empty or partial extraction is a failure, not a pass)");
   assert.deepEqual(unjudged(got, judged()), []);
 });
+
+// ---- #452: both directions plus the installed version ------------------------------------------------------------------
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { checkExtraction, coverage, discoverClaudeBinaries, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
+import { runCli } from "./cc-extraction-covers-judged.ts";
+
+const names = (es: { name: string }[]): string[] => es.map((e) => e.name);
+const fullExtraction = (): { user: string[]; project: string[]; mcpJson: boolean } => ({ user: names(judged().user), project: names(judged().project), mcpJson: true });
+
+/** A fake "binary" the real extractor can read: the anchor array, project entries, the mcp literal and the end mark. */
+function fakeBinary(user: string[], project: string[], mcp: boolean): string {
+  const dir = mkdtempSync(join(tmpdir(), "cc452-"));
+  const p = join(dir, "claude-fake");
+  const arr = ["shell-snapshots", "session-env", "plugins", ...user].map((n) => JSON.stringify(n)).join(",");
+  const proj = project.map((n) => `G(Ml(Ie,".claude","${n}"),!0);`).join("");
+  const mcpText = mcp ? `U.push(Ml(Ie,".mcp.json"));` : "";
+  writeFileSync(p, `xx;let a=1;for(let S of[${arr}]){q}${proj}${mcpText}bareGitRepoScrubPaths.length=0;`, "latin1");
+  return p;
+}
+const isolatedHome = (): string => mkdtempSync(join(tmpdir(), "cc452-home-"));
+const envFor = (bin: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+  const home = isolatedHome();
+  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, PATH: "", ...extra };
+};
+
+test("CC-extraction-covers-judged/mutant-drops-4-of-31: an extraction missing 4 of the 31 judged user entries is reported, exactly those 4", () => {
+  const j = judged();
+  const all = names(j.user);
+  assert.ok(all.length >= 4, "the judgment has enough user entries to drop four");
+  const dropped = [0, 1, 2, 3].map((k) => all[Math.floor((k * (all.length - 1)) / 3)]!);
+  assert.equal(new Set(dropped).size, 4, "four distinct entries dropped");
+  const partial = { user: all.filter((n) => !dropped.includes(n)), project: names(j.project), mcpJson: true };
+  const c = coverage(partial, j);
+  assert.deepEqual([...c.judgedNotExtracted].sort(), dropped.map((n) => `user:${n}`).sort());
+  assert.deepEqual(c.unjudged, []);
+});
+
+test("CC-extraction-covers-judged/project-and-mcp-direction: a dropped project entry and a missing .mcp.json are reported", () => {
+  const j = judged();
+  const p0 = j.project[0]!.name;
+  const c = coverage({ user: names(j.user), project: names(j.project).slice(1), mcpJson: false }, j);
+  assert.deepEqual([...c.judgedNotExtracted].sort(), [`project:${p0}`, "projectRoot:.mcp.json"].sort());
+  assert.deepEqual(c.unjudged, []);
+});
+
+test("CC-extraction-covers-judged/unjudged-direction: an extra extracted entry shows through the aggregate", () => {
+  const ex = { ...fullExtraction(), user: [...fullExtraction().user, "brand-new-dir"] };
+  assert.deepEqual(coverage(ex, judged()), { unjudged: ["user:brand-new-dir"], judgedNotExtracted: [] });
+});
+
+test("CC-extraction-covers-judged/equal-sets-pass: the full judged set yields both lists empty", () => {
+  assert.deepEqual(coverage(fullExtraction(), judged()), { unjudged: [], judgedNotExtracted: [] });
+});
+
+test("CC-extraction-covers-judged/version-parse", () => {
+  assert.equal(parseClaudeVersion("2.1.267 (Claude Code)"), "2.1.267");
+  assert.equal(parseClaudeVersion("2.1.267 (Claude Code)\nextra"), "2.1.267");
+  for (const bad of ["", "garbage", "v2", "2.1", "2.1.267-beta", "2.1.267abc", "2.1.2670x"]) assert.equal(parseClaudeVersion(bad), undefined, bad);
+});
+
+test("CC-extraction-covers-judged/version-mismatch-fails: a different installed version is FAIL even when the sets are equal", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  const ok = checkExtraction(envFor(bin), () => `${j.claudeCodeVersion} (Claude Code)`);
+  assert.equal(ok.status, "PASS", ok.reasons.join("; "));
+  const bad = checkExtraction(envFor(bin), () => "9.9.9 (Claude Code)");
+  assert.equal(bad.status, "FAIL");
+  assert.match(bad.reasons.join("\n"), /9\.9\.9/);
+  assert.ok(bad.reasons.join("\n").includes(j.claudeCodeVersion));
+});
+
+test("CC-extraction-covers-judged/fail-closed-unparseable: a throwing or unparseable version command, or a throwing extraction, is FAIL", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  assert.equal(checkExtraction(envFor(bin), () => { throw new Error("timed out"); }).status, "FAIL");
+  assert.equal(checkExtraction(envFor(bin), () => "garbage").status, "FAIL");
+  const noAnchor = join(mkdtempSync(join(tmpdir(), "cc452-")), "claude-fake");
+  writeFileSync(noAnchor, "nothing here", "latin1");
+  const r = checkExtraction(envFor(noAnchor), () => `${j.claudeCodeVersion} (Claude Code)`);
+  assert.equal(r.status, "FAIL");
+  assert.match(r.reasons.join("\n"), /anchor not found/);
+});
+
+test("CC-extraction-covers-judged/absent-binary-skipped-or-required: absent is SKIPPED by default, FAIL under THOTH_REQUIRE_CLAUDE=1, never PASS", () => {
+  const missing = join(isolatedHome(), "nope");
+  const never = (): string => { throw new Error("version must not be asked when there is no binary"); };
+  const d = checkExtraction(envFor(missing), never);
+  assert.equal(d.status, "SKIPPED");
+  assert.ok(d.reasons.length > 0);
+  const r = checkExtraction(envFor(missing, { THOTH_REQUIRE_CLAUDE: "1" }), never);
+  assert.equal(r.status, "FAIL");
+  assert.equal(checkExtraction(envFor(missing, { THOTH_REQUIRE_CLAUDE: "0" }), never).status, "SKIPPED");
+});
+
+test("CC-extraction-covers-judged/installed-live: the installed binary's extraction equals the judgment and its version equals the recorded one", (t) => {
+  const r = checkExtraction(process.env);
+  if (r.status === "SKIPPED") {
+    t.skip(`SKIPPED: ${r.reasons.join("; ")}; the pure tests above still ran`);
+    return;
+  }
+  assert.equal(r.status, "PASS", r.reasons.join("; "));
+});
+
+test("CC-extraction-covers-judged/cli-exit-codes: exit 0 PASS / 1 FAIL / 3 SKIPPED with one final parseable line", () => {
+  const j = judged();
+  const bin = fakeBinary(names(j.user), names(j.project), true);
+  const ver = (v: string) => (): string => v;
+  const pass = runCli(envFor(bin), ver(`${j.claudeCodeVersion} (Claude Code)`));
+  assert.equal(pass.code, 0);
+  assert.match(pass.line, /^CC-extraction-covers-judged: PASS /);
+  assert.match(pass.line, /user \d+\/\d+/);
+  const fail = runCli(envFor(bin), ver("9.9.9 (Claude Code)"));
+  assert.equal(fail.code, 1);
+  assert.match(fail.line, /^CC-extraction-covers-judged: FAIL /);
+  const missing = join(isolatedHome(), "nope");
+  const skip = runCli(envFor(missing), ver("x"));
+  assert.equal(skip.code, 3);
+  assert.match(skip.line, /^CC-extraction-covers-judged: SKIPPED /);
+  const req = runCli(envFor(missing, { THOTH_REQUIRE_CLAUDE: "1" }), ver("x"));
+  assert.equal(req.code, 1, "never exit 3 when required");
+  // the real script, spawned: no binary -> 3, required -> 1
+  const run = (extra: NodeJS.ProcessEnv): { status: number | null; out: string } => {
+    const home = isolatedHome();
+    const r = spawnSync(process.execPath, [`${ROOT}src/qa/cc-extraction-covers-judged.ts`], { env: { ...process.env, THOTH_CLAUDE_BIN: join(home, "nope"), HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), PATH: "", THOTH_REQUIRE_CLAUDE: "", ...extra }, encoding: "utf8", timeout: 60000 });
+    return { status: r.status, out: r.stdout.trim().split(/\r?\n/).at(-1) ?? "" };
+  };
+  const s = run({});
+  assert.equal(s.status, 3);
+  assert.match(s.out, /^CC-extraction-covers-judged: SKIPPED /);
+  const q = run({ THOTH_REQUIRE_CLAUDE: "1" });
+  assert.equal(q.status, 1);
+  assert.match(q.out, /^CC-extraction-covers-judged: FAIL /);
+});
+
+// ---- #462: every installed binary is checked, not the first one found -----------------------------------------------------
+/** Put a fake binary at <home>/<rel>, readable by the real extractor. */
+function place(home: string, rel: string, user: string[], project: string[]): string {
+  const src = fakeBinary(user, project, true);
+  const dest = join(home, ...rel.split("/"));
+  mkdirSync(join(dest, ".."), { recursive: true });
+  writeFileSync(dest, readFileSync(src));
+  return dest;
+}
+const versionByPath = (map: Record<string, string>) => (bin: string): string => {
+  const v = map[bin];
+  if (v === undefined) throw new Error("unexpected binary " + bin);
+  return v + " (Claude Code)";
+};
+
+test("CC-extraction-covers-judged/every-installed-binary-checked: a stale ~/.local/bin binary at the judged version does not hide a different extension binary", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const ext = place(home, ".vscode/extensions/anthropic.claude-code-9.9.9-win32-x64/resources/native-binary/claude.exe", [...names(j.user), "extra-new-dir"], names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const r = checkExtraction(env, versionByPath({ [local]: j.claudeCodeVersion, [ext]: "9.9.9" }));
+  assert.equal(r.status, "FAIL");
+  const text = r.reasons.join("\n");
+  assert.ok(text.includes(ext), "names the failing extension binary");
+  assert.ok(text.includes("9.9.9") && text.includes("extra-new-dir"));
+  assert.deepEqual(r.binaries.map((b) => b.path).sort(), [local, ext].sort());
+  assert.deepEqual(r.binaries.map((b) => b.status).sort(), ["FAIL", "PASS"]);
+});
+
+test("CC-extraction-covers-judged/discovery-locations: local bin, EVERY versions entry, EVERY extension per editor, Desktop bundles, PATH, and the override in addition", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const mk = (rel: string): string => place(home, rel, names(j.user), names(j.project));
+  const local = mk(".local/bin/claude.exe");
+  const v9 = mk(".local/share/claude/versions/2.1.9");
+  const v100 = mk(".local/share/claude/versions/2.1.100");
+  const vs9 = mk(".vscode/extensions/anthropic.claude-code-2.1.9-win32-x64/resources/native-binary/claude.exe");
+  const vs100 = mk(".vscode/extensions/anthropic.claude-code-2.1.100-win32-x64/resources/native-binary/claude.exe");
+  const ins = mk(".vscode-insiders/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
+  const cur = mk(".cursor/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
+  const d1 = mk("AppData/Roaming/Claude/claude-code/2.1.284/3f4bed3e44ad/claude.exe");
+  const d2 = mk("AppData/Local/Packages/Claude_abc123/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe");
+  const pathDir = join(home, "pathbin");
+  const onPath = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
+  const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
+  const base = { HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local") };
+  const found = discoverClaudeBinaries({ ...base, PATH: pathDir, THOTH_CLAUDE_BIN: override });
+  assert.deepEqual(found.map((b) => b.path).sort(), [local, v9, v100, vs9, vs100, ins, cur, d1, d2, onPath, override].sort());
+  assert.deepEqual(found.filter((b) => b.override).map((b) => b.path), [override]);
+  assert.equal(discoverClaudeBinaries({ ...base, PATH: "" }).length, 9, "override and PATH absent: nine found");
+  assert.deepEqual(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: "" }), []);
+});
+
+test("CC-extraction-covers-judged/desktop-bundled-binary-checked: a Claude Desktop bundled binary that differs fails the check, named", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const env = { HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), PATH: "" };
+  const ok = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const roaming = place(home, "AppData/Roaming/Claude/claude-code/2.1.284/3f4bed3e44ad/claude.exe", names(j.user), names(j.project));
+  const msix = place(home, "AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe", names(j.user), names(j.project));
+  const r = checkExtraction(env, versionByPath({ [ok]: j.claudeCodeVersion, [roaming]: j.claudeCodeVersion, [msix]: "2.1.286" }));
+  assert.equal(r.status, "FAIL");
+  assert.ok(r.reasons.join("; ").includes(msix));
+  assert.deepEqual(r.binaries.map((b) => b.path).sort(), [ok, roaming, msix].sort());
+});
+
+test("CC-extraction-covers-judged/every-entry-not-newest-only: a downgraded active extension next to an obsolete newer judged one still FAILs", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const obsoleteNewer = place(home, ".vscode/extensions/anthropic.claude-code-2.1.300-win32-x64/resources/native-binary/claude.exe", names(j.user), names(j.project));
+  const active = place(home, ".vscode/extensions/anthropic.claude-code-2.1.250-win32-x64/resources/native-binary/claude.exe", names(j.user), names(j.project));
+  const oldVersionsEntry = place(home, ".local/share/claude/versions/2.1.240", names(j.user), names(j.project));
+  const newVersionsEntry = place(home, ".local/share/claude/versions/2.1.267", names(j.user), names(j.project));
+  const r = checkExtraction(env, versionByPath({ [obsoleteNewer]: j.claudeCodeVersion, [active]: "2.1.250", [oldVersionsEntry]: "2.1.240", [newVersionsEntry]: j.claudeCodeVersion }));
+  assert.equal(r.status, "FAIL");
+  const failing = r.binaries.filter((b) => b.status === "FAIL").map((b) => b.path).sort();
+  assert.deepEqual(failing, [active, oldVersionsEntry].sort());
+});
+
+test("CC-extraction-covers-judged/discovery skips relative PATH entries", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const dir = join(home, "relbin");
+  place(home, "relbin/claude.exe", names(j.user), names(j.project));
+  const rel = relative(process.cwd(), dir);
+  assert.ok(!isAbsolute(rel), "fixture is a relative path");
+  assert.deepEqual(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: rel }), []);
+  assert.equal(discoverClaudeBinaries({ HOME: isolatedHome(), USERPROFILE: "", PATH: dir }).length, 1, "the same directory as an absolute entry is found");
+});
+
+test("CC-extraction-covers-judged/final-line-names-binary: the final line names every binary path checked with its version, and marks the override", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: override };
+  const r = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: j.claudeCodeVersion }));
+  assert.equal(r.code, 0);
+  assert.ok(r.line.includes(local) && r.line.includes(override), r.line);
+  assert.ok(r.line.includes(j.claudeCodeVersion));
+  assert.match(r.line, /\[override\]/);
+  assert.equal((r.line.match(/\[override\]/g) ?? []).length, 1, "only the override is marked");
+  const bad = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: "9.9.9" }));
+  assert.equal(bad.code, 1);
+  assert.ok(bad.line.includes(local) && bad.line.includes(override) && bad.line.includes("9.9.9"), bad.line);
+});
+
+test("CC-extraction-covers-judged/judgment-unreadable-fails-closed: a missing or invalid judgment file is FAIL with a final line, not a crash", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const env = { HOME: home, USERPROFILE: home, PATH: "" };
+  const bad = join(home, "judgment.json");
+  writeFileSync(bad, "{ not json", "utf8");
+  for (const path of [bad, join(home, "missing.json")]) {
+    const r = runCli(env, versionByPath({ [local]: j.claudeCodeVersion }), path);
+    assert.equal(r.code, 1);
+    assert.match(r.line, /^CC-extraction-covers-judged: FAIL .*judgment/);
+  }
+});

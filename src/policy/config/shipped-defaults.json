@@ -326,6 +326,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-docs-plans-s308-k-proposed-entry-2026-10-05-json",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "docs/plans/s308-k-proposed-entry-2026-10-05.json"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-docs-qa-claude-code-write-deny-judgment-json",
       "effect": "deny",
       "verbs": [
@@ -1074,6 +1091,23 @@
       "mandatory": true
     },
     {
+      "id": "protect-src-qa-cc-extraction-covers-judged-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/cc-extraction-covers-judged.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-src-qa-claude-code-write-deny-extract-ts",
       "effect": "deny",
       "verbs": [
@@ -1103,6 +1137,74 @@
       ],
       "targets": [
         "src/qa/gate-launcher-pin-check.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-k-readiness-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/k-readiness.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-k-settings-merge-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/k-settings-merge.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-k3-edit-deny-covers-fixture-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/k3-edit-deny-covers-fixture.ts"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-src-qa-k5-pretooluse-entry-uses-launcher-ts",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "src/qa/k5-pretooluse-entry-uses-launcher.ts"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1773,6 +1875,24 @@
       "mandatory": true
     },
     {
+      "id": "protect-home-cursor-extensions",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.cursor/extensions",
+        "~/.cursor/extensions/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-gitconfig",
       "effect": "deny",
       "verbs": [
@@ -1790,6 +1910,42 @@
       "mandatory": true
     },
     {
+      "id": "protect-home-local-bin",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.local/bin",
+        "~/.local/bin/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-local-share-claude",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.local/share/claude",
+        "~/.local/share/claude/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
       "id": "protect-home-profile",
       "effect": "deny",
       "verbs": [
@@ -1802,6 +1958,42 @@
       ],
       "targets": [
         "~/.profile"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-vscode-insiders-extensions",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.vscode-insiders/extensions",
+        "~/.vscode-insiders/extensions/"
+      ],
+      "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-home-vscode-extensions",
+      "effect": "deny",
+      "verbs": [
+        "write",
+        "create",
+        "modify",
+        "delete",
+        "move",
+        "rename"
+      ],
+      "targets": [
+        "~/.vscode/extensions",
+        "~/.vscode/extensions/"
       ],
       "rationale": "AP-10 (#308 story F): a session may not write this path; it decides or wires the gate.",
       "mandatory": true
@@ -1965,6 +2157,20 @@
       ],
       "targets": [
         "docs"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-docs-plans",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "docs/plans"
       ],
       "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true
@@ -2161,6 +2367,76 @@
       ],
       "targets": [
         "~/.config/git"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-cursor",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.cursor"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-local",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.local"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-local-share",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.local/share"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-vscode",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.vscode"
+      ],
+      "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
+      "mandatory": true
+    },
+    {
+      "id": "protect-parent-home-vscode-insiders",
+      "effect": "deny",
+      "verbs": [
+        "move",
+        "delete",
+        "rename"
+      ],
+      "targets": [
+        "~/.vscode-insiders"
       ],
       "rationale": "AP-10 (#308 story F, Issue #415): moving, deleting or renaming this directory takes protected files with it.",
       "mandatory": true
