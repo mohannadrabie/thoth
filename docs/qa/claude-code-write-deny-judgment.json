@@ -1082,13 +1082,17 @@
     },
     {
       "name": "computer-use.lock",
-      "judgment": "residual",
-      "reason": "Lock file. Evidence: \"computer-use.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+      "judgment": "protected",
+      "reason": "Lock file judged on its name only; the IDE lock files, the nearest analogue, are protected, and a planted lock can steer a session (fail closed). Evidence: computer-use.lock listed in Claude Code's own ~/.claude child-name set next to ide. [AMBIGUOUS, fail closed; re-judged from residual in round-3 fix-now]",
+      "userPath": "~/.claude/computer-use.lock",
+      "projectPath": ".claude/computer-use.lock"
     },
     {
       "name": "server.lock",
-      "judgment": "residual",
-      "reason": "Lock file. Evidence: \"server.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+      "judgment": "protected",
+      "reason": "Lock file judged on its name only; the IDE lock files, the nearest analogue, are protected, and a planted lock can steer a session (fail closed). Evidence: server.lock listed in Claude Code's own ~/.claude child-name set next to ide. [AMBIGUOUS, fail closed; re-judged from residual in round-3 fix-now]",
+      "userPath": "~/.claude/server.lock",
+      "projectPath": ".claude/server.lock"
     }
   ]
 }
