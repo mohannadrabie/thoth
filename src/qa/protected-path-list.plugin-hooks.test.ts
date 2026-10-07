@@ -414,3 +414,31 @@ test("scanner: eval, Function, vm, process.binding throw", () => {
   // Plain code that merely mentions the words stays fine, and the allowed spawn shape is unchanged.
   assert.deepEqual(spawned("const note = 'eval and Function are text here'; const o = { a: 1 }; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
 });
+
+// #484 (re-confirm 3): process and the global objects are only ever the object of a plain member access. Written FAILING FIRST.
+test("scanner: process and global objects only as plain member access", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "globalThis[a + b]('x');",
+    "const p = process; p.binding('spawn_sync');",
+    "const { binding } = process; binding('x');",
+    "const q = { ...process };",
+    "Reflect.get(globalThis, k);",
+    "f(process);",
+    "process[k];",
+    "globalThis['x'];",
+    "const g = global; g.x;",
+    "const s = self;",
+    "const w = window;",
+    "function r() { return globalThis; }",
+    "with (globalThis) { x; }",
+    "const p = globalThis.process;",
+    "global.global.x;",
+    "process.mainModule.require('x');",
+    "typeof process;",
+    "[process][0];",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  // Plain member access stays fine.
+  assert.deepEqual(spawned("const e = process.env.HOME; process.exit(process.argv.length); execFileSync(process.execPath, ['docs/b.mjs']); const x = obj.process;", "/r/a.mjs"), ["docs/b.mjs"]);
+});
