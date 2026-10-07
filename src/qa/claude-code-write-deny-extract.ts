@@ -196,7 +196,7 @@ export interface BinaryResult {
   counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number };
 }
 
-/** #466: the per-run opt-in. Read from the env passed in, on every call; never stored, never defaulted on. */
+/** #466: the per-run opt-in. Read from the env passed in, on every call; never stored, never defaulted on. Disclosed limit: under the opt-in a binary is hashed in one step and executed in a later one, and nothing compares the two, so the executed bytes can differ from the hashed ones. */
 export const EXEC_UNPROTECTED_ENV = "THOTH_EXEC_UNPROTECTED";
 const UNVERIFIED = "UNVERIFIED-UNPROTECTED" as const;
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
