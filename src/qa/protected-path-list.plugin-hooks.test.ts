@@ -442,3 +442,33 @@ test("scanner: process and global objects only as plain member access", () => {
   // Plain member access stays fine.
   assert.deepEqual(spawned("const e = process.env.HOME; process.exit(process.argv.length); execFileSync(process.execPath, ['docs/b.mjs']); const x = obj.process;", "/r/a.mjs"), ["docs/b.mjs"]);
 });
+
+// #484 (re-confirm 4): the Function constructor by any route. Written FAILING FIRST.
+test("scanner: constructor and computed access refused by any route", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "f['constructor']('x');",
+    "const k = 'constructor'; f[k]('x');",
+    "const c = 'constructor'; const F = f[c]; F('x');",
+    "f[a + b]('x');",
+    "f['x'];",
+    "f.constructor`return 1`;",
+    "a.b`x`;",
+    "(0, f)`x`;",
+    "Reflect.get(f, 'constructor')('x');",
+    "Reflect.construct(f, []);",
+    "Reflect.apply(f, null, []);",
+    "const R = Reflect; R.get(f, 'x');",
+    "const { constructor: C } = f; C('x');",
+    "const { constructor } = f;",
+    "const o = { constructor: 1 };",
+    "g('constructor');",
+    "x.constructor;",
+    "AsyncFunction;",
+    "GeneratorFunction;",
+    "AsyncGeneratorFunction;",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  // Numeric element access, identifier-tagged templates and plain member access stay fine.
+  assert.deepEqual(spawned("const a = list[0]; const b = tag`x`; const c = obj.name; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
