@@ -273,6 +273,10 @@ export function classifyHookCommand(command: string): HookCommand | undefined {
 const CP_MODULES = new Set(["child_process", "node:child_process"]);
 const CP_FNS = new Set(["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"]);
 const NODE_COMMANDS = new Set(["node", "node.exe"]);
+// #484: ways to run code the scanner cannot read. Any use throws, in every scanned file and body.
+const DYNAMIC_NAMES = new Set(["eval", "Function"]);
+const LOADER_MODULES = new Set(["vm", "node:vm", "worker_threads", "node:worker_threads"]);
+const PROCESS_ESCAPES = new Set(["binding", "_linkedBinding", "dlopen"]);
 
 export interface SourceScan {
   /** Repo scripts spawned with node, as written (relative to the hook's working directory, the repo root). */
@@ -346,6 +350,7 @@ export function scanSource(text: string, fileName: string): SourceScan {
     else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) taint(node.operand);
     else if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) taint(node.initializer);
     if (ts.isStringLiteralLike(node) && CP_MODULES.has(node.text) && !okSpecifier.has(node)) refuse(`a child_process specifier (${node.text})`);
+    if (ts.isStringLiteralLike(node) && LOADER_MODULES.has(node.text)) refuse(`the ${node.text} module`);
     ts.forEachChild(node, collect);
   };
   collect(sf);
@@ -384,6 +389,11 @@ export function scanSource(text: string, fileName: string): SourceScan {
 
   // Pass 2: every call and every reference to the module or one of its functions.
   const check = (node: ts.Node): void => {
+    // Dynamic code: eval and Function by any route, a .constructor call, and the process loader escapes.
+    if (ts.isIdentifier(node) && DYNAMIC_NAMES.has(node.text)) refuse(`a reference to ${node.text}`);
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && (DYNAMIC_NAMES.has(node.argumentExpression.text) || PROCESS_ESCAPES.has(node.argumentExpression.text) || node.argumentExpression.text === "constructor")) refuse(`a computed access to ${node.argumentExpression.text}`);
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "constructor") refuse("a .constructor call");
+    if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text) && node.expression.getText(sf) === "process") refuse(`process.${node.name.text}`);
     if (ts.isCallExpression(node)) {
       const c = node.expression;
       if (ts.isIdentifier(c)) {
