@@ -610,6 +610,10 @@ function namedPaths(root: string): string[] {
     "src/qa/k5-pretooluse-entry-uses-launcher.ts",
     "src/qa/k-readiness.ts",
     "src/qa/cc-extraction-covers-judged.ts", // #452 certifier (refs #456)
+    // #475 (S7): the applier is the one writer of the two judgment files and is executed code; its test and the directory its deltas come from are the approved record.
+    "src/qa/judgment-apply.ts",
+    "src/qa/judgment-apply.test.ts",
+    "docs/qa/judgment-deltas/",
     "docs/plans/s308-K-proposed-entry-2026-10-05.json",
     // #455 (S7): the plugin-hook snapshot the derivation reads, the F1 instrument that certifies it, and the judgments file a session must not self-write.
     SNAPSHOT_REL,
