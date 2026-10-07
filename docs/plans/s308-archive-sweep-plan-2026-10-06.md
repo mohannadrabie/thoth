@@ -52,7 +52,7 @@ Every SECRET_PATTERNS regex was run over each of the 6 due rows and each match h
 - Yes: one value (email-address, hash 973dfe463ec85785f5f95af5ba3906eedb2d931c24e69824a89ea65dba4e813b) is the only pattern match among the due rows.
 - The aws-access-key-id entry for `docs/decisions.md` is not in a due row, so it stays valid.
 - Caveat: this covers the OSS-01 patterns only. Other docs checks are not yet run (see AC 7).
-- Observation: after the sweep, `docs/decisions.md` has no the reserved example address (test at example dot com). Its existing email entry matches nothing until a future row quotes the literal again. Harmless; open under Issue #235. Kept per ruling 1.
+- Observation: after the sweep, `docs/decisions.md` has no the reserved example address (test at example dot com). Its existing email entry still matches the older versions of that file in history (red-team round 1: 233 matches), so it stays needed; Issue #235 does not apply. Kept per ruling 1.
 
 ## ADR review
 
@@ -122,7 +122,7 @@ No new or changed UI flow or API surface. This is a docs and config change. test
 
 ## Rollout and rollback
 
-- Revert the sweep commit to restore the rows. The entry is inert without the archive matches.
+- Revert the sweep commit to restore the rows. The archive entry stays needed once the sweep is in history (red-team round 1: history keeps the archive matches).
 - No flag is needed.
 - If any scan blocks after the sweep, stop and report. Do not use --no-verify.
 
