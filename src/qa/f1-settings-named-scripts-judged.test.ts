@@ -43,7 +43,7 @@ test("f1: an outside-repo script is reported, not a failure", () => {
 });
 
 test("f1: live drift fails, unverified does not", () => {
-  const base = { root: REPO, snapshot: snap(["node docs/a.mjs"]), protectedAll: ["docs/a.mjs"], judgments: [] };
+  const base = { root: REPO, snapshot: snap(["node docs/decisions-archive.mjs"]), protectedAll: ["docs/decisions-archive.mjs"], judgments: [] };
   assert.equal(check({ ...base, live: { status: "drift", detail: "t@t changed" } }).ok, false);
   const u = check({ ...base, live: { status: "unverified", detail: "no ~/.claude" } });
   assert.equal(u.ok, true, JSON.stringify(u.failures));

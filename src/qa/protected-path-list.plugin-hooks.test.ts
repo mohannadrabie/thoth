@@ -198,3 +198,74 @@ test("snapshot: built from live data, enabled plugins only, no machine paths sto
 test("snapshot: no live plugin data builds undefined (unverified), not an empty snapshot", () => {
   assert.equal(fn<unknown>("buildPluginSnapshot")({ home: "/h", root: "/r", read: fakeRead({}) }), undefined);
 });
+
+// ---- #473, #474 and app-security LOW 1: the derivation fails closed (round 1 fix-now). Written FAILING FIRST. ----
+import * as f1 from "./f1-settings-named-scripts-judged.ts";
+
+const f1Check = (commands: string[]): { ok: boolean; failures: string[] } =>
+  (f1 as unknown as { checkF1: (o: unknown) => { ok: boolean; failures: string[] } }).checkF1({
+    root: REPO,
+    snapshot: syntheticSnapshot(commands),
+    protectedAll: ["docs/decisions-archive.mjs"],
+    judgments: [],
+    live: { status: "ok", detail: "" },
+  });
+
+test("plugin-hooks: extensionless sibling script makes the command unenumerable", () => {
+  for (const cmd of ["node docs/decisions-archive.mjs && sh docs/run", "node docs/decisions-archive.mjs; docs/run", "node docs/decisions-archive.mjs | docs/run --x"]) {
+    const scan = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot([cmd]));
+    assert.deepEqual(scan.unenumerable, [cmd], `unenumerable: ${cmd}`);
+    const r = f1Check([cmd]);
+    assert.equal(r.ok, false, `F1 fails: ${cmd}`);
+  }
+  // A fully accounted compound command stays enumerable.
+  const ok = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot(["node docs/decisions-archive.mjs && node docs/adr-cache.mjs --ensure"]));
+  assert.deepEqual(ok.unenumerable, []);
+  assert.deepEqual(ok.scripts, ["docs/adr-cache.mjs", "docs/decisions-archive.mjs"]);
+  // A command substitution is never accounted for.
+  assert.equal(fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot(["node docs/decisions-archive.mjs $(docs/run)"])).unenumerable.length, 1);
+});
+
+test("plugin-hooks: partially assembled path fails F1", () => {
+  const concat = `node -e "require('node:child_process').execFileSync(process.execPath,['docs/'+'tools.mjs'])"`;
+  const template = "node -e \"require('node:child_process').execFileSync(process.execPath,[`docs/${name}.mjs`])\"";
+  for (const cmd of [concat, template]) {
+    const scan = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot([cmd]));
+    assert.deepEqual(scan.unenumerable, [cmd], `unenumerable: ${cmd}`);
+    assert.equal(f1Check([cmd]).ok, false, `F1 fails: ${cmd}`);
+  }
+  // A plain in-repo script that does not exist is no longer a note: the command is unenumerable.
+  assert.equal(f1Check(["node docs/does-not-exist.mjs"]).ok, false);
+});
+
+test("spawn-follow: aliased node command throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  assert.throws(() => spawned("const n = process.execPath; execFileSync(n, ['docs/b.mjs']);", "/r/a.mjs"), /cannot be followed|computed|non-literal/i);
+  assert.throws(() => spawned("spawnSync(cmd, ['docs/b.mjs']);", "/r/a.mjs"), /cannot be followed|computed|non-literal/i);
+  // A literal non-node program stays ignored; the literal node forms stay followed.
+  assert.deepEqual(spawned("execFileSync('git', ['x']); execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+test("plugin-hooks: the live snapshot still derives the same three scripts and F1 passes on it", () => {
+  const snap = loadSnapshot();
+  const scan = fn<Scan>("pluginHookScan")(REPO, snap);
+  assert.deepEqual(scan.scripts, ["docs/adr-cache.mjs", "docs/decisions-archive.mjs", "docs/session-brief.mjs"]);
+  assert.deepEqual(scan.unenumerable, []);
+  const r = (f1 as unknown as { checkF1: (o: unknown) => { ok: boolean; failures: string[] } }).checkF1({
+    root: REPO,
+    snapshot: snap,
+    protectedAll: ppl.protectedPaths(REPO).all,
+    judgments: [],
+    live: { status: "ok", detail: "" },
+  });
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+});
+
+test("spawn-follow: execSync in a followed script throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  for (const src of ["execSync('git status');", "exec('ls', cb);", "child_process.execSync(cmd);", "cp.exec('x');", "x.execSync('x');"]) {
+    assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|computed|non-literal|shell/i, src);
+  }
+  // Not a process call: RegExp.exec, and a literal non-node program through execFile.
+  assert.deepEqual(spawned("const m = /a(b)/.exec(s); const r = re.exec(t); execFileSync('git', ['x']);", "/r/a.mjs"), []);
+});
