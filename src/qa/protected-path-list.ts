@@ -253,8 +253,16 @@ function namedPaths(root: string): string[] {
     "~/.claude/skills/",
     "~/.claude/agents/",
     "~/.claude/plugins/", // plugin skills and commands load from here
-    // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from. The two Claude
-    // Desktop bundle roots are not yet protected and discovery executes from them; Issue #466 will protect both roots and hash-and-flag instead of executing (runbook residual).
+    // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from.
+    // #466: the two Claude Desktop bundle roots are protected too, and discovery executes only from a location on this list
+    // (src/qa/unprotected-location.ts reads this list, no second one): the classic root, and the MSIX package's redirected AppData.
+    // The MSIX publisher ID is machine-independent (Claude_<publisher>), so both are plain ~/ directory entries with no per-machine
+    // segment; <version>/<hash> sit inside each root. A redirected %APPDATA% or an unpinned Claude_* package is NOT under these
+    // entries, so a binary there is flagged and not executed. "~/.claude/dev-mods/": where Claude writes a session's mods (human ruling 2026-10-06).
+    "~/AppData/Roaming/Claude/claude-code/",
+    "~/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/",
+    "~/.claude/dev-mods/",
+    "src/qa/unprotected-location.ts", // #466: decides which binary the certifier may execute
     "~/.local/bin/",
     "~/.local/share/claude/",
     "~/.vscode/extensions/",

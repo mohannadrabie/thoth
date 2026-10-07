@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - #466: the readiness check no longer executes Claude binaries from unprotected locations; Desktop roots and dev-mods protected (scope s308-466, #308 K blocker)
+
+Refs #308, #452, #456. CRITICAL tier (policy delivery list, guard rules and the K-readiness certifier's exec gate). Plan `docs/plans/s308-466-plan-2026-10-06.md`. No wiring.
+
+- `src/qa/protected-path-list.ts`: three new named paths, `~/AppData/Roaming/Claude/claude-code/`, `~/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/` (the MSIX publisher ID is machine-independent, so no per-machine segment) and `~/.claude/dev-mods/` (human ruling 2026-10-06; story a adds the judgment entry); the new classifier module is protected too. Regenerated with `node src/qa/protected-path-list.ts --write` (122 to 126 paths): `src/policy/config/shipped-defaults.json` and `docs/plans/s308-K-proposed-settings-2026-10-04.json`. Side effect: parent-directory move/delete/rename denies now include `~/appdata/local/packages`.
+- src/qa/unprotected-location.ts (new): `classifyLocation` / `classifyBinary` (lexical plus realpath, both must be protected) read the generated protected-path list, no second list; `sha256File`.
+- `src/qa/claude-code-write-deny-extract.ts`: `checkExtraction` calls the version provider only for a binary at a protected location. An unprotected one (an absolute PATH entry outside the protected dirs, the `THOTH_CLAUDE_BIN` override outside them, a redirected `%APPDATA%`, an unpinned `Claude_*` package) is hashed (sha256), its extraction still read, and it is FAIL with `UNVERIFIED-UNPROTECTED`. Fail-closed: never PASS, never SKIPPED, exit 1.
+- Opt-in: `THOTH_EXEC_UNPROTECTED=1` (exact string, read from the environment per run, default off, no CLI flag) executes it; the final line then marks it `[exec-opt-in]` with its sha256. `src/qa/cc-extraction-covers-judged.ts` prints the hash and flag; `src/qa/k-readiness.ts` is unchanged (the opt-in reaches the row through the inherited environment only).
+- `docs/runbooks/k-kill-switch-and-verification.md`: the section 7 residual rewritten. Residuals: the hash is reported, not compared to an anchor; a redirected profile needs the opt-in.
+- Tests (written failing first, commit 451eacb): ULOC-*, PPL-desktop-roots-*, PPL-dev-mods-*, CC-no-exec-unprotected/* (provider spy and a copied node binary through the real default provider), CC-exec-single-site, CC-flagged-*, CC-optin-*, CC-override-gated-like-any-location, KR-cc-row-optin-env-only.
+
 ### Changed - decisions archive sweep (scope s308-archive-sweep, #308 K blocker prep)
 
 Refs #183, #308. CRITICAL tier (secret-scan allowlist is a sensitive area). Plan `docs/plans/s308-archive-sweep-plan-2026-10-06.md`. THOTH-ADR-0002 value-scoped rules.

@@ -12,6 +12,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { protectedPaths } from "./protected-path-list.ts";
+import { classifyBinary, sha256File, type Location } from "./unprotected-location.ts";
 
 const ANCHOR = '"shell-snapshots","session-env","plugins"';
 const END_MARK = "bareGitRepoScrubPaths.length=0";
@@ -183,13 +185,28 @@ export interface BinaryResult {
   version?: string;
   status: "PASS" | "FAIL";
   reasons: string[];
+  /** #466: where the binary sits relative to the protected-path list. Only a protected one is executed by default. */
+  location: Location;
+  /** #466: sha256 of the bytes, read without executing (always present when the file could be read). */
+  sha256?: string;
+  /** #466: true only when the version provider was called for this binary. */
+  executed: boolean;
+  /** #466: set when an unprotected binary was NOT executed (no opt-in). Fail-closed: the binary is FAIL. */
+  flag?: typeof UNVERIFIED;
   counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number };
 }
+
+/** #466: the per-run opt-in. Read from the env passed in, on every call; never stored, never defaulted on. */
+export const EXEC_UNPROTECTED_ENV = "THOTH_EXEC_UNPROTECTED";
+const UNVERIFIED = "UNVERIFIED-UNPROTECTED" as const;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+let cachedProtected: readonly string[] | undefined;
+const realProtectedList = (): readonly string[] => (cachedProtected ??= protectedPaths(REPO_ROOT).all);
 
 const JUDGMENT = fileURLToPath(new URL("../../docs/qa/claude-code-write-deny-judgment.json", import.meta.url));
 
 /** Tri-state check of EVERY installed Claude Code against the judgment file. Each binary found must pass on its own. None found is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
-export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath: string = JUDGMENT): CheckResult {
+export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath: string = JUDGMENT, protectedList?: readonly string[]): CheckResult {
   const found = discoverClaudeBinaries(env);
   if (found.length === 0) {
     const reason = "no installed Claude Code binary";
@@ -201,21 +218,41 @@ export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionPro
   } catch (e) {
     return { status: "FAIL", reasons: [`judgment file unreadable or invalid (${judgmentPath}): ${e instanceof Error ? e.message : String(e)}`], binaries: [] };
   }
-  const binaries = found.map((b) => checkOne(b, j, versionProvider));
+  const ctx: Ctx = { home: env["USERPROFILE"] || env["HOME"] || homedir(), protectedAll: protectedList ?? realProtectedList(), optIn: env[EXEC_UNPROTECTED_ENV] === "1" };
+  const binaries = found.map((b) => checkOne(b, j, versionProvider, ctx));
   const reasons = binaries.flatMap((b) => b.reasons.map((r) => `${b.path}: ${r}`));
   return { status: binaries.every((b) => b.status === "PASS") ? "PASS" : "FAIL", reasons, binaries };
 }
 
-function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) => string): BinaryResult {
+interface Ctx {
+  home: string;
+  protectedAll: readonly string[];
+  optIn: boolean;
+}
+
+function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) => string, ctx: Ctx): BinaryResult {
   const binary = b.path;
   const reasons: string[] = [];
   let version: string | undefined;
+  // #466: only a binary at a protected location is executed by default; an unprotected one is hashed and flagged (fail-closed).
+  const location = classifyBinary(binary, ctx.home, ctx.protectedAll);
+  const mayExecute = location === "protected" || ctx.optIn;
+  let sha256: string | undefined;
   try {
-    version = parseClaudeVersion(versionProvider(binary));
-    if (version === undefined) reasons.push("installed Claude Code version is unparseable");
-    else if (version !== j.claudeCodeVersion) reasons.push(`installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}: re-run extraction, re-judge every new entry, then bump claudeCodeVersion`);
+    sha256 = sha256File(binary);
   } catch (e) {
-    reasons.push(`installed Claude Code version could not be read: ${e instanceof Error ? e.message : String(e)}`);
+    reasons.push(`binary could not be hashed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!mayExecute) {
+    reasons.push(`${UNVERIFIED}: not executed, sha256=${sha256 ?? "unreadable"}; its location is not on the protected-path list, so a session could have planted it. Set ${EXEC_UNPROTECTED_ENV}=1 for this run to execute it, or remove it`);
+  } else {
+    try {
+      version = parseClaudeVersion(versionProvider(binary));
+      if (version === undefined) reasons.push("installed Claude Code version is unparseable");
+      else if (version !== j.claudeCodeVersion) reasons.push(`installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}: re-run extraction, re-judge every new entry, then bump claudeCodeVersion`);
+    } catch (e) {
+      reasons.push(`installed Claude Code version could not be read: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   let counts: BinaryResult["counts"];
   try {
@@ -227,7 +264,7 @@ function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) =
   } catch (e) {
     reasons.push(e instanceof Error ? e.message : String(e));
   }
-  return { path: b.path, source: b.source, override: b.override, ...(version === undefined ? {} : { version }), status: reasons.length === 0 ? "PASS" : "FAIL", reasons, ...(counts === undefined ? {} : { counts }) };
+  return { path: b.path, source: b.source, override: b.override, ...(version === undefined ? {} : { version }), status: reasons.length === 0 ? "PASS" : "FAIL", reasons, location, executed: mayExecute, ...(sha256 === undefined ? {} : { sha256 }), ...(mayExecute ? {} : { flag: UNVERIFIED }), ...(counts === undefined ? {} : { counts }) };
 }
 
 if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {

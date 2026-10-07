@@ -9,7 +9,8 @@ export function runCli(env: NodeJS.ProcessEnv = process.env, versionProvider: (b
   const one = (b: (typeof r.binaries)[number]): string => {
     const c = b.counts;
     const counts = c === undefined ? "" : `, user ${String(c.extractedUser)}/${String(c.judgedUser)}, project ${String(c.extractedProject)}/${String(c.judgedProject)}`;
-    return `${b.path} (version ${b.version ?? "unknown"}${counts}) ${b.status}${b.override ? " [override]" : ""}`;
+    const unprot = b.location === "unprotected" ? ` sha256=${b.sha256 ?? "unreadable"}${b.executed ? " [exec-opt-in]" : ` ${b.flag ?? ""}`}` : "";
+    return `${b.path} (version ${b.version ?? "unknown"}${counts}) ${b.status}${b.override ? " [override]" : ""}${unprot}`;
   };
   const checked = r.binaries.map(one).join("; ");
   const suffix = checked === "" ? "" : ` | checked: ${checked}`;

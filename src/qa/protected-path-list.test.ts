@@ -153,22 +153,22 @@ test("PPL-desktop-roots-named: both Claude Desktop bundle roots are named protec
 });
 
 test("PPL-desktop-roots-rules-and-edit-entries: each root has a shipped deny rule, K Edit entries and parent-dir rules", () => {
-  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets: string[]; verbs: string[] }> }).rules;
+  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets?: string[]; verbs?: string[] }> }).rules;
   const proposal = readFileSync(`${REPO}docs/plans/s308-K-proposed-settings-2026-10-04.json`, "utf8");
   for (const root of DESKTOP_ROOTS) {
-    const hit = rules.find((r) => r.targets.includes(root.slice(0, -1)) && r.targets.includes(root));
+    const hit = rules.find((r) => r.targets?.includes(root.slice(0, -1)) && r.targets?.includes(root));
     assert.ok(hit, `${root}: a deny rule covers the directory and its children`);
-    assert.deepEqual([...hit.verbs].sort(), ["create", "delete", "modify", "move", "rename", "write"]);
+    assert.deepEqual([...(hit.verbs ?? [])].sort(), ["create", "delete", "modify", "move", "rename", "write"]);
     for (const e of editDenyEntries(root)) assert.ok(proposal.includes(JSON.stringify(e).slice(1, -1)), `K Edit entry present: ${e}`);
-    for (const d of parentDirs([root])) assert.ok(rules.some((r) => r.targets.includes(d) && r.verbs.includes("move")), `parent rule present: ${d}`);
+    for (const d of parentDirs([root])) assert.ok(rules.some((r) => r.targets?.includes(d) && r.verbs?.includes("move")), `parent rule present: ${d}`);
   }
 });
 
 test("PPL-dev-mods-named-and-denied: ~/.claude/dev-mods/ is a named protected path with a deny rule, K Edit entries and no extra over-reach", () => {
   const dev = "~/.claude/dev-mods/";
   assert.ok(protectedPaths(REPO).named.includes(dev));
-  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets: string[] }> }).rules;
-  assert.ok(rules.some((r) => r.targets.includes("~/.claude/dev-mods") && r.targets.includes(dev)));
+  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets?: string[] }> }).rules;
+  assert.ok(rules.some((r) => r.targets?.includes("~/.claude/dev-mods") && r.targets?.includes(dev)));
   const proposal = readFileSync(`${REPO}docs/plans/s308-K-proposed-settings-2026-10-04.json`, "utf8");
   for (const e of editDenyEntries(dev)) assert.ok(proposal.includes(JSON.stringify(e).slice(1, -1)), e);
 });
