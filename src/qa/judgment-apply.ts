@@ -10,7 +10,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const WRITE_DENY_SECTIONS = ["user", "project", "projectRoot", "userOutsideWindow", "projectOutsideWindow"] as const;
+/** `anywhere` (#477/#478): census names judged ONCE for both levels (~/.claude/<name> and <project>/.claude/<name>); a protected one names BOTH paths. */
+export const WRITE_DENY_SECTIONS = ["user", "project", "projectRoot", "anywhere"] as const;
 type Section = (typeof WRITE_DENY_SECTIONS)[number];
 const WRITE_DENY_JUDGMENTS: readonly string[] = ["protected", "residual"];
 const TOOL_JUDGMENTS: readonly string[] = ["exec-routed", "exec-residual", "not-exec"];
@@ -20,6 +21,9 @@ export interface WriteDenyEntry {
   judgment: "protected" | "residual";
   reason: string;
   path?: string;
+  /** anywhere section, protected only: the two named protected paths the one judgment covers. */
+  userPath?: string;
+  projectPath?: string;
 }
 export interface ToolEntry {
   tool: string;
@@ -45,7 +49,11 @@ function checkWriteDenyEntry(section: string, e: WriteDenyEntry): void {
   if (typeof e?.name !== "string" || e.name.trim() === "") throw new Error(`${label}: entry needs a name`);
   if (!WRITE_DENY_JUDGMENTS.includes(e.judgment)) throw new Error(`${label}: unknown judgment ${JSON.stringify(e.judgment)}`);
   if (typeof e.reason !== "string" || e.reason.trim() === "") throw new Error(`${label}: empty reason`);
-  if (e.judgment === "protected" && (typeof e.path !== "string" || e.path.trim() === "")) throw new Error(`${label}: a protected entry names its path`);
+  const named = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+  if (section === "anywhere") {
+    if (e.judgment === "protected" && !(named(e.userPath) && named(e.projectPath))) throw new Error(`${label}: a protected anywhere entry names both its userPath and its projectPath`);
+    if (e.path !== undefined) throw new Error(`${label}: an anywhere entry uses userPath and projectPath, not path`);
+  } else if (e.judgment === "protected" && !named(e.path)) throw new Error(`${label}: a protected entry names its path`);
 }
 function checkToolEntry(e: ToolEntry): void {
   const label = `toolExec:${String(e?.tool)}`;
