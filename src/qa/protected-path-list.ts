@@ -177,7 +177,7 @@ export interface PluginHookScan {
   outside: string[];
   /** "<plugin>: <token>" for each in-repo script token that does not exist on disk (reported, not protected). */
   absent: string[];
-  /** Commands naming no script at all (listed, not thrown; F1 requires a human judgment). */
+  /** Commands not fully accounted for (no script, an extensionless or unknown program, a partly assembled or missing path, a substitution), and spawned scripts naming no file: listed, not thrown; F1 requires a human judgment. */
   unenumerable: string[];
   unenumerableBy: Array<{ plugin: string; command: string }>;
   /** Enabled plugins with no install record. */
@@ -194,17 +194,137 @@ export function extractScriptTokens(command: string): string[] {
   return [...new Set(tokens)];
 }
 
-type TokenClass = { kind: "inside"; rel: string; read: string } | { kind: "outside" };
+/** "unresolved": the token is partly assembled at run time (a variable or template piece), so what it names cannot be known. Fails closed. */
+type TokenClass = { kind: "inside"; rel: string; read: string } | { kind: "outside" } | { kind: "unresolved" };
 
 function classifyToken(token: string): TokenClass {
   const proj = /^\$\{?CLAUDE_PROJECT_DIR\}?[\\/](.+)$/.exec(token);
-  if (proj === null && (token.includes("$") || token.startsWith("~") || token.startsWith("/") || token.startsWith("\\") || /^[A-Za-z]:/.test(token))) return { kind: "outside" };
+  const pluginRoot = /^\$\{?CLAUDE_PLUGIN_ROOT\}?[\\/](.+)$/.exec(token);
+  if (pluginRoot !== null) return pluginRoot[1]!.includes("$") ? { kind: "unresolved" } : { kind: "outside" };
+  if ((proj !== null ? proj[1]! : token).includes("$")) return { kind: "unresolved" };
+  if (proj === null && (token.startsWith("~") || token.startsWith("/") || token.startsWith("\\") || /^[A-Za-z]:/.test(token))) return { kind: "outside" };
   const n = posix.normalize((proj === null ? token : proj[1]!).split("\\").join("/"));
   if (n === ".." || n.startsWith("../") || n.startsWith("/")) return { kind: "outside" };
   return { kind: "inside", rel: canonicalizePathTarget(n), read: n };
 }
 
+interface ShellWord {
+  text: string;
+  /** A command substitution ($( or a backtick) outside single quotes: its result cannot be known. */
+  subst: boolean;
+}
+
+/** Quote-aware split of a hook command into simple commands (separated by newline, ;, |, & and their doubles). Returns undefined for an
+ * unterminated quote. A separator inside quotes (the body of node -e) does not split. */
+function shellSimpleCommands(cmd: string): ShellWord[][] | undefined {
+  const cmds: ShellWord[][] = [];
+  let cur: ShellWord[] = [];
+  let w = "";
+  let has = false;
+  let subst = false;
+  let q = "";
+  const endWord = (): void => {
+    if (has) cur.push({ text: w, subst });
+    w = "";
+    has = false;
+    subst = false;
+  };
+  const endCmd = (): void => {
+    endWord();
+    if (cur.length > 0) cmds.push(cur);
+    cur = [];
+  };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd.charAt(i);
+    if (q === "'") {
+      if (c === "'") q = "";
+      else w += c;
+      continue;
+    }
+    if (q === '"') {
+      if (c === "\\" && i + 1 < cmd.length) {
+        w += cmd.charAt(++i);
+        continue;
+      }
+      if (c === '"') {
+        q = "";
+        continue;
+      }
+      if (c === "`" || (c === "$" && cmd.charAt(i + 1) === "(")) subst = true;
+      w += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      q = c;
+      has = true;
+      continue;
+    }
+    if (c === "\\" && i + 1 < cmd.length) {
+      w += cmd.charAt(++i);
+      has = true;
+      continue;
+    }
+    if (c === "`" || (c === "$" && cmd.charAt(i + 1) === "(")) subst = true;
+    if (c === " " || c === "\t" || c === "\r") endWord();
+    else if (c === "\n" || c === ";" || c === "|" || c === "&") endCmd();
+    else {
+      w += c;
+      has = true;
+    }
+  }
+  if (q !== "") return undefined;
+  endCmd();
+  return cmds;
+}
+
+const INTERPRETERS = new Set(["node", "nodejs", "bash", "sh", "zsh", "dash", "pwsh", "powershell", "python", "python3", "bun", "tsx", "ts-node"]);
+const INLINE_FLAGS = new Set(["-e", "--eval", "-p", "--print", "-c"]);
+
+/** Every executed program in the command is accounted for: each simple command is an interpreter run on a script file (or with an inline
+ * body that names at least one script), or runs a script file directly. Anything else (an extensionless program, a command substitution,
+ * an unterminated quote) is not accounted for, so the whole command is unenumerable (#473). Disclosed: an inline body is only checked to
+ * name a script; what else it runs is covered by the spawn-follow of the scripts it names, not here. */
+export function commandFullyAccounted(command: string): boolean {
+  const simple = shellSimpleCommands(command);
+  if (simple === undefined || simple.length === 0) return false;
+  for (const words of simple) {
+    let i = 0;
+    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!.text)) i++;
+    const prog = words[i];
+    if (prog === undefined || prog.subst) return false;
+    const base = (prog.text.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.exe$/, "");
+    if (SCRIPT_EXT.test(prog.text)) {
+      if (words.slice(i + 1).some((x) => x.subst)) return false;
+      continue;
+    }
+    if (!INTERPRETERS.has(base)) return false;
+    let ok = false;
+    for (let j = i + 1; j < words.length; j++) {
+      const a = words[j]!;
+      if (INLINE_FLAGS.has(a.text)) {
+        const body = words[j + 1];
+        ok = body !== undefined && extractScriptTokens(body.text).length > 0 && !words.slice(j + 2).some((x) => x.subst);
+        break;
+      }
+      if (a.text.startsWith("-")) continue;
+      ok = !a.subst && SCRIPT_EXT.test(a.text) && !words.slice(j + 1).some((x) => x.subst);
+      break;
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+
 const SPAWN_FNS = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
+
+/** exec(...) / execSync(...): a bare call, any .execSync(...), or .exec(...) on child_process / cp (RegExp.exec is not a process call). */
+function isShellExecCall(node: ts.CallExpression, name: string | undefined): boolean {
+  if (name !== "exec" && name !== "execSync") return false;
+  const callee = node.expression;
+  if (ts.isIdentifier(callee)) return true;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  return name === "execSync" || /^(child_?process|cp)$/i.test(callee.expression.getText());
+}
 const NODE_COMMANDS = new Set(["node", "node.exe"]);
 
 /** Script literals a source text spawns with node: execFile/execFileSync/spawn/spawnSync(process.execPath | "node", ["x.mjs", ...]) and
@@ -223,9 +343,16 @@ export function spawnedScripts(text: string, fileName: string): string[] {
         const a = node.arguments[0];
         if (a === undefined || !ts.isStringLiteralLike(a)) refuse("fork() argument");
         else if (SCRIPT_EXT.test(a.text)) found.add(a.text);
+      } else if (isShellExecCall(node, name)) {
+        // exec / execSync run a shell command string: nothing here can be followed statically.
+        refuse(`${name ?? "exec"}() shell command string`);
       } else if (name !== undefined && SPAWN_FNS.has(name)) {
         const cmd = node.arguments[0];
-        const isNode = cmd !== undefined && (cmd.getText(sf) === "process.execPath" || cmd.getText(sf) === "process.argv0" || (ts.isStringLiteralLike(cmd) && NODE_COMMANDS.has(cmd.text)));
+        // The program must be a literal: process.execPath / "node" (followed) or another string literal such as "git" (not followed).
+        // An alias, a variable or any computed program cannot be told apart from node, so it fails closed.
+        const cmdText = cmd?.getText(sf);
+        const isNode = cmd !== undefined && (cmdText === "process.execPath" || cmdText === "process.argv0" || (ts.isStringLiteralLike(cmd) && NODE_COMMANDS.has(cmd.text)));
+        if (cmd === undefined || (!isNode && !ts.isStringLiteralLike(cmd))) refuse(`${name}() program`);
         if (isNode) {
           const args = node.arguments[1];
           if (args === undefined || !ts.isArrayLiteralExpression(args)) refuse(`${name}() argument list`);
@@ -253,31 +380,36 @@ export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read:
   const unenumerable: string[] = [];
   const unenumerableBy: Array<{ plugin: string; command: string }> = [];
   const queue: Array<{ rel: string; plugin: string }> = [];
-  const take = (plugin: string, token: string): void => {
+  /** Returns false when the token cannot be resolved cleanly (unresolved, or an in-repo path naming no file): the caller then fails closed. */
+  const take = (plugin: string, token: string): boolean => {
     const c = classifyToken(token);
+    if (c.kind === "unresolved") return false;
     if (c.kind === "outside") {
       outside.add(`${plugin}: ${token}`);
-      return;
+      return true;
     }
     if (read(resolve(root, c.read)) === undefined) {
       absent.add(`${plugin}: ${token}`);
-      return;
+      return false;
     }
     if (!scripts.has(c.rel)) {
       scripts.add(c.rel);
       queue.push({ rel: c.read, plugin });
     }
+    return true;
+  };
+  const markUnenumerable = (plugin: string, command: string): void => {
+    unenumerable.push(command);
+    unenumerableBy.push({ plugin, command });
   };
   for (const p of snapshot.plugins) {
     for (const f of p.files) {
       for (const cmd of f.commands) {
-        const tokens = extractScriptTokens(cmd);
-        if (tokens.length === 0) {
-          unenumerable.push(cmd);
-          unenumerableBy.push({ plugin: p.id, command: cmd });
-          continue;
-        }
-        for (const t of tokens) take(p.id, t);
+        // Fail closed: a command is enumerable only if every program or script in it is accounted for and every token resolves cleanly.
+        // Otherwise the whole command is unenumerable and the F1 row fails until the human judges it. Tokens that do resolve are still protected.
+        let clean = commandFullyAccounted(cmd);
+        for (const t of extractScriptTokens(cmd)) if (!take(p.id, t)) clean = false;
+        if (!clean) markUnenumerable(p.id, cmd);
       }
     }
   }
@@ -288,7 +420,7 @@ export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read:
     const abs = resolve(root, rel);
     const text = read(abs);
     if (text === undefined) continue;
-    for (const s of spawnedScripts(text, abs)) take(plugin, s);
+    for (const s of spawnedScripts(text, abs)) if (!take(plugin, s)) markUnenumerable(plugin, `spawned by ${rel}: ${s}`);
   }
   return {
     scripts: [...scripts].sort(),
