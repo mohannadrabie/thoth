@@ -469,6 +469,10 @@ test("scanner: constructor and computed access refused by any route", () => {
     "AsyncGeneratorFunction;",
   ];
   for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
-  // Numeric element access, identifier-tagged templates and plain member access stay fine.
+  for (const src of ["f[i + 1];", "f[g()];", "const k = `c${x}`; f[k];", "f[`a`];", "const k = 'a' + 'b'; f[k];", "f[(i, 'x')];"]) {
+    assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  }
+  // Numeric element access, identifier-tagged templates and plain member access stay fine, and so do the real index shapes.
   assert.deepEqual(spawned("const a = list[0]; const b = tag`x`; const c = obj.name; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+  assert.deepEqual(spawned("for (let i = 0; i < fm.length; i++) { fm[i]; fm[j]; body[j]; lines[i]; cells[ratifiedIdx]; c[c.length - 1]; x[(i - 1) * 2 % n / 3]; x[-1]; }", "/r/a.mjs"), []);
 });
