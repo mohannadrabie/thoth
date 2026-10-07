@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - decisions archive sweep (scope s308-archive-sweep, #308 K blocker prep)
+
+Refs #183, #308. CRITICAL tier (secret-scan allowlist is a sensitive area). Plan `docs/plans/s308-archive-sweep-plan-2026-10-06.md`. THOTH-ADR-0002 value-scoped rules.
+
+- `docs/qa/secret-scan-allowlist.json`: one new entry, path `docs/decisions-archive.md`, pattern email-address, one value hash (the same hash the `docs/decisions.md` entry carries), non-empty reason. The `docs/decisions.md` entries are unchanged. Totals: 51 to 52 entries, 109 to 110 value hashes (measured by script; `allowlist-tool verify` is a migration-only check and does not apply).
+- `node docs/decisions-archive.mjs --apply`: 6 due rows moved from `docs/decisions.md` to `docs/decisions-archive.md`, byte-identical (checked by a throwaway script); the 2026-10-06 rows stayed; a second dry run reports 0 eligible.
+- Evidence: pre-commit scan PASS with 0 blocking after the sweep; negative control (allowlist without the new entry) blocks with exactly 2 archive matches.
+
 ### Fixed - Issue #452 (S7, #308 K blocker): the write-deny extraction check fails in both directions and pins the installed version
 
 Refs #308, #462, #456. CRITICAL tier (the check certifies K's Edit-deny completeness; an evidence surface). Plan `docs/plans/s308-452-extractor-plan-2026-10-05.md`. No wiring, no judgment-file change (`docs/qa/claude-code-write-deny-judgment.json` is byte-identical).
