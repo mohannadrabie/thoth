@@ -476,3 +476,16 @@ test("scanner: constructor and computed access refused by any route", () => {
   assert.deepEqual(spawned("const a = list[0]; const b = tag`x`; const c = obj.name; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
   assert.deepEqual(spawned("for (let i = 0; i < fm.length; i++) { fm[i]; fm[j]; body[j]; lines[i]; cells[ratifiedIdx]; c[c.length - 1]; x[(i - 1) * 2 % n / 3]; x[-1]; }", "/r/a.mjs"), []);
 });
+
+// #484 (re-confirm 5): a const bound to the string "constructor" reaches Function through a call argument. Written FAILING FIRST.
+test("scanner: a const bound to the string constructor throws", () => {
+  const shape = "const k = 'constructor'; const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(function () {}), k); d.value('return 1')();";
+  const read = fakeRead({ "/r/docs/a.mjs": shape });
+  assert.equal(fn<Scan>("pluginHookScan")("/r", syntheticSnapshot(["node docs/a.mjs"]), read).unenumerable.length, 1);
+  // The same through a node -e body, and in every quote style the scanner reads as a plain string.
+  for (const lit of ["'constructor'", '"constructor"', "`constructor`"]) {
+    const body = `const k = ${lit}; use(k);`;
+    assert.throws(() => fn<string[]>("spawnedScripts")(body, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, body);
+  }
+  assert.deepEqual(fn<string[]>("spawnedScripts")("const k = 'construct'; use(k);", "/r/a.mjs"), []);
+});
