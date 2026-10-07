@@ -219,7 +219,7 @@ test("CC-cert/options-object: the protected list is passed as an options object 
 });
 
 // ---- census: `.claude` names anywhere in the binary, one namespace per name (#477, #478) -----------------------------------------
-const OUTSIDE = 'G(Ml(Ie,".claude","ide"),!0);G(Ml(Se(),"outside-user"),!1);';
+const OUTSIDE = 'G(Ml(Ie,".claude","zz-probe"),!0);G(Ml(Se(),"outside-user"),!1);';
 /** Byte snippets copied (read-only) from the 2.1.289 VS Code extension binary on 2026-10-06. */
 const REAL_289 = [
   'function JJn(e,n){let r=Ca(e);switch(n){case"project":return je(oe(),".claude","agent-memory",r)+Ye;case"local":return ym(r);case"user":return je(VV(),"agent-memory",r)+Ye}}',
@@ -233,13 +233,13 @@ test("CC-census/extractor: the whole-binary scan reports out-of-window names onc
   const { user, project } = full();
   const bin = Buffer.from(fakeBinary(user, project, OUTSIDE), "latin1");
   const ex = extractWriteDeny(bin);
-  assert.ok(ex.census?.includes("ide"));
+  assert.ok(ex.census?.includes("zz-probe"));
   assert.ok(ex.census?.includes("outside-user"));
-  assert.ok(!ex.project.includes("ide") && !ex.user.includes("outside-user"));
+  assert.ok(!ex.project.includes("zz-probe") && !ex.user.includes("outside-user"));
   assert.equal(new Set(ex.census).size, ex.census?.length, "each name once");
   const plain = extractWriteDeny(Buffer.from(fakeBinary(user, project), "latin1"));
   assert.deepEqual(plain.user, ex.user);
-  assert.ok(!plain.census?.includes("ide"));
+  assert.ok(!plain.census?.includes("zz-probe"));
 });
 
 test("CC-census/chunked: a shape straddling a scan-chunk boundary is still found", () => {
@@ -248,7 +248,7 @@ test("CC-census/chunked: a shape straddling a scan-chunk boundary is still found
   const pad = "z".repeat(16 * 1024 * 1024 - head.length - 20);
   const bin = Buffer.from(`${head}${pad}${OUTSIDE}`, "latin1");
   assert.ok(bin.length > 16 * 1024 * 1024);
-  assert.ok(extractWriteDeny(bin).census?.includes("ide"));
+  assert.ok(extractWriteDeny(bin).census?.includes("zz-probe"));
 });
 
 test("CC-census/call-and-variable-base: a call base, a variable-held config dir and a home-rooted base are all found (2.1.289 byte snippets)", () => {
@@ -261,17 +261,17 @@ test("CC-census/call-and-variable-base: a call base, a variable-held config dir 
 test("CC-census/home-rooted-project-shape: a home-rooted .claude site is one census name; judging it at the project level only does not clear it", () => {
   const h = home();
   const { user, project } = full();
-  const homeRooted = 'r.push(_m(TO.homedir(),".claude","ide").normalize("NFC"));if(n)r.push(_m(n,".claude","ide"));';
+  const homeRooted = 'r.push(_m(TO.homedir(),".claude","zz-probe").normalize("NFC"));if(n)r.push(_m(n,".claude","zz-probe"));';
   const local = place(h, ".local/bin/claude.exe", user, project, homeRooted);
   const vp = versions({ [local]: judged().claudeCodeVersion });
   const bare = check(envOf(h), vp);
-  assert.ok(bare.reasons.join("\n").includes("census:ide"), bare.reasons.join("\n"));
+  assert.ok(bare.reasons.join("\n").includes("census:zz-probe"), bare.reasons.join("\n"));
   assert.ok(!bare.reasons.join("\n").includes("census:project:") && !bare.reasons.join("\n").includes("census:user:"), "no per-level label");
   const p = join(h, "judgment.json");
-  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), project: [...judged().project, { name: "ide", judgment: "protected", path: ".claude/ide/", reason: "test" }] }), "utf8");
+  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), project: [...judged().project, { name: "zz-probe", judgment: "protected", path: ".claude/zz-probe/", reason: "test" }] }), "utf8");
   const projectOnly = check(envOf(h), vp, p);
-  assert.ok(projectOnly.reasons.join("\n").includes("census:ide"), "a project-level judgment alone leaves the user level open");
-  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "ide", judgment: "residual", reason: "test" }] }), "utf8");
+  assert.ok(projectOnly.reasons.join("\n").includes("census:zz-probe"), "a project-level judgment alone leaves the user level open");
+  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "zz-probe", judgment: "residual", reason: "test" }] }), "utf8");
   const both = check(envOf(h), vp, p);
   assert.equal(both.status, "PASS", both.reasons.join("; "));
 });
@@ -292,9 +292,9 @@ test("CC-census/unjudged-fails-then-judged-passes: an out-of-window name fails a
   const vp = versions({ [local]: judged().claudeCodeVersion });
   const bad = check(envOf(h), vp);
   assert.equal(bad.status, "FAIL");
-  assert.ok(bad.reasons.join("\n").includes("census:ide"), bad.reasons.join("\n"));
+  assert.ok(bad.reasons.join("\n").includes("census:zz-probe"), bad.reasons.join("\n"));
   assert.ok(bad.reasons.join("\n").includes("census:outside-user"));
-  const withAnywhere = { ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "ide", judgment: "residual", reason: "test" }, { name: "outside-user", judgment: "residual", reason: "test" }] };
+  const withAnywhere = { ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "zz-probe", judgment: "residual", reason: "test" }, { name: "outside-user", judgment: "residual", reason: "test" }] };
   const p = join(h, "judgment.json");
   writeFileSync(p, JSON.stringify(withAnywhere), "utf8");
   const ok = check(envOf(h), vp, p);
