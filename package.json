@@ -44,6 +44,7 @@
     "qa:k-merge": "node src/qa/k-settings-merge.ts",
     "qa:k3": "node src/qa/k3-edit-deny-covers-fixture.ts",
     "qa:k5": "node src/qa/k5-pretooluse-entry-uses-launcher.ts",
+    "qa:judgment-apply": "node src/qa/judgment-apply.ts",
     "qa:cc-extraction-covers-judged": "node src/qa/cc-extraction-covers-judged.ts",
     "qa:k-readiness": "node src/qa/k-readiness.ts",
     "qa:k-readiness-real-test": "node --test src/qa/k-readiness.real-run.ts",

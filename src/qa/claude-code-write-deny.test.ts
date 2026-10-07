@@ -17,7 +17,7 @@ const PROPOSAL = readFileSync(`${ROOT}docs/plans/s308-K-proposed-settings-2026-1
 test("CC-judgment-structure: every entry has a judgment of protected or residual and a reason; every protected entry names its path", () => {
   const j = judged();
   assert.ok(j.claudeCodeVersion.length > 0);
-  for (const e of [...j.user, ...j.project]) {
+  for (const e of [...j.user, ...j.project, ...(j.userOutsideWindow ?? []), ...(j.projectOutsideWindow ?? [])]) {
     assert.ok(e.judgment === "protected" || e.judgment === "residual", e.name);
     assert.ok(e.reason.trim().length > 0, `${e.name} has a reason`);
     if (e.judgment === "protected") assert.ok((e.path ?? "").length > 0, `${e.name} names its protected path`);
@@ -30,7 +30,7 @@ test("CC-protected-entries-on-the-list: every protected judgment is a named prot
   const j = judged();
   const named = new Set(PATHS.named);
   const rules = new Set((JSON.parse(readFileSync(`${ROOT}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets: string[] }> }).rules.flatMap((r) => r.targets));
-  for (const e of [...j.user, ...j.project, ...(j.projectRoot ?? [])]) {
+  for (const e of [...j.user, ...j.project, ...(j.projectRoot ?? []), ...(j.userOutsideWindow ?? []), ...(j.projectOutsideWindow ?? [])]) {
     if (e.judgment !== "protected") continue;
     const p = e.path!.toLowerCase();
     assert.ok(named.has(p), `${e.name}: ${p} is not a named protected path`);
@@ -64,7 +64,8 @@ test("CC-installed-extraction-fully-judged: the list extracted from the installe
   }
   console.log(`CC-extraction: ${String(got.user.length)} user entries, ${String(got.project.length)} project entries from ${got.binary}`);
   assert.ok(got.user.includes("shell-snapshots") && got.user.includes("session-env") && got.project.includes("skills"), "sanity: the known entries are extracted (an empty or partial extraction is a failure, not a pass)");
-  assert.deepEqual(unjudged(got, judged()), []);
+  // the window lists only: the whole-binary census (names outside the window) is checked by installed-live and the CC-census tests
+  assert.deepEqual(unjudged({ user: got.user, project: got.project, mcpJson: got.mcpJson }, judged()), []);
 });
 
 // ---- #452: both directions plus the installed version ------------------------------------------------------------------

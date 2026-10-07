@@ -107,7 +107,7 @@ test("CC-cert/obsolete-vscode-dir: an extension dir listed in the editor's .obso
   const obsolete = place(h, EXT("2.1.267"), user, project);
   const active = place(h, EXT("2.1.250"), user, project);
   writeFileSync(join(h, ".vscode", "extensions", ".obsolete"), JSON.stringify({ "anthropic.claude-code-2.1.267-win32-x64": true }), "utf8");
-  const r = checkExtraction(envOf(h), versions({ [obsolete]: "2.1.267", [active]: "2.1.250" }));
+  const r = checkExtraction(envOf(h), versions({ [obsolete]: "2.1.100", [active]: "2.1.250" }));
   const o = find(r.binaries, obsolete);
   const a = find(r.binaries, active);
   assert.deepEqual([o.certified, o.status, o.remedy], [false, "FAIL", "prune"]);

@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added - #463 / #467 a1: certified set, per-binary remedy, whole-binary census, judgment applier (scope s308-463-467, #308 K blocker)
+
+Refs #308, refs #463, refs #467 (both close after a2). CRITICAL tier. Plan `docs/plans/s308-463-467-plan-2026-10-06.md` (part a1 only; a2 waits on the human's 2.1.289 extraction and tool-inventory capture). No judgment or inventory data changes in a1.
+
+- `src/qa/claude-code-write-deny-extract.ts`: one definition of the certified set (`certifyBinary`): every discovered binary is certified except a retained versions/ entry and an extension dir listed in the editor's extensions/.obsolete file (an unreadable .obsolete file fails closed: all certified, plus a reason). Each binary result carries `certified` and a `remedy`: update (certified, other version), re-judge (certified, extraction gap), prune (uncertified, failing; never re-judge). `BinaryResult.flag` is now a union (adds UNCERTIFIED-STALE) and `checkExtraction` takes its protected list in an options object (4th parameter). The #466 exec gate is unchanged: `--version` still runs only for binaries in protected dirs or under the opt-in.
+- Census: `extractWriteDeny` also returns `userAnywhere` and `projectAnywhere`, the same two path shapes over the whole binary in 16 MiB chunks (user shape limited to the config-dir getter ids the window used). A census name that is not judged fails as `census:user:<name>` or `census:project:<name>`. The judgment file may carry `userOutsideWindow` and `projectOutsideWindow` sections, not subject to judged-but-not-extracted. The extractor CLI prints the census.
+- `src/qa/cc-extraction-covers-judged.ts`: the final line marks each binary certified or uncertified and shows its remedy.
+- `src/qa/judgment-apply.ts` (npm script qa:judgment-apply): the only way the two judgment files change, from a committed approved-delta file; idempotent, refuses conflicting overwrites and bad input.
+- Tests: `src/qa/cc-certified.test.ts` and `src/qa/judgment-apply.test.ts` (written failing first); `src/qa/claude-code-write-deny.test.ts` extends the structure and protected-list loops to the new sections and narrows CC-installed-extraction-fully-judged to the window lists (the census is checked by installed-live and the CC-census tests).
+
 ### Changed - #455: repo scripts that enabled plugins' hooks execute are on the protected list, derived from the hook commands (scope s308-455, #308 K blocker)
 
 Refs #308. CRITICAL tier (guard policy generator, shipped deny rules, K precondition). Plan `docs/plans/s308-455-plan-2026-10-06.md`. No wiring.

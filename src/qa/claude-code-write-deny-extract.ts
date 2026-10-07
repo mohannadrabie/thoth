@@ -25,6 +25,10 @@ export interface Extracted {
   project: string[];
   /** True when the literal .mcp.json appears in the same function (a project-root file). */
   mcpJson: boolean;
+  /** #463 census: every `(<config-dir getter>(),"<name>")` shape anywhere in the binary, not only in the anchored window. Absent for a hand-built Extracted. */
+  userAnywhere?: string[];
+  /** #463 census: every `(<id>,".claude","<name>")` shape anywhere in the binary. */
+  projectAnywhere?: string[];
 }
 
 /** Where the installed binary is, or undefined. THOTH_CLAUDE_BIN overrides (used by tests). */
@@ -40,6 +44,32 @@ export interface FoundBinary {
   source: string;
   /** True only for THOTH_CLAUDE_BIN, which is checked in addition to the discovered ones, never instead. */
   override: boolean;
+  /** #463/#467: in the certified set (the binaries a governed session can run). A retained versions/ entry or a VS Code-obsolete extension dir is not. */
+  certified: boolean;
+  /** Why it is not certified (uncertified only). */
+  uncertifiedWhy?: string;
+  /** Notes discovery attached (e.g. an unreadable .obsolete file); each becomes a reason on the binary. */
+  notes?: string[];
+}
+
+/** #463/#467: the ONE definition of the certified set. Certified = every discovered binary except a retained versions/ entry and an extension dir the editor marks obsolete. */
+function certifyBinary(source: string, obsolete: boolean): { certified: boolean; uncertifiedWhy?: string } {
+  if (source === "versions") return { certified: false, uncertifiedWhy: "retained versions/ entry" };
+  if (obsolete) return { certified: false, uncertifiedWhy: "VS Code-obsolete extension dir" };
+  return { certified: true };
+}
+
+/** The editor's extensions/.obsolete file: a JSON object keyed by extension dir name. Absent = nothing obsolete. Unreadable or not an object = fail closed (nothing treated as obsolete, so every dir stays certified) and a note. */
+function readObsolete(extDir: string): { names: Set<string>; note?: string } {
+  const p = join(extDir, ".obsolete");
+  if (!existsSync(p)) return { names: new Set() };
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(p, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not a JSON object");
+    return { names: new Set(Object.entries(parsed as Record<string, unknown>).filter(([, v]) => v === true).map(([k]) => k)) };
+  } catch (e) {
+    return { names: new Set(), note: `${p} is unreadable or not a JSON object (${e instanceof Error ? e.message : String(e)}); every extension dir is treated as certified, fix or delete the file` };
+  }
 }
 
 const cmpVersion = (a: string, b: string): number => {
@@ -62,12 +92,12 @@ export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): Fo
   const home = env["USERPROFILE"] || env["HOME"] || homedir();
   const out: FoundBinary[] = [];
   const seen = new Set<string>();
-  const add = (path: string | undefined, source: string, override = false): void => {
+  const add = (path: string | undefined, source: string, override = false, obsolete = false, notes: string[] = []): void => {
     if (path === undefined || path === "" || !isFile(path)) return;
     const key = resolve(path).toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ path, source, override });
+    out.push({ path, source, override, ...certifyBinary(source, obsolete), ...(notes.length === 0 ? {} : { notes }) });
   };
   add(env["THOTH_CLAUDE_BIN"], "override", true);
   add(firstFile(join(home, ".local", "bin")), "local-bin");
@@ -83,7 +113,8 @@ export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): Fo
   for (const n of list(versions).filter((x) => /^\d+\.\d+\.\d+$/.test(x)).sort(cmpVersion)) add(join(versions, n), "versions");
   for (const [root, source] of [[".vscode", "vscode"], [".vscode-insiders", "vscode-insiders"], [".cursor", "cursor"]] as const) {
     const dir = join(home, root, "extensions");
-    for (const n of list(dir).filter((x) => x.startsWith("anthropic.claude-code-")).sort()) add(firstFile(join(dir, n, "resources", "native-binary")), source);
+    const obsolete = readObsolete(dir);
+    for (const n of list(dir).filter((x) => x.startsWith("anthropic.claude-code-")).sort()) add(firstFile(join(dir, n, "resources", "native-binary")), source, false, obsolete.names.has(n), obsolete.note === undefined ? [] : [obsolete.note]);
   }
   // Claude Desktop bundles: <root>/<version>/<hash>/claude(.exe), classic install and the MSIX package's redirected AppData
   const roaming = env["APPDATA"] || join(home, "AppData", "Roaming");
@@ -114,9 +145,30 @@ export function extractWriteDeny(bin: Buffer): Extracted {
     if (!m[1]!.includes(',"') && !/\.|-|_/.test(m[1]!)) continue; // a one-word array is not one of the lists
     for (const s of m[1]!.matchAll(/"([^"]+)"/g)) if (/^[A-Za-z][A-Za-z0-9_.-]*$/.test(s[1]!) && s[1] !== "HEAD" && s[1] !== "objects" && s[1] !== "refs") user.add(s[1]!);
   }
-  for (const m of text.matchAll(/\(\w+\(\),"([^"/\\]+)"\)/g)) user.add(m[1]!);
+  const getters = new Set<string>();
+  for (const m of text.matchAll(/\((\w+)\(\),"([^"/\\]+)"\)/g)) {
+    getters.add(m[1]!);
+    user.add(m[2]!);
+  }
   for (const m of text.matchAll(/\(\w+,"\.claude","([^"/\\]+)"\)/g)) project.add(m[1]!);
-  return { user: [...user].sort(), project: [...project].sort(), mcpJson: text.includes('".mcp.json"') };
+  const census = scanWholeBinary(bin, [...getters]);
+  return { user: [...user].sort(), project: [...project].sort(), mcpJson: text.includes('".mcp.json"'), userAnywhere: [...census.user].sort(), projectAnywhere: [...census.project].sort() };
+}
+
+const SCAN_CHUNK = 16 * 1024 * 1024;
+const SCAN_OVERLAP = 512;
+/** #463 census: the same two path shapes over the WHOLE binary, in chunks (a 200 MB latin1 string is never built). The user shape is restricted to the config-dir getter ids the anchored window used, so a generic `(f(),"x")` call elsewhere is not read as a path. Disclosed limit: a path built any other way (a join with several segments) is not seen. */
+function scanWholeBinary(bin: Buffer, getters: string[]): { user: Set<string>; project: Set<string> } {
+  const user = new Set<string>();
+  const project = new Set<string>();
+  const userRe = getters.length === 0 ? undefined : new RegExp(`\\((?:${getters.join("|")})\\(\\),"([^"/\\\\]+)"\\)`, "g");
+  const projectRe = /\(\w+,"\.claude","([^"/\\]+)"\)/g;
+  for (let start = 0; start < bin.length; start += SCAN_CHUNK) {
+    const text = bin.subarray(start, Math.min(bin.length, start + SCAN_CHUNK + SCAN_OVERLAP)).toString("latin1");
+    if (userRe !== undefined) for (const m of text.matchAll(userRe)) user.add(m[1]!);
+    for (const m of text.matchAll(projectRe)) project.add(m[1]!);
+  }
+  return { user, project };
 }
 
 export function extractFromInstalled(env: NodeJS.ProcessEnv = process.env): (Extracted & { binary: string }) | undefined {
@@ -137,6 +189,9 @@ export interface Judged {
   user: JudgedEntry[];
   project: JudgedEntry[];
   projectRoot?: JudgedEntry[];
+  /** #463: sites the extractor's anchored window does not reach, judged from the whole-binary census. Not subject to judged-but-not-extracted. */
+  userOutsideWindow?: JudgedEntry[];
+  projectOutsideWindow?: JudgedEntry[];
 }
 
 /** One line per extracted entry that has no judgment; empty when every entry is judged. */
@@ -147,6 +202,10 @@ export function unjudged(ex: Extracted, j: Judged): string[] {
   for (const n of ex.user) if (!user.has(n)) out.push(`user:${n}`);
   for (const n of ex.project) if (!project.has(n)) out.push(`project:${n}`);
   if (ex.mcpJson && !(j.projectRoot ?? []).some((e) => e.name === ".mcp.json")) out.push("projectRoot:.mcp.json");
+  const userAll = new Set([...user, ...(j.userOutsideWindow ?? []).map((e) => e.name)]);
+  const projectAll = new Set([...project, ...(j.projectOutsideWindow ?? []).map((e) => e.name)]);
+  for (const n of ex.userAnywhere ?? []) if (!userAll.has(n)) out.push(`census:user:${n}`);
+  for (const n of ex.projectAnywhere ?? []) if (!projectAll.has(n)) out.push(`census:project:${n}`);
   return out;
 }
 
@@ -178,6 +237,10 @@ export interface CheckResult {
   binaries: BinaryResult[];
 }
 
+/** The remedy a failing binary needs: re-judge (certified, extraction gap), update (certified, other version), prune (uncertified, delete it). */
+export type Remedy = "re-judge" | "update" | "prune";
+export type BinaryFlag = typeof UNVERIFIED | typeof UNCERTIFIED_STALE;
+
 export interface BinaryResult {
   path: string;
   source: string;
@@ -192,13 +255,22 @@ export interface BinaryResult {
   /** #466: true only when the version provider was called for this binary. */
   executed: boolean;
   /** #466: set when an unprotected binary was NOT executed (no opt-in). Fail-closed: the binary is FAIL. */
-  flag?: typeof UNVERIFIED;
+  flag?: BinaryFlag;
+  /** #463/#467: in the certified set. */
+  certified: boolean;
+  /** #463/#467: what to do about a failing binary (absent when it passes or the failure has no remedy of these three kinds). */
+  remedy?: Remedy;
   counts?: { extractedUser: number; judgedUser: number; extractedProject: number; judgedProject: number };
 }
 
 /** #466: the per-run opt-in. Read from the env passed in, on every call; never stored, never defaulted on. Disclosed limit: under the opt-in a binary is hashed in one step and executed in a later one, and nothing compares the two, so the executed bytes can differ from the hashed ones. */
 export const EXEC_UNPROTECTED_ENV = "THOTH_EXEC_UNPROTECTED";
 const UNVERIFIED = "UNVERIFIED-UNPROTECTED" as const;
+const UNCERTIFIED_STALE = "UNCERTIFIED-STALE" as const;
+export interface CheckOptions {
+  /** The protected-path list (tests pass one; the default is the generated list). */
+  protectedList?: readonly string[];
+}
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 let cachedProtected: readonly string[] | undefined;
 const realProtectedList = (): readonly string[] => (cachedProtected ??= protectedPaths(REPO_ROOT).all);
@@ -206,7 +278,7 @@ const realProtectedList = (): readonly string[] => (cachedProtected ??= protecte
 const JUDGMENT = fileURLToPath(new URL("../../docs/qa/claude-code-write-deny-judgment.json", import.meta.url));
 
 /** Tri-state check of EVERY installed Claude Code against the judgment file. Each binary found must pass on its own. None found is SKIPPED, or FAIL under THOTH_REQUIRE_CLAUDE=1. Never PASS unless every check ran and held. */
-export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath: string = JUDGMENT, protectedList?: readonly string[]): CheckResult {
+export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionProvider: (binary: string) => string = installedClaudeVersion, judgmentPath: string = JUDGMENT, options: CheckOptions = {}): CheckResult {
   const found = discoverClaudeBinaries(env);
   if (found.length === 0) {
     const reason = "no installed Claude Code binary";
@@ -218,7 +290,7 @@ export function checkExtraction(env: NodeJS.ProcessEnv = process.env, versionPro
   } catch (e) {
     return { status: "FAIL", reasons: [`judgment file unreadable or invalid (${judgmentPath}): ${e instanceof Error ? e.message : String(e)}`], binaries: [] };
   }
-  const ctx: Ctx = { home: env["USERPROFILE"] || env["HOME"] || homedir(), protectedAll: protectedList ?? realProtectedList(), optIn: env[EXEC_UNPROTECTED_ENV] === "1" };
+  const ctx: Ctx = { home: env["USERPROFILE"] || env["HOME"] || homedir(), protectedAll: options.protectedList ?? realProtectedList(), optIn: env[EXEC_UNPROTECTED_ENV] === "1" };
   const binaries = found.map((b) => checkOne(b, j, versionProvider, ctx));
   const reasons = binaries.flatMap((b) => b.reasons.map((r) => `${b.path}: ${r}`));
   return { status: binaries.every((b) => b.status === "PASS") ? "PASS" : "FAIL", reasons, binaries };
@@ -238,6 +310,9 @@ function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) =
   const location = classifyBinary(binary, ctx.home, ctx.protectedAll);
   const mayExecute = location === "protected" || ctx.optIn;
   let sha256: string | undefined;
+  let versionMismatch = false;
+  let gap = false;
+  reasons.push(...(b.notes ?? []));
   try {
     sha256 = sha256File(binary);
   } catch (e) {
@@ -249,7 +324,10 @@ function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) =
     try {
       version = parseClaudeVersion(versionProvider(binary));
       if (version === undefined) reasons.push("installed Claude Code version is unparseable");
-      else if (version !== j.claudeCodeVersion) reasons.push(`installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}: re-run extraction, re-judge every new entry, then bump claudeCodeVersion`);
+      else if (version !== j.claudeCodeVersion) {
+        versionMismatch = true;
+        reasons.push(b.certified ? `installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}: remedy update to ${j.claudeCodeVersion}, or remove it (Desktop: bundle ${j.claudeCodeVersion} or uninstall)` : `installed Claude Code ${version} is not the judged version ${j.claudeCodeVersion}`);
+      }
     } catch (e) {
       reasons.push(`installed Claude Code version could not be read: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -260,15 +338,29 @@ function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) =
     const c = coverage(ex, j);
     for (const u of c.unjudged) reasons.push(`extracted but not judged: ${u}`);
     for (const m of c.judgedNotExtracted) reasons.push(`judged but not extracted: ${m}`);
+    gap = c.unjudged.length > 0 || c.judgedNotExtracted.length > 0;
     counts = { extractedUser: ex.user.length, judgedUser: j.user.length, extractedProject: ex.project.length, judgedProject: j.project.length };
   } catch (e) {
     reasons.push(e instanceof Error ? e.message : String(e));
   }
-  return { path: b.path, source: b.source, override: b.override, ...(version === undefined ? {} : { version }), status: reasons.length === 0 ? "PASS" : "FAIL", reasons, location, executed: mayExecute, ...(sha256 === undefined ? {} : { sha256 }), ...(mayExecute ? {} : { flag: UNVERIFIED }), ...(counts === undefined ? {} : { counts }) };
+  // #463/#467: the remedy. A certified binary is updated (other version) or re-judged (extraction gap); a failing uncertified one is pruned, never re-judged.
+  let remedy: Remedy | undefined;
+  if (reasons.length > 0) {
+    if (!b.certified) {
+      remedy = "prune";
+      reasons.push(`uncertified (${b.uncertifiedWhy ?? "not in the certified set"}): remedy prune: delete ${b.path}`);
+    } else if (versionMismatch) remedy = "update";
+    else if (gap) {
+      remedy = "re-judge";
+      reasons.push("remedy re-judge: re-run extraction, re-judge every new entry, then bump claudeCodeVersion");
+    }
+  }
+  const flag: BinaryFlag | undefined = !mayExecute ? UNVERIFIED : remedy === "prune" ? UNCERTIFIED_STALE : undefined;
+  return { path: b.path, source: b.source, override: b.override, certified: b.certified, ...(version === undefined ? {} : { version }), status: reasons.length === 0 ? "PASS" : "FAIL", reasons, location, executed: mayExecute, ...(sha256 === undefined ? {} : { sha256 }), ...(flag === undefined ? {} : { flag }), ...(remedy === undefined ? {} : { remedy }), ...(counts === undefined ? {} : { counts }) };
 }
 
 if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
   const r = extractFromInstalled();
   if (r === undefined) console.log("claude-code-write-deny-extract: no installed Claude Code binary found");
-  else console.log(JSON.stringify({ user: r.user, project: r.project, mcpJson: r.mcpJson }, null, 2));
+  else console.log(JSON.stringify({ user: r.user, project: r.project, mcpJson: r.mcpJson, userAnywhere: r.userAnywhere, projectAnywhere: r.projectAnywhere }, null, 2));
 }
