@@ -130,7 +130,7 @@ No new or changed UI flow or API surface. This is a docs and config change. test
 
 - Merge collision on append-only files: re-sync with origin/master before the sweep.
 - The archive script's lock directory (docs/.decisions-archive.lock): remove it if the script is interrupted.
-- After the sweep the `docs/decisions.md` email entry points at nothing; acceptable and tracked in #235.
+- After the sweep the `docs/decisions.md` email entry still matches older versions of that file in history (red-team round 1: 233 matches), so it stays; #235 does not apply.
 
 ## Blocking questions
 
