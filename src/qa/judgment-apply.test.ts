@@ -226,3 +226,36 @@ test("JA-applier/applies-committed-blob-not-worktree: bytes hidden from git by a
   assert.notEqual(version, "2099-12-31", "the uncommitted work-tree bytes were not applied");
   assert.ok(version === "2030-01-01" || version === real().toolExec.version, `version is the committed value or unchanged, got ${version}`);
 });
+
+test("JA-applier/refuses-pending-delta: a delta marked pending is refused until the marker is removed in a committed edit", () => {
+  const { dir, paths } = sandbox();
+  const pending = join(dir, "deltas", "pending.json");
+  writeFileSync(pending, JSON.stringify({ status: "pending", ...delta() }));
+  assert.throws(() => applyFiles(pending, paths, { deltaDir: join(dir, "deltas"), gitCheck: okGit }), /pending/);
+});
+
+test("JA-replay/committed-deltas-reproduce-judgments: replaying every committed delta in sequence onto the pre-delta base gives the committed judgment files byte for byte; a pending delta is skipped and must still be unapplied", (t) => {
+  const git = (...args: string[]): string => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  if (git("rev-parse", "--is-shallow-repository").trim() === "true") {
+    t.skip("shallow clone: the history needed to find the pre-delta base is absent");
+    return;
+  }
+  const DIR = "docs/qa/judgment-deltas/";
+  const WD = "docs/qa/claude-code-write-deny-judgment.json";
+  const TE = "docs/qa/tool-exec-judgment.json";
+  const firstAdd = git("log", "--diff-filter=A", "--reverse", "--format=%H", "--", DIR).trim().split("\n")[0];
+  assert.ok(firstAdd !== undefined && firstAdd !== "", "a commit added the first delta");
+  const base: JudgmentFiles = { writeDeny: JSON.parse(git("show", `${firstAdd}^:${WD}`)) as JudgmentFiles["writeDeny"], toolExec: JSON.parse(git("show", `${firstAdd}^:${TE}`)) as JudgmentFiles["toolExec"] };
+  const names = git("ls-tree", "--name-only", "HEAD", DIR).trim().split("\n").filter((x) => x !== "");
+  assert.ok(names.length > 0);
+  const deltas = names.map((p) => ({ p, d: JSON.parse(git("show", `HEAD:${p}`)) as Delta & { status?: string; sequence?: number } }));
+  for (const x of deltas) assert.equal(typeof x.d.sequence, "number", `${x.p} has a numeric sequence`);
+  assert.equal(new Set(deltas.map((x) => x.d.sequence)).size, deltas.length, "sequence numbers are unique");
+  const active = deltas.filter((x) => x.d.status !== "pending").sort((a, b) => a.d.sequence! - b.d.sequence!);
+  const replayed = clone(base);
+  for (const x of active) applyDelta(replayed, x.d);
+  const ser = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
+  assert.equal(ser(replayed.writeDeny), git("show", `HEAD:${WD}`), "write-deny judgment equals base plus committed deltas");
+  assert.equal(ser(replayed.toolExec), git("show", `HEAD:${TE}`), "tool-exec judgment equals base plus committed deltas");
+  for (const x of deltas.filter((y) => y.d.status === "pending")) assert.ok(missingFromDelta(replayed, x.d).length > 0, `${x.p} is marked pending but its entries are already applied: remove the marker`);
+});

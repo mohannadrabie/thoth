@@ -421,3 +421,27 @@ test("CC-census/prose-and-quotes: a name in a quoted sentence or template is fou
   for (const n of ["hooks", "skills", "sq-name"]) assert.ok(census.includes(n), n);
   assert.ok(!census.includes("hooks."));
 });
+
+// ---- #486: mcp-skill-archives serves SKILL.md as a skill, so it is protected at both levels ---------------------------------
+test("CC-judgment/mcp-skill-archives-protected: judged protected in the user window and in the anywhere section, with both named paths", () => {
+  const j = judged();
+  const user = j.user.find((e) => e.name === "mcp-skill-archives");
+  const anywhere = (j.anywhere ?? []).find((e) => e.name === "mcp-skill-archives");
+  assert.equal(user?.judgment, "protected");
+  assert.equal(user?.path, "~/.claude/mcp-skill-archives/");
+  assert.equal(anywhere?.judgment, "protected");
+  assert.equal(anywhere?.userPath, "~/.claude/mcp-skill-archives/");
+  assert.equal(anywhere?.projectPath, ".claude/mcp-skill-archives/");
+  const named = new Set(protectedPaths(ROOT).named.map((p) => p.toLowerCase()));
+  assert.ok(named.has("~/.claude/mcp-skill-archives/") && named.has(".claude/mcp-skill-archives/"));
+});
+
+// ---- #479 round 3: the Claude Code config-dir children sets and const-held names are judged -------------------------------------
+test("CC-judgment/config-dir-children-and-const-names-judged: every name in the 2.1.289 children sets, and daemon.lock, is judged (checked against the real judgment)", () => {
+  const j = judged();
+  const all = new Set([...j.user, ...j.project, ...(j.anywhere ?? [])].map((e) => e.name));
+  const wanted = ["daemon.lock", "agent-memory-project", "api-dumps", "downloads", "file-transfers", "image-cache", "local-settings", "logs", "paste-cache", "project-settings", "scratch", "storage-v2", "systemd"];
+  for (const n of wanted) assert.ok(all.has(n), `${n} is judged`);
+  const sv2 = (j.anywhere ?? []).find((e) => e.name === "storage-v2");
+  assert.equal(sv2?.judgment, "protected", "storage-v2 may hold the live copy of mailbox, agent memory and state, so it fails closed");
+});
