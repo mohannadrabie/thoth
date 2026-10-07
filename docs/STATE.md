@@ -1,16 +1,28 @@
 # Project State
 _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every ship-close so the loop resumes across sessions. Keep it short — bullets and tables, not prose._
 
-**Last updated:** 2026-10-06, session `s308/k-blockers` (PRs #468 and #469 merged; K blockers in progress; nothing wired)
+**Last updated:** 2026-10-07, session `s308/k-blockers` (four K-blocker stories review-complete, not pushed; nothing wired)
 
-## Resume point — 2026-10-06, session `s308/k-blockers` (newest): K blockers in progress; nothing wired
+## Resume point — 2026-10-07, session `s308/k-blockers` (newest): four K-blocker stories review-complete; not pushed; nothing wired
 
-- **Merged by the human:** PR #468 (K stage 0 and #452) and PR #469 (#463/#464 prep, plan docs/plans/s308-463-464-prep-2026-10-06.md) to `master` at `6a780a4`. CI green on that commit (run 37547346222).
-- **This session:** branch `s308/k-blockers`, cut from `6a780a4`. ONE PR. It clears the K blockers that need code (#463 with #467, #455, #466, the decisions archive sweep) and stops before any live probe or wiring.
-- **#308:** open. Commit subjects and bodies must never put fix/close/resolve in front of #308.
-- **Open `k-blocker` Issues:** #438, #442, #444, #455, #463, #464, #467.
+- **Branch:** `s308/k-blockers` (local, not pushed). ONE PR for the session; push and merge are the human's. Commit subjects and bodies never put fix/close/resolve in front of #308.
+- **Built and review-complete (all CRITICAL; red-team, app-security and cross-domain on each):**
 
-**Single next action:** the human answers the session rulings (#467 certified binaries, the 2.1.289 judgments, #464 option, the binary extractions), then the builds start.
+| Story | What | Rounds |
+|---|---|---|
+| Archive sweep (#379, #298) | Archive-path allowlist entry (THOTH-ADR-0002); 6 due rows moved byte-identical | 1, clean |
+| #466 + dev-mods | Both Desktop bundle roots and the dev-mods dir protected; discovery hashes and flags binaries outside protected dirs and never runs them (opt-in `THOTH_EXEC_UNPROTECTED=1`) | 1, clean |
+| #455 | Scripts that enabled plugins' hooks run are derived (allowlist of hook shapes plus one AST scanner, fail closed) and protected; F1 readiness instrument | 1, then five red-team re-confirms (#473, #474, #480-#484 fixed); residual disclosed |
+| #463/#467 | Certified set (pin 2.1.289; update, re-judge or prune per binary), structural census, judgment applier (committed deltas only; replay and immutability tests), four deltas applied | 3 (two no-go on census #477, then clean), plus a fix-now confirm |
+
+- **Protected list:** 122 to 238 paths. Verify on `caf1fb8`: typecheck, lint, QA-14 pass; suite 2464/2464 (installed-live skipped); secret scan 0 blocking.
+- **Readiness (`npm run qa:k-readiness`):** 8 PASS, 6 FAIL, 2 MISSING. CC row: both 2.1.289 binaries PASS; it fails only on CLI 2.1.267 (update), Desktop 2.1.286 (update) and versions 2.1.240, 2.1.251, 2.1.267 (prune). Also red: open k-blocker Issues, K3 and K5 (K not wired), K1 (no approval), git-rg preflight (the kubeconfig exec block, #438). MISSING: the s7/knockout fix-branch row (that branch was merged and deleted; FIX_BRANCHES needs a reviewed edit) and the gate-latency allow-path script (not built).
+- **Pending human:** the binary cleanup (CLI to 2.1.289, delete the three versions entries, delete the Desktop 2.1.286 bundle); the 2.1.289 tool-inventory capture, then the pending tools delta; ratify the decisions rows dated 2026-10-06; #464 managed settings; #438; the #444 probe; K1.
+- **Deferred, tracked:** #472 (maat plugin adr-cache trust), #470, #471, #487. #485 (repo-root instruction files unprotected) is now a K blocker.
+- **Stage 1 probes:** pre-approved (cap USD 1.60) but not started; they wait for the merge and a readiness showing only human-owned blockers.
+- **Process:** `python3` on this machine is the Windows Python Manager stub and hangs agents; briefs say node only. Each agent uses its own scratch subfolder.
+
+**Single next action:** the human pushes `s308/k-blockers` and opens its PR, then does the binary cleanup and the inventory capture.
 
 ## Prior entry (superseded above): 2026-10-05, session `s308/k-stage0`: K stage 0 and #452 review-complete; merged as PR #468
 
