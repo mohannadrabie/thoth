@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - #463 / #467 a1 round 3: mcp-skill-archives protected, replay detector, config-dir children names judged (scope s308-463-467, #308 K blocker)
+
+Refs #308, refs #463, refs #467, refs #479. CRITICAL tier.
+
+- #486: `mcp-skill-archives` serves SKILL.md as a skill, so it is re-judged protected (user window entry by `replace`, plus an anywhere entry) in docs/qa/judgment-deltas/s308-463-467-c.json, with both named paths. Test `CC-judgment/mcp-skill-archives-protected`.
+- Delta c also judges 23 names the census does not surface: the const-held `daemon.lock` and the names in Claude Code's own `~/.claude` child-name sets (11 protected, fail closed, including `storage-v2`, `systemd`, `.session_ingress_token`; 12 residual).
+- #479: `JA-replay/committed-deltas-reproduce-judgments` replays every committed delta in `sequence` order onto the judgment files as they were before the first delta and requires the committed judgment files byte for byte. A delta marked `status: pending` (the tools delta, applied after the inventory capture) is skipped, must still be unapplied, and is refused by the applier until the marker is removed in a committed edit. Each delta carries a unique `sequence`.
+- Protected list: 24 new named paths; regenerated.
+
 ### Changed - #463 / #467 a2 and a1 round 2: 2.1.289 judgments through the applier, structural census (scope s308-463-467, #308 K blocker)
 
 Refs #308, refs #463, refs #467 (both close in the Manager's final session commit, after the human's cleanup and the tool-inventory capture). CRITICAL tier.
