@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - #463 / #467 a2 and a1 round 2: 2.1.289 judgments through the applier, structural census (scope s308-463-467, #308 K blocker)
+
+Refs #308, refs #463, refs #467 (both close in the Manager's final session commit, after the human's cleanup and the tool-inventory capture). CRITICAL tier.
+
+- Judgments: `docs/qa/claude-code-write-deny-judgment.json` is at claudeCodeVersion 2.1.289, changed only through `qa:judgment-apply` from two committed deltas, `docs/qa/judgment-deltas/s308-463-467.json` (the approved judgment: localSettings and projectSettings residual, 65 census names in the anywhere section, user `state` re-judged protected by `replace`) and `docs/qa/judgment-deltas/s308-463-467-b.json` (the 50 names the structural census adds: 13 protected, 37 residual, `.credentials.json` protected). The tool judgments (ArtifactComments, ArtifactData, EnterPlanMode as not-exec) are in `docs/qa/judgment-deltas/s308-463-467-tools.json` and are applied after the human's inventory capture is vendored, because a judged tool that is not vendored fails K-every-vendored-tool-judged-exec. ArtifactCheck stays pending.
+- Protected list: 49 plus 26 new named paths, derived from the judgment's anywhere section, regenerated with `--write` (shipped rules, K proposal, merged-settings fixture).
+- Census (#477, round 2): names come from every `.claude/<name>` inside a quoted literal with any prefix, glob or rule wrapper, from `".claude","<name>"`, and from calls and variable forms of any config-dir getter found by its definition (a function or arrow whose body names `".claude"` or a CONFIG_DIR variable). Measured on the 2.1.289 extension binary: 125 names (75 before), all nine red-team misses found. Extra names are expected.
+- Applier (#479): applies the committed blob (`git show HEAD:./file`), not the work-tree file; version fields are type-guarded and the tool version must be a real calendar date.
+- Tests: `CC-census/glob-prefix-rule-string-and-second-getter`, `CC-census/getter-by-definition`, `CC-census/prose-and-quotes`, `JA-applier/applies-committed-blob-not-worktree`, `JA-applier/version-guard-typeof-and-calendar` (failing first). Census tests that used `ide` now use probe names, because the real judgment covers `ide`.
+- Issue #485 filed: repo-root CLAUDE.md, AGENTS.md and CLAUDE.local.md are not named protected paths (out of this judgment).
+
 ### Added - #463 / #467 a1: certified set, per-binary remedy, whole-binary census, judgment applier (scope s308-463-467, #308 K blocker)
 
 Refs #308, refs #463, refs #467 (both close after a2). CRITICAL tier. Plan `docs/plans/s308-463-467-plan-2026-10-06.md` (part a1 only; a2 waits on the human's 2.1.289 extraction and tool-inventory capture). No judgment or inventory data changes in a1.
