@@ -1,6 +1,7 @@
 // #308 story K stage 0: tests for `qa:k-readiness` with INJECTED runners (no network, no real gh, no real repo state).
 // The real-repo run is not here (it is red by design until K is wired): see k-readiness.real-run.ts and `npm run qa:k-readiness`.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseGithubRepo, assertReadOnly, blockerRow, exitCodeForRows, formatRows, k1Row, k4Row, parseDecisionRows, runReadiness, SCRIPT_ROWS, FIX_BRANCHES, type Deps, type Exec, type RunResult } from "./k-readiness.ts";
 
@@ -261,4 +262,13 @@ test("k-readiness: CC row shows every checked binary path", () => {
   assert.equal(cc.status, "FAIL");
   for (const p of paths) assert.ok(cc.detail.includes(p), `row shows ${p.slice(0, 60)}...`);
   assert.ok(cc.detail.includes(finalLine));
+});
+
+// #466 criterion 10: the exec opt-in reaches the CC row only through the inherited environment; the readiness runner never sets it.
+test("KR-cc-row-optin-env-only: the CC row runs the fixed instrument with no extra argument, and k-readiness never names the opt-in", () => {
+  const calls: string[][] = [];
+  runReadiness(deps({}, {}, calls));
+  const cc = calls.filter((c) => c[0] === "node" && c[1] === "src/qa/cc-extraction-covers-judged.ts");
+  assert.deepEqual(cc, [["node", "src/qa/cc-extraction-covers-judged.ts"]]);
+  assert.ok(!readFileSync(new URL("./k-readiness.ts", import.meta.url), "utf8").includes("THOTH_EXEC_UNPROTECTED"));
 });

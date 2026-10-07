@@ -68,11 +68,12 @@ test("CC-installed-extraction-fully-judged: the list extracted from the installe
 });
 
 // ---- #452: both directions plus the installed version ------------------------------------------------------------------
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { checkExtraction, coverage, discoverClaudeBinaries, parseClaudeVersion } from "./claude-code-write-deny-extract.ts";
 import { runCli } from "./cc-extraction-covers-judged.ts";
 
@@ -92,7 +93,8 @@ function fakeBinary(user: string[], project: string[], mcp: boolean): string {
 const isolatedHome = (): string => mkdtempSync(join(tmpdir(), "cc452-home-"));
 const envFor = (bin: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
   const home = isolatedHome();
-  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, PATH: "", ...extra };
+  // #466: the override sits in a temp dir outside the fake home (unprotected), so these provider-semantics tests opt in; the gate tests below do not.
+  return { THOTH_CLAUDE_BIN: bin, HOME: home, USERPROFILE: home, PATH: "", THOTH_EXEC_UNPROTECTED: "1", ...extra };
 };
 
 test("CC-extraction-covers-judged/mutant-drops-4-of-31: an extraction missing 4 of the 31 judged user entries is reported, exactly those 4", () => {
@@ -246,7 +248,7 @@ test("CC-extraction-covers-judged/discovery-locations: local bin, EVERY versions
   const ins = mk(".vscode-insiders/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
   const cur = mk(".cursor/extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe");
   const d1 = mk("AppData/Roaming/Claude/claude-code/2.1.284/3f4bed3e44ad/claude.exe");
-  const d2 = mk("AppData/Local/Packages/Claude_abc123/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe");
+  const d2 = mk("AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/2.1.286/635c1867224a/claude.exe");
   const pathDir = join(home, "pathbin");
   const onPath = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
   const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
@@ -301,7 +303,7 @@ test("CC-extraction-covers-judged/final-line-names-binary: the final line names 
   const home = isolatedHome();
   const local = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
   const override = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
-  const env = { HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: override };
+  const env = { HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: override, THOTH_EXEC_UNPROTECTED: "1" };
   const r = runCli(env, versionByPath({ [local]: j.claudeCodeVersion, [override]: j.claudeCodeVersion }));
   assert.equal(r.code, 0);
   assert.ok(r.line.includes(local) && r.line.includes(override), r.line);
@@ -325,4 +327,142 @@ test("CC-extraction-covers-judged/judgment-unreadable-fails-closed: a missing or
     assert.equal(r.code, 1);
     assert.match(r.line, /^CC-extraction-covers-judged: FAIL .*judgment/);
   }
+});
+
+// ---- #466: never execute a binary from an unprotected location; hash and flag it; execution needs a per-run opt-in ---------
+const FLAG = "UNVERIFIED-UNPROTECTED";
+const JUDGED_OK = (): string => `${judged().claudeCodeVersion} (Claude Code)`;
+/** A fixture home with a protected-location binary and an unprotected one (an absolute PATH dir outside every protected dir). */
+function twoBinaries(): { home: string; prot: string; unprot: string; env: NodeJS.ProcessEnv } {
+  const j = judged();
+  const home = isolatedHome();
+  const prot = place(home, ".local/bin/claude.exe", names(j.user), names(j.project));
+  const unprot = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
+  return { home, prot, unprot, env: { HOME: home, USERPROFILE: home, PATH: join(home, "pathbin") } };
+}
+const sha = (f: string): string => createHash("sha256").update(readFileSync(f)).digest("hex");
+
+test("CC-no-exec-unprotected/provider-spy: the version provider is never called for an unprotected binary, and still called for a protected one", () => {
+  const { prot, unprot, env } = twoBinaries();
+  const asked: string[] = [];
+  const r = checkExtraction(env, (b) => { asked.push(b); return JUDGED_OK(); });
+  assert.deepEqual(asked, [prot], "only the protected binary was asked for its version");
+  assert.equal(r.status, "FAIL");
+  const u = r.binaries.find((b) => b.path === unprot)!;
+  assert.equal(u.status, "FAIL");
+  assert.equal(u.executed, false);
+  assert.equal(r.binaries.find((b) => b.path === prot)!.executed, true);
+});
+
+test("CC-no-exec-unprotected/real-default-provider: with the real default provider a copy of the node binary on an unprotected PATH dir is not run", () => {
+  const home = isolatedHome();
+  const dir = join(home, "pathbin");
+  mkdirSync(dir, { recursive: true });
+  const planted = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
+  copyFileSync(process.execPath, planted);
+  // the default provider (installedClaudeVersion) would run `--version` and get node's version string back
+  const r = checkExtraction({ HOME: home, USERPROFILE: home, PATH: dir });
+  assert.equal(r.status, "FAIL");
+  const text = r.reasons.join("\n");
+  assert.ok(text.includes(FLAG), text);
+  assert.ok(!text.includes(process.version.replace(/^v/, "")), "node's version string never came back, so --version never ran");
+  assert.ok(!/unparseable|could not be read/.test(text), text);
+});
+
+test("CC-exec-single-site: execFileSync is used in exactly one place, and checkOne reaches the version provider only behind the location gate", () => {
+  const src = readFileSync(`${ROOT}src/qa/claude-code-write-deny-extract.ts`, "utf8");
+  assert.equal((src.match(/execFileSync\(/g) ?? []).length, 1, "one call site");
+  const fn = src.slice(src.indexOf("export function installedClaudeVersion"));
+  assert.ok(fn.slice(0, fn.indexOf("\n}")).includes("execFileSync("), "and it is inside installedClaudeVersion");
+  const one = src.slice(src.indexOf("function checkOne"));
+  const gate = one.indexOf("mayExecute");
+  const call = one.indexOf("versionProvider(");
+  assert.ok(gate >= 0 && call > gate, "checkOne tests the gate before it calls the provider");
+});
+
+test("CC-flagged-hash-and-flag: a flagged binary carries its sha256 and the flag, and its extraction still ran read-only", () => {
+  const { unprot, env } = twoBinaries();
+  const r = checkExtraction(env, JUDGED_OK);
+  const u = r.binaries.find((b) => b.path === unprot)!;
+  assert.equal(u.sha256, sha(unprot));
+  assert.match(u.sha256 ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(u.flag, FLAG);
+  assert.ok(u.reasons.some((x) => x.includes(FLAG) && x.includes(sha(unprot))), "the reason names the flag and the hash");
+  assert.ok(u.counts !== undefined && u.counts.extractedUser > 0, "extraction counts reported");
+});
+
+test("CC-flagged-fails-closed: a flagged binary is FAIL even when everything else holds and even when it is the only binary found", () => {
+  const { env } = twoBinaries();
+  assert.equal(checkExtraction(env, JUDGED_OK).status, "FAIL");
+  const j = judged();
+  const home = isolatedHome();
+  const only = place(home, "pathbin/claude.exe", names(j.user), names(j.project));
+  const alone = checkExtraction({ HOME: home, USERPROFILE: home, PATH: join(home, "pathbin") }, JUDGED_OK);
+  assert.equal(alone.status, "FAIL", "never PASS and never SKIPPED");
+  assert.deepEqual(alone.binaries.map((b) => b.path), [only]);
+});
+
+test("CC-flagged-cli-exit-and-final-line: exit 1 and a final FAIL line naming the path, the sha256 and the opt-in hint", () => {
+  const { unprot, env } = twoBinaries();
+  const r = runCli(env, JUDGED_OK);
+  assert.equal(r.code, 1);
+  assert.match(r.line, /^CC-extraction-covers-judged: FAIL /);
+  assert.ok(r.line.includes(unprot) && r.line.includes(sha(unprot)) && r.line.includes(FLAG) && r.line.includes("THOTH_EXEC_UNPROTECTED=1"), r.line);
+});
+
+test("CC-optin-executes-only-with-1: only the exact string 1 lets the provider run for an unprotected binary", () => {
+  const { unprot, env } = twoBinaries();
+  for (const v of [undefined, "", "0", "true", "yes", " 1", "11"]) {
+    const asked: string[] = [];
+    checkExtraction({ ...env, ...(v === undefined ? {} : { THOTH_EXEC_UNPROTECTED: v }) }, (b) => { asked.push(b); return JUDGED_OK(); });
+    assert.ok(!asked.includes(unprot), `value ${JSON.stringify(v)} must not execute`);
+  }
+  const asked: string[] = [];
+  const r = checkExtraction({ ...env, THOTH_EXEC_UNPROTECTED: "1" }, (b) => { asked.push(b); return JUDGED_OK(); });
+  assert.ok(asked.includes(unprot), "the opt-in executes it");
+  assert.equal(r.status, "PASS", r.reasons.join("; "));
+  const u = r.binaries.find((b) => b.path === unprot)!;
+  assert.equal(u.executed, true);
+  assert.equal(u.sha256, sha(unprot), "still hashed when opted in");
+});
+
+test("CC-optin-marked-in-final-line: an opted-in unprotected execution is marked, and a version mismatch still FAILs", () => {
+  const { unprot, prot, env } = twoBinaries();
+  const withOpt = { ...env, THOTH_EXEC_UNPROTECTED: "1" };
+  const v = judged().claudeCodeVersion;
+  const ok = runCli(withOpt, versionByPath({ [prot]: v, [unprot]: v }));
+  assert.equal(ok.code, 0, ok.line);
+  assert.equal((ok.line.match(/\[exec-opt-in\]/g) ?? []).length, 1, "only the unprotected binary is marked");
+  assert.ok(ok.line.includes(sha(unprot)));
+  const bad = runCli(withOpt, versionByPath({ [prot]: v, [unprot]: "9.9.9" }));
+  assert.equal(bad.code, 1);
+  assert.ok(bad.line.includes("9.9.9"));
+});
+
+test("CC-override-gated-like-any-location: THOTH_CLAUDE_BIN outside the protected dirs is flagged, and the override inside one is not", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const outside = place(home, "elsewhere/claude-copy", names(j.user), names(j.project));
+  const inside = place(home, ".local/bin/claude-copy", names(j.user), names(j.project));
+  const asked: string[] = [];
+  const spy = (b: string): string => { asked.push(b); return JUDGED_OK(); };
+  const a = checkExtraction({ HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: outside }, spy);
+  assert.equal(a.status, "FAIL");
+  assert.deepEqual(asked, []);
+  const b = checkExtraction({ HOME: home, USERPROFILE: home, PATH: "", THOTH_CLAUDE_BIN: inside }, spy);
+  assert.equal(b.status, "PASS", b.reasons.join("; "));
+  assert.deepEqual(asked, [inside]);
+});
+
+test("CC-redirected-appdata-and-unpinned-package-flagged: a Desktop binary under a redirected APPDATA or an unpinned Claude_* package is not executed", () => {
+  const j = judged();
+  const home = isolatedHome();
+  const redirected = join(isolatedHome(), "Roaming");
+  const d1 = place(redirected, "Claude/claude-code/2.1.284/h1/claude.exe", names(j.user), names(j.project));
+  const d2 = place(home, "AppData/Local/Packages/Claude_abc123/LocalCache/Roaming/Claude/claude-code/2.1.286/h2/claude.exe", names(j.user), names(j.project));
+  const asked: string[] = [];
+  const r = checkExtraction({ HOME: home, USERPROFILE: home, PATH: "", APPDATA: redirected, LOCALAPPDATA: join(home, "AppData", "Local") }, (b) => { asked.push(b); return JUDGED_OK(); });
+  assert.deepEqual(asked, []);
+  assert.deepEqual(r.binaries.map((b) => b.path).sort(), [d1, d2].sort());
+  assert.ok(r.binaries.every((b) => b.flag === FLAG));
 });
