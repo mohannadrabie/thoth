@@ -1,6 +1,6 @@
 # Story d: decisions archive sweep (scope id s308-archive-sweep), Phase 1 plan
 
-Status: awaiting human approval. Tier CRITICAL (Manager ratified 2026-10-06, unchanged).
+Status: approved by the human 2026-10-06 (session s308/k-blockers). Tier CRITICAL (Manager ratified 2026-10-06, unchanged).
 
 Author: story-implementer (Ptah), 2026-10-06. Branch: s308/k-blockers.
 
