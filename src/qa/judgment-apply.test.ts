@@ -260,7 +260,6 @@ test("JA-replay/committed-deltas-reproduce-judgments: replaying every committed 
   for (const x of deltas.filter((y) => y.d.status === "pending")) assert.ok(missingFromDelta(replayed, x.d).length > 0, `${x.p} is marked pending but its entries are already applied: remove the marker`);
 });
 
-// ---- #479 round 3 fix-now: an applied delta is immutable ------------------------------------------------------------------------
 const DELTA_DIR_REL = "docs/qa/judgment-deltas/";
 const JUDGMENT_RELS = ["docs/qa/claude-code-write-deny-judgment.json", "docs/qa/tool-exec-judgment.json"];
 const stripVolatile = (text: string): string => {
@@ -270,7 +269,6 @@ const stripVolatile = (text: string): string => {
   return JSON.stringify(o);
 };
 
-/** One line per applied delta whose content at HEAD differs (ignoring sequence and status) from its content at the first commit that changed a judgment file after the delta was added (or at the add commit itself when none did). A pending delta is not applied and is skipped. */
 function appliedDeltaViolations(repo: string): string[] {
   const git = (...args: string[]): string => execFileSync("git", args, { cwd: repo, encoding: "utf8", timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
   const out: string[] = [];
