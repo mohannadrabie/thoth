@@ -259,3 +259,69 @@ test("JA-replay/committed-deltas-reproduce-judgments: replaying every committed 
   assert.equal(ser(replayed.toolExec), git("show", `HEAD:${TE}`), "tool-exec judgment equals base plus committed deltas");
   for (const x of deltas.filter((y) => y.d.status === "pending")) assert.ok(missingFromDelta(replayed, x.d).length > 0, `${x.p} is marked pending but its entries are already applied: remove the marker`);
 });
+
+// ---- #479 round 3 fix-now: an applied delta is immutable ------------------------------------------------------------------------
+const DELTA_DIR_REL = "docs/qa/judgment-deltas/";
+const JUDGMENT_RELS = ["docs/qa/claude-code-write-deny-judgment.json", "docs/qa/tool-exec-judgment.json"];
+const stripVolatile = (text: string): string => {
+  const o = JSON.parse(text) as Record<string, unknown>;
+  delete o["sequence"];
+  delete o["status"];
+  return JSON.stringify(o);
+};
+
+/** One line per applied delta whose content at HEAD differs (ignoring sequence and status) from its content at the first commit that changed a judgment file after the delta was added (or at the add commit itself when none did). A pending delta is not applied and is skipped. */
+function appliedDeltaViolations(repo: string): string[] {
+  const git = (...args: string[]): string => execFileSync("git", args, { cwd: repo, encoding: "utf8", timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  const out: string[] = [];
+  for (const p of git("ls-tree", "--name-only", "HEAD", DELTA_DIR_REL).trim().split("\n").filter((x) => x !== "")) {
+    const head = git("show", `HEAD:${p}`);
+    if ((JSON.parse(head) as { status?: string }).status === "pending") continue;
+    const adds = git("log", "--diff-filter=A", "--reverse", "--format=%H", "--", p).trim().split("\n");
+    const added = adds[0];
+    if (added === undefined || added === "") {
+      out.push(`${p}: no commit added it`);
+      continue;
+    }
+    const after = git("log", "--reverse", "--format=%H", `${added}..HEAD`, "--", ...JUDGMENT_RELS).trim().split("\n").filter((x) => x !== "");
+    const baseline = after[0] ?? added;
+    if (stripVolatile(git("show", `${baseline}:${p}`)) !== stripVolatile(head)) out.push(`${p}: differs from its content at ${baseline.slice(0, 8)} (the commit that first applied it)`);
+  }
+  return out;
+}
+
+test("JA-replay/applied-deltas-immutable: every applied delta is unchanged since the commit that first applied it (sequence and status aside)", (t) => {
+  if (execFileSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: ROOT, encoding: "utf8", timeout: 30000 }).trim() === "true") {
+    t.skip("shallow clone: the history needed to find the applying commit is absent");
+    return;
+  }
+  assert.deepEqual(appliedDeltaViolations(ROOT), []);
+});
+
+test("JA-replay/applied-deltas-immutable-detector: editing an applied delta and the judgment in one later commit is caught; a sequence or status edit is not", () => {
+  const repo = mkdtempSync(join(tmpdir(), "ja-imm-"));
+  const git = (...args: string[]): string => execFileSync("git", ["-c", "user.email=tester", "-c", "user.name=t", "-c", "core.hooksPath=/dev/null", ...args], { cwd: repo, encoding: "utf8", timeout: 30000 });
+  git("init", "-q");
+  mkdirSync(join(repo, "docs", "qa", "judgment-deltas"), { recursive: true });
+  const wd = join(repo, JUDGMENT_RELS[0]!);
+  const te = join(repo, JUDGMENT_RELS[1]!);
+  writeFileSync(wd, "{}\n");
+  writeFileSync(te, "{}\n");
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "base");
+  const dp = join(repo, DELTA_DIR_REL, "d1.json");
+  writeFileSync(dp, JSON.stringify({ sequence: 1, writeDeny: { add: { anywhere: [{ name: "x", judgment: "protected" }] } } }));
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "add delta");
+  writeFileSync(wd, '{"anywhere":[{"name":"x","judgment":"protected"}]}\n');
+  git("add", ".");
+  git("commit", "-q", "--no-verify", "-m", "apply");
+  assert.deepEqual(appliedDeltaViolations(repo), []);
+  writeFileSync(dp, JSON.stringify({ sequence: 9, status: "applied-note", writeDeny: { add: { anywhere: [{ name: "x", judgment: "protected" }] } } }));
+  git("commit", "-q", "--no-verify", "-am", "volatile keys only");
+  assert.deepEqual(appliedDeltaViolations(repo), [], "sequence and status edits are ignored");
+  writeFileSync(dp, JSON.stringify({ sequence: 1, writeDeny: { add: { anywhere: [{ name: "x", judgment: "residual" }] } } }));
+  writeFileSync(wd, '{"anywhere":[{"name":"x","judgment":"residual"}]}\n');
+  git("commit", "-q", "--no-verify", "-am", "hand edit of delta and judgment together");
+  assert.equal(appliedDeltaViolations(repo).length, 1, "the joint edit (mutation M8) is caught");
+});
