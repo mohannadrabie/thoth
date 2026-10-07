@@ -17,16 +17,16 @@ const names = (es: { name: string }[]): string[] => es.map((e) => e.name);
 const OPT_IN = { THOTH_EXEC_UNPROTECTED: "1" };
 
 /** A fake binary the real extractor reads. `after` is text placed AFTER the end mark (outside the anchored window). */
-function fakeBinary(user: string[], project: string[], after = ""): string {
+function fakeBinary(user: string[], project: string[], after = "", getter = "Se"): string {
   const arr = ["shell-snapshots", "session-env", "plugins", ...user].map((n) => JSON.stringify(n)).join(",");
   const proj = project.map((n) => `G(Ml(Ie,".claude","${n}"),!0);`).join("");
-  return `xx;let a=1;for(let S of[${arr}]){q}G(Ml(Se(),"loop.md"),!1);${proj}U.push(Ml(Ie,".mcp.json"));bareGitRepoScrubPaths.length=0;${after}`;
+  return `xx;let a=1;for(let S of[${arr}]){q}G(Ml(${getter}(),"loop.md"),!1);${proj}U.push(Ml(Ie,".mcp.json"));bareGitRepoScrubPaths.length=0;${after}`;
 }
 const home = (): string => mkdtempSync(join(tmpdir(), "cc463-home-"));
-function place(h: string, rel: string, user: string[], project: string[], after = ""): string {
+function place(h: string, rel: string, user: string[], project: string[], after = "", getter = "Se"): string {
   const dest = join(h, ...rel.split("/"));
   mkdirSync(join(dest, ".."), { recursive: true });
-  writeFileSync(dest, fakeBinary(user, project, after), "latin1");
+  writeFileSync(dest, fakeBinary(user, project, after, getter), "latin1");
   return dest;
 }
 const envOf = (h: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ HOME: h, USERPROFILE: h, PATH: "", APPDATA: join(h, "AppData", "Roaming"), LOCALAPPDATA: join(h, "AppData", "Local"), ...OPT_IN, ...extra });
@@ -172,7 +172,7 @@ test("CC-cert/final-line: the final line marks each binary certified or uncertif
   const r = runCli(envOf(h), versions({ [local]: judged().claudeCodeVersion, [old]: "2.1.240" }));
   assert.equal(r.code, 1);
   assert.match(r.line, /^CC-extraction-covers-judged: FAIL /);
-  const checked = r.line.split(" | checked: ")[1]!;
+  const checked = r.line.split("checked: ")[1]!.split(" | ")[0]!;
   const seg = (p: string): string => checked.split("; ").find((s) => s.startsWith(p))!;
   assert.ok(/\bcertified\b/.test(seg(local)) && !/uncertified/.test(seg(local)), seg(local));
   assert.ok(/uncertified/.test(seg(old)) && seg(old).includes("prune"), seg(old));
@@ -203,19 +203,28 @@ test("CC-cert/options-object: the protected list is passed as an options object 
   assert.deepEqual(asked, [], "not on the list: not executed");
 });
 
-// ---- census: `.claude` shapes outside the anchored window ----------------------------------------------------------------
+// ---- census: `.claude` names anywhere in the binary, one namespace per name (#477, #478) -----------------------------------------
 const OUTSIDE = 'G(Ml(Ie,".claude","ide"),!0);G(Ml(Se(),"outside-user"),!1);';
+/** Byte snippets copied (read-only) from the 2.1.289 VS Code extension binary on 2026-10-06. */
+const REAL_289 = [
+  'function JJn(e,n){let r=Ca(e);switch(n){case"project":return je(oe(),".claude","agent-memory",r)+Ye;case"local":return ym(r);case"user":return je(VV(),"agent-memory",r)+Ye}}',
+  'P(CI(dr())??dr()),"agent-memory-local",e)+Ye;return je(oe(),".claude","agent-memory-local",e)+Ye}',
+  'function Vo(e){let n=MR(e),r=_e(Tt(),".claude","state");return[r,_e(r,"settings-review.json")].some((s)=>Ao(s).some((g)=>MR(g)===n))}',
+  'function qyn(){let e=we(),r=[_m(e,"ide")];if(a.CLAUDE_CONFIG_DIR||e.trim()==="")r.push(_m(TO.homedir(),".claude","ide").normalize("NFC"));if(O()==="wsl"){let n=a.USERPROFILE?q1t(a.USERPROFILE):null;if(n)r.push(_m(n,".claude","ide"));try{let h=se().readdirSync("/mnt/c/Users");for(let g of h)r.push(_m("/mnt/c/Users",g.name,".claude","ide"))}catch(s){}}return r}',
+  'async function ue(){let e=se(),n=[],i=p(P(),".claude","local");if(await JCe())n.push({type:"npm-local"})}',
+].join("");
 
-test("CC-census/extractor: the whole-binary scan reports out-of-window project and user shapes; the window lists do not change", () => {
+test("CC-census/extractor: the whole-binary scan reports out-of-window names once, whichever shape found them; the window lists do not change", () => {
   const { user, project } = full();
   const bin = Buffer.from(fakeBinary(user, project, OUTSIDE), "latin1");
   const ex = extractWriteDeny(bin);
-  assert.ok(ex.projectAnywhere?.includes("ide"));
-  assert.ok(ex.userAnywhere?.includes("outside-user"));
+  assert.ok(ex.census?.includes("ide"));
+  assert.ok(ex.census?.includes("outside-user"));
   assert.ok(!ex.project.includes("ide") && !ex.user.includes("outside-user"));
+  assert.equal(new Set(ex.census).size, ex.census?.length, "each name once");
   const plain = extractWriteDeny(Buffer.from(fakeBinary(user, project), "latin1"));
   assert.deepEqual(plain.user, ex.user);
-  assert.ok(!plain.projectAnywhere?.includes("ide"));
+  assert.ok(!plain.census?.includes("ide"));
 });
 
 test("CC-census/chunked: a shape straddling a scan-chunk boundary is still found", () => {
@@ -224,32 +233,144 @@ test("CC-census/chunked: a shape straddling a scan-chunk boundary is still found
   const pad = "z".repeat(16 * 1024 * 1024 - head.length - 20);
   const bin = Buffer.from(`${head}${pad}${OUTSIDE}`, "latin1");
   assert.ok(bin.length > 16 * 1024 * 1024);
-  assert.ok(extractWriteDeny(bin).projectAnywhere?.includes("ide"));
+  assert.ok(extractWriteDeny(bin).census?.includes("ide"));
 });
 
-test("CC-census/unjudged-fails-then-judged-passes: an out-of-window name fails as census-unjudged until it is judged in an OutsideWindow section", () => {
+test("CC-census/call-and-variable-base: a call base, a variable-held config dir and a home-rooted base are all found (2.1.289 byte snippets)", () => {
+  const { user, project } = full();
+  const bin = Buffer.from(fakeBinary(user, project, REAL_289, "we"), "latin1");
+  const census = extractWriteDeny(bin).census ?? [];
+  for (const name of ["agent-memory", "agent-memory-local", "state", "ide", "local"]) assert.ok(census.includes(name), `${name} is in the census`);
+});
+
+test("CC-census/home-rooted-project-shape: a home-rooted .claude site is one census name; judging it at the project level only does not clear it", () => {
+  const h = home();
+  const { user, project } = full();
+  const homeRooted = 'r.push(_m(TO.homedir(),".claude","ide").normalize("NFC"));if(n)r.push(_m(n,".claude","ide"));';
+  const local = place(h, ".local/bin/claude.exe", user, project, homeRooted);
+  const vp = versions({ [local]: judged().claudeCodeVersion });
+  const bare = checkExtraction(envOf(h), vp);
+  assert.ok(bare.reasons.join("\n").includes("census:ide"), bare.reasons.join("\n"));
+  assert.ok(!bare.reasons.join("\n").includes("census:project:") && !bare.reasons.join("\n").includes("census:user:"), "no per-level label");
+  const p = join(h, "judgment.json");
+  writeFileSync(p, JSON.stringify({ ...judged(), project: [...judged().project, { name: "ide", judgment: "protected", path: ".claude/ide/", reason: "test" }] }), "utf8");
+  const projectOnly = checkExtraction(envOf(h), vp, p);
+  assert.ok(projectOnly.reasons.join("\n").includes("census:ide"), "a project-level judgment alone leaves the user level open");
+  writeFileSync(p, JSON.stringify({ ...judged(), anywhere: [{ name: "ide", judgment: "residual", reason: "test" }] }), "utf8");
+  const both = checkExtraction(envOf(h), vp, p);
+  assert.equal(both.status, "PASS", both.reasons.join("; "));
+});
+
+test("CC-census/covered-when-judged-at-both-levels: a name judged in both window lists needs no anywhere entry", () => {
+  const h = home();
+  const { user, project } = full();
+  const both = judged().user.map((e) => e.name).find((n) => judged().project.some((e) => e.name === n))!;
+  const local = place(h, ".local/bin/claude.exe", user, project, `G(Ml(Ie,".claude","${both}"),!0);`);
+  const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion }));
+  assert.equal(r.status, "PASS", r.reasons.join("; "));
+});
+
+test("CC-census/unjudged-fails-then-judged-passes: an out-of-window name fails as census-unjudged until it is judged once in the anywhere section", () => {
   const h = home();
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project, OUTSIDE);
   const vp = versions({ [local]: judged().claudeCodeVersion });
   const bad = checkExtraction(envOf(h), vp);
   assert.equal(bad.status, "FAIL");
-  assert.ok(bad.reasons.join("\n").includes("census:project:ide"), bad.reasons.join("\n"));
-  assert.ok(bad.reasons.join("\n").includes("census:user:outside-user"));
-  const j = judged();
-  const withSections = { ...j, projectOutsideWindow: [{ name: "ide", judgment: "residual", reason: "test" }], userOutsideWindow: [{ name: "outside-user", judgment: "residual", reason: "test" }] };
+  assert.ok(bad.reasons.join("\n").includes("census:ide"), bad.reasons.join("\n"));
+  assert.ok(bad.reasons.join("\n").includes("census:outside-user"));
+  const withAnywhere = { ...judged(), anywhere: [{ name: "ide", judgment: "residual", reason: "test" }, { name: "outside-user", judgment: "residual", reason: "test" }] };
   const p = join(h, "judgment.json");
-  writeFileSync(p, JSON.stringify(withSections), "utf8");
+  writeFileSync(p, JSON.stringify(withAnywhere), "utf8");
   const ok = checkExtraction(envOf(h), vp, p);
   assert.equal(ok.status, "PASS", ok.reasons.join("; "));
 });
 
-test("CC-census/outside-window-entries-not-required-in-extraction: a judged OutsideWindow entry the binary lacks is not 'judged but not extracted'", () => {
+test("CC-census/anywhere-entries-not-required-in-extraction: a judged anywhere entry the binary lacks is not 'judged but not extracted'", () => {
   const h = home();
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project);
   const p = join(h, "judgment.json");
-  writeFileSync(p, JSON.stringify({ ...judged(), projectOutsideWindow: [{ name: "worktrees", judgment: "residual", reason: "test" }] }), "utf8");
+  writeFileSync(p, JSON.stringify({ ...judged(), anywhere: [{ name: "worktrees", judgment: "residual", reason: "test" }] }), "utf8");
   const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion }), p);
   assert.equal(r.status, "PASS", r.reasons.join("; "));
+});
+
+test("CC-census/literal-and-prose: a whole-string .claude/<name> literal is a census name; a sentence that mentions a path is not", () => {
+  const { user, project } = full();
+  const text = 'a=".claude/literal-one";b="~/.claude/literal-two";c="set it in .claude/prose-name for the project";d=".claude/not-a-name/deeper";';
+  const census = extractWriteDeny(Buffer.from(fakeBinary(user, project, text), "latin1")).census ?? [];
+  assert.ok(census.includes("literal-one") && census.includes("literal-two"));
+  assert.ok(!census.includes("prose-name"));
+});
+
+// ---- #475: the applier and its delta dir are on the protected list ----------------------------------------------------------
+import { protectedPaths } from "./protected-path-list.ts";
+
+test("CC-protected-entries/applier-and-delta-dir-on-list: the applier, its test and the delta directory are named protected paths", () => {
+  const named = new Set(protectedPaths(ROOT).named);
+  for (const p of ["src/qa/judgment-apply.ts", "src/qa/judgment-apply.test.ts", "docs/qa/judgment-deltas/"]) assert.ok(named.has(p), `${p} is a named protected path`);
+});
+
+// ---- #476: the runbook states the 2026-10-06 ruling --------------------------------------------------------------------------
+test("CC-runbook/certified-set-and-remedies: the K runbook names the pin, the certified set and the update / re-judge / prune remedies, and no longer says #467 is open", () => {
+  const text = readFileSync(`${ROOT}docs/runbooks/k-kill-switch-and-verification.md`, "utf8");
+  for (const word of ["2.1.289", "certified", "update", "re-judge", "prune"]) assert.ok(text.includes(word), `runbook mentions ${word}`);
+  assert.ok(!/decides #467/.test(text));
+  assert.ok(/#467/.test(text) && /decided/i.test(text));
+});
+
+// ---- cheap LOWs --------------------------------------------------------------------------------------------------------------
+test("CC-cert/versions-entry-is-local-bin-target: a versions/ entry whose realpath is the local CLI's realpath is certified", () => {
+  const h = home();
+  const { user, project } = full();
+  const local = place(h, ".local/bin/claude.exe", user, project);
+  const entry = place(h, ".local/share/claude/versions/2.1.267", user, project);
+  const alias = (p: string): string => (p === entry ? local : p);
+  const found = discoverClaudeBinaries(envOf(h), alias);
+  assert.equal(found.find((b) => b.path === entry)?.certified, true);
+  const other = place(h, ".local/share/claude/versions/2.1.240", user, project);
+  assert.equal(discoverClaudeBinaries(envOf(h), alias).find((b) => b.path === other)?.certified, false);
+});
+
+test("CC-cert/path-launchable-wins-over-obsolete: a binary found by several sources is certified if any source certifies it", () => {
+  const h = home();
+  const { user, project } = full();
+  const ext = place(h, EXT("2.1.267"), user, project);
+  writeFileSync(join(h, ".vscode", "extensions", ".obsolete"), JSON.stringify({ "anthropic.claude-code-2.1.267-win32-x64": true }), "utf8");
+  const dir = join(ext, "..");
+  const found = discoverClaudeBinaries({ ...envOf(h), PATH: dir });
+  const b = found.find((x) => x.path === ext)!;
+  assert.equal(found.filter((x) => x.path === ext).length, 1);
+  assert.equal(b.certified, true);
+  assert.equal(b.uncertifiedWhy, undefined);
+});
+
+test("CC-cert/uncertified-why-names-the-editor: the reason says which editor's obsolete list it came from", () => {
+  const h = home();
+  const { user, project } = full();
+  const obs = (root: string): void => writeFileSync(join(h, root, "extensions", ".obsolete"), JSON.stringify({ "anthropic.claude-code-1.0.0-win32-x64": true }), "utf8");
+  const sub = "extensions/anthropic.claude-code-1.0.0-win32-x64/resources/native-binary/claude.exe";
+  place(h, `.vscode/${sub}`, user, project);
+  place(h, `.vscode-insiders/${sub}`, user, project);
+  place(h, `.cursor/${sub}`, user, project);
+  for (const r of [".vscode", ".vscode-insiders", ".cursor"]) obs(r);
+  const why = Object.fromEntries(discoverClaudeBinaries(envOf(h)).map((b) => [b.source, b.uncertifiedWhy ?? ""]));
+  assert.ok(/VS Code/.test(why["vscode"]!) && !/Insiders|Cursor/.test(why["vscode"]!), why["vscode"]);
+  assert.ok(/Insiders/.test(why["vscode-insiders"]!), why["vscode-insiders"]);
+  assert.ok(/Cursor/.test(why["cursor"]!), why["cursor"]);
+});
+
+test("CC-cert/final-line-readable: per-binary status, certified flag and remedy come first; census names appear once with a count", () => {
+  const h = home();
+  const { user, project } = full();
+  const a = place(h, ".local/bin/claude.exe", user, project, OUTSIDE);
+  const b = place(h, ".local/share/claude/versions/2.1.240", user, project, OUTSIDE);
+  const r = runCli(envOf(h), versions({ [a]: judged().claudeCodeVersion, [b]: "2.1.240" }));
+  assert.equal(r.code, 1);
+  assert.match(r.line, /^CC-extraction-covers-judged: FAIL checked: /);
+  assert.equal(r.line.split("outside-user").length - 1, 1, "a census name is printed once, not once per binary");
+  assert.match(r.line, /census-unjudged \(2\): /);
+  assert.ok(r.line.indexOf("checked:") < r.line.indexOf("census-unjudged"));
+  assert.ok(r.details.filter((d) => d.includes("outside-user")).length <= 1, "the printed detail lines collapse it too");
 });

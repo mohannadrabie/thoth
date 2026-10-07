@@ -17,11 +17,18 @@ const PROPOSAL = readFileSync(`${ROOT}docs/plans/s308-K-proposed-settings-2026-1
 test("CC-judgment-structure: every entry has a judgment of protected or residual and a reason; every protected entry names its path", () => {
   const j = judged();
   assert.ok(j.claudeCodeVersion.length > 0);
-  for (const e of [...j.user, ...j.project, ...(j.userOutsideWindow ?? []), ...(j.projectOutsideWindow ?? [])]) {
+  for (const e of [...j.user, ...j.project]) {
     assert.ok(e.judgment === "protected" || e.judgment === "residual", e.name);
     assert.ok(e.reason.trim().length > 0, `${e.name} has a reason`);
     if (e.judgment === "protected") assert.ok((e.path ?? "").length > 0, `${e.name} names its protected path`);
   }
+  // #478: the anywhere section judges a census name ONCE for both levels; protected means both paths are named
+  for (const e of j.anywhere ?? []) {
+    assert.ok(e.judgment === "protected" || e.judgment === "residual", e.name);
+    assert.ok(e.reason.trim().length > 0, `${e.name} has a reason`);
+    if (e.judgment === "protected") assert.ok((e.userPath ?? "").length > 0 && (e.projectPath ?? "").length > 0, `${e.name} names both its user and its project path`);
+  }
+  assert.equal(new Set((j.anywhere ?? []).map((e) => e.name)).size, (j.anywhere ?? []).length, "no duplicate anywhere entry");
   assert.equal(new Set(j.user.map((e) => e.name)).size, j.user.length, "no duplicate user entry");
   assert.equal(new Set(j.project.map((e) => e.name)).size, j.project.length, "no duplicate project entry");
 });
@@ -30,12 +37,15 @@ test("CC-protected-entries-on-the-list: every protected judgment is a named prot
   const j = judged();
   const named = new Set(PATHS.named);
   const rules = new Set((JSON.parse(readFileSync(`${ROOT}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets: string[] }> }).rules.flatMap((r) => r.targets));
-  for (const e of [...j.user, ...j.project, ...(j.projectRoot ?? []), ...(j.userOutsideWindow ?? []), ...(j.projectOutsideWindow ?? [])]) {
+  const pathsOf = (e: { path?: string; userPath?: string; projectPath?: string }): string[] => [e.path, e.userPath, e.projectPath].filter((x): x is string => x !== undefined);
+  for (const e of [...j.user, ...j.project, ...(j.projectRoot ?? []), ...(j.anywhere ?? [])]) {
     if (e.judgment !== "protected") continue;
-    const p = e.path!.toLowerCase();
-    assert.ok(named.has(p), `${e.name}: ${p} is not a named protected path`);
-    for (const entry of editDenyEntries(p)) assert.ok(PROPOSAL.includes(JSON.stringify(entry).slice(1, -1)), `${e.name}: K Edit entry missing ${entry}`);
-    assert.ok(rules.has(p.replace(/\/$/, "")), `${e.name}: no shipped deny rule targets ${p}`);
+    for (const raw of pathsOf(e)) {
+      const p = raw.toLowerCase();
+      assert.ok(named.has(p), `${e.name}: ${p} is not a named protected path`);
+      for (const entry of editDenyEntries(p)) assert.ok(PROPOSAL.includes(JSON.stringify(entry).slice(1, -1)), `${e.name}: K Edit entry missing ${entry}`);
+      assert.ok(rules.has(p.replace(/\/$/, "")), `${e.name}: no shipped deny rule targets ${p}`);
+    }
   }
 });
 
