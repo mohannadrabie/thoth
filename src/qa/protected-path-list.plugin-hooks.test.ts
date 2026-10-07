@@ -63,8 +63,8 @@ test("plugin-hooks: maat snapshot yields session-brief and its two spawned child
 });
 
 test("plugin-hooks: adding/removing a hook command changes the list", () => {
-  const base = syntheticSnapshot(["node -e \"x='docs/adr-cache.mjs'\""]);
-  const added = syntheticSnapshot(["node -e \"x='docs/adr-cache.mjs'\"", 'node "${CLAUDE_PROJECT_DIR}/docs/decisions-archive.mjs"']);
+  const base = syntheticSnapshot(["node docs/adr-cache.mjs --ensure"]);
+  const added = syntheticSnapshot(["node docs/adr-cache.mjs --ensure", 'node "${CLAUDE_PROJECT_DIR}/docs/decisions-archive.mjs"']);
   const paths = (s: Snap): string[] => ppl.protectedPaths(REPO, { snapshot: s } as never).all;
   const a = paths(base);
   const b = paths(added);
@@ -197,4 +197,295 @@ test("snapshot: built from live data, enabled plugins only, no machine paths sto
 
 test("snapshot: no live plugin data builds undefined (unverified), not an empty snapshot", () => {
   assert.equal(fn<unknown>("buildPluginSnapshot")({ home: "/h", root: "/r", read: fakeRead({}) }), undefined);
+});
+
+// ---- #473, #474 and app-security LOW 1: the derivation fails closed (round 1 fix-now). Written FAILING FIRST. ----
+import * as f1 from "./f1-settings-named-scripts-judged.ts";
+
+const f1Check = (commands: string[]): { ok: boolean; failures: string[] } =>
+  (f1 as unknown as { checkF1: (o: unknown) => { ok: boolean; failures: string[] } }).checkF1({
+    root: REPO,
+    snapshot: syntheticSnapshot(commands),
+    protectedAll: ["docs/decisions-archive.mjs"],
+    judgments: [],
+    live: { status: "ok", detail: "" },
+  });
+
+test("plugin-hooks: extensionless sibling script makes the command unenumerable", () => {
+  for (const cmd of ["node docs/decisions-archive.mjs && sh docs/run", "node docs/decisions-archive.mjs; docs/run", "node docs/decisions-archive.mjs | docs/run --x"]) {
+    const scan = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot([cmd]));
+    assert.deepEqual(scan.unenumerable, [cmd], `unenumerable: ${cmd}`);
+    const r = f1Check([cmd]);
+    assert.equal(r.ok, false, `F1 fails: ${cmd}`);
+  }
+  // Allowlist: even two accounted programs joined by an operator are not one of the allowed shapes.
+  const two = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot(["node docs/decisions-archive.mjs && node docs/adr-cache.mjs --ensure"]));
+  assert.equal(two.unenumerable.length, 1);
+  // A command substitution is never accounted for.
+  assert.equal(fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot(["node docs/decisions-archive.mjs $(docs/run)"])).unenumerable.length, 1);
+});
+
+test("plugin-hooks: partially assembled path fails F1", () => {
+  const concat = `node -e "require('node:child_process').execFileSync(process.execPath,['docs/'+'tools.mjs'])"`;
+  const template = "node -e \"require('node:child_process').execFileSync(process.execPath,[`docs/${name}.mjs`])\"";
+  for (const cmd of [concat, template]) {
+    const scan = fn<Scan>("pluginHookScan")(REPO, syntheticSnapshot([cmd]));
+    assert.deepEqual(scan.unenumerable, [cmd], `unenumerable: ${cmd}`);
+    assert.equal(f1Check([cmd]).ok, false, `F1 fails: ${cmd}`);
+  }
+  // A plain in-repo script that does not exist is no longer a note: the command is unenumerable.
+  assert.equal(f1Check(["node docs/does-not-exist.mjs"]).ok, false);
+});
+
+test("spawn-follow: aliased node command throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  assert.throws(() => spawned("const n = process.execPath; execFileSync(n, ['docs/b.mjs']);", "/r/a.mjs"), /cannot be followed|computed|non-literal/i);
+  assert.throws(() => spawned("spawnSync(cmd, ['docs/b.mjs']);", "/r/a.mjs"), /cannot be followed|computed|non-literal/i);
+  // A literal non-node program stays ignored; the literal node forms stay followed.
+  assert.deepEqual(spawned("execFileSync('git', ['x']); execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+test("plugin-hooks: the live snapshot still derives the same three scripts and F1 passes on it", () => {
+  const snap = loadSnapshot();
+  const scan = fn<Scan>("pluginHookScan")(REPO, snap);
+  assert.deepEqual(scan.scripts, ["docs/adr-cache.mjs", "docs/decisions-archive.mjs", "docs/session-brief.mjs"]);
+  assert.deepEqual(scan.unenumerable, []);
+  const r = (f1 as unknown as { checkF1: (o: unknown) => { ok: boolean; failures: string[] } }).checkF1({
+    root: REPO,
+    snapshot: snap,
+    protectedAll: ppl.protectedPaths(REPO).all,
+    judgments: [],
+    live: { status: "ok", detail: "" },
+  });
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+});
+
+test("spawn-follow: execSync in a followed script throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  for (const src of ["execSync('git status');", "exec('ls', cb);", "child_process.execSync(cmd);", "cp.exec('x');", "x.execSync('x');"]) {
+    assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|computed|non-literal|shell/i, src);
+  }
+  // Not a process call: RegExp.exec, and a literal non-node program through execFile.
+  assert.deepEqual(spawned("const m = /a(b)/.exec(s); const r = re.exec(t); execFileSync('git', ['x']);", "/r/a.mjs"), []);
+});
+
+// ---- round 2 (#480-#483): an allowlist that fails closed by default. Written FAILING FIRST. ----
+
+const scanOf = (commands: string[], read?: Reader): Scan => fn<Scan>("pluginHookScan")(read === undefined ? REPO : "/r", syntheticSnapshot(commands), read);
+
+test("plugin-hooks: a command outside the allowlist is unenumerable", () => {
+  const outside = [
+    "FOO=1 node docs/decisions-archive.mjs",
+    "node docs/decisions-archive.mjs | tee out",
+    "node docs/decisions-archive.mjs > out",
+    "node docs/decisions-archive.mjs $(echo x)",
+    "node docs/decisions-archive.mjs `echo x`",
+    "node docs/decisions-archive.mjs; node docs/adr-cache.mjs",
+    "node docs/decisions-archive.mjs || true",
+    "cmd /c docs\\x.bat",
+    "pwsh -File docs/x.ps1",
+    "python3 docs/x.py",
+    "node",
+    "node -e",
+    'node -e "unterminated',
+    "docs/decisions-archive.mjs",
+    "bash docs/run",
+  ];
+  for (const cmd of outside) assert.deepEqual(scanOf([cmd]).unenumerable, [cmd], `unenumerable: ${cmd}`);
+  for (const cmd of ["node docs/decisions-archive.mjs --flag value", 'bash "${CLAUDE_PLUGIN_ROOT}/x.sh" --a', "node -e 'require(\"node:fs\")'"]) {
+    assert.deepEqual(scanOf([cmd]).unenumerable, [], `enumerable: ${cmd}`);
+  }
+  assert.deepEqual(scanOf(["node -e 'require(\"node:child_process\").execFileSync(process.execPath,[\"docs/decisions-archive.mjs\"])'"]).scripts, ["docs/decisions-archive.mjs"]);
+});
+
+test("plugin-hooks: #480 the quoted CLAUDE_PROJECT_DIR forms resolve to the in-repo script", () => {
+  for (const cmd of [
+    'node "$CLAUDE_PROJECT_DIR"/docs/decisions-archive.mjs',
+    'node "$CLAUDE_PROJECT_DIR/docs/decisions-archive.mjs"',
+    "node $CLAUDE_PROJECT_DIR/docs/decisions-archive.mjs",
+    "node '${CLAUDE_PROJECT_DIR}/docs/decisions-archive.mjs'",
+    'node "${CLAUDE_PROJECT_DIR}/docs/decisions-archive.mjs" --x',
+  ]) {
+    const scan = scanOf([cmd]);
+    assert.deepEqual(scan.scripts, ["docs/decisions-archive.mjs"], cmd);
+    assert.deepEqual(scan.outside, [], cmd);
+    assert.deepEqual(scan.unenumerable, [], cmd);
+  }
+});
+
+test("spawn-follow: #481 a flag before the script in the args array still follows the script", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  assert.deepEqual(spawned("execFileSync(process.execPath, ['--no-warnings', 'docs/b.mjs', '--x']);", "/r/a.mjs"), ["docs/b.mjs"]);
+  assert.deepEqual(spawned("execFileSync(process.execPath, ['--version']);", "/r/a.mjs"), []);
+  assert.throws(() => spawned("execFileSync(process.execPath, ['--x', y]);", "/r/a.mjs"), /cannot be followed|non-literal|computed/i);
+});
+
+test("plugin-hooks: #482 spawns in modules reached by import or require are followed, and refused ones fail closed", () => {
+  const read = fakeRead({
+    "/r/docs/a.mjs": 'import { x } from "./lib.mjs";',
+    "/r/docs/lib.mjs": 'import { execFileSync } from "node:child_process"; execFileSync(process.execPath, ["docs/c.mjs"]);',
+    "/r/docs/c.mjs": "",
+  });
+  assert.deepEqual(scanOf(["node docs/a.mjs"], read).scripts, ["docs/a.mjs", "docs/c.mjs", "docs/lib.mjs"]);
+  const bad = fakeRead({ "/r/docs/a.mjs": 'require("./lib.cjs");', "/r/docs/lib.cjs": "require('node:child_process').execSync('x');" });
+  assert.equal(scanOf(["node docs/a.mjs"], bad).unenumerable.length, 1);
+  // The same scanner runs on a node -e body: its literal require target is followed.
+  const body = fakeRead({ "/r/docs/lib.mjs": "" });
+  assert.deepEqual(scanOf(["node -e 'require(\"./docs/lib.mjs\")'"], body).scripts, ["docs/lib.mjs"]);
+});
+
+test("plugin-hooks: #483 a shell -c body is never accepted", () => {
+  for (const cmd of ['sh -c "docs/a.sh; docs/b"', "bash -c 'docs/a.sh && docs/other'", 'bash -c "node docs/decisions-archive.mjs"']) {
+    assert.deepEqual(scanOf([cmd]).unenumerable, [cmd], cmd);
+    assert.equal(f1Check([cmd]).ok, false, `F1 fails: ${cmd}`);
+  }
+});
+
+test("spawn-follow: a const bound to a plain string literal resolves in a spawn args array", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  assert.deepEqual(spawned("const b = 'docs/b.mjs'; execFileSync(process.execPath, [b, '--x']);", "/r/a.mjs"), ["docs/b.mjs"]);
+  assert.deepEqual(spawned("const f = require('node:fs'), c = require('node:child_process'), b = 'docs/b.mjs'; c.execFileSync(process.execPath, [b]);", "/r/a.mjs"), ["docs/b.mjs"]);
+  assert.deepEqual(spawned("const b = `docs/b.mjs`; fork(b);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+test("spawn-follow: any other binding of the identifier throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const cases: Record<string, string> = {
+    let: "let b = 'docs/b.mjs'; execFileSync(process.execPath, [b]);",
+    var: "var b = 'docs/b.mjs'; execFileSync(process.execPath, [b]);",
+    reassigned: "const b = 'docs/b.mjs'; b = 'docs/z.mjs'; execFileSync(process.execPath, [b]);",
+    destructured: "const { b } = o; execFileSync(process.execPath, [b]);",
+    arrayDestructured: "const [b] = o; execFileSync(process.execPath, [b]);",
+    template: "const n = 1; const b = `docs/${n}.mjs`; execFileSync(process.execPath, [b]);",
+    concat: "const b = 'docs/' + 'b.mjs'; execFileSync(process.execPath, [b]);",
+    parameter: "function g(b) { execFileSync(process.execPath, [b]); }",
+    imported: "import { b } from './x.mjs'; execFileSync(process.execPath, [b]);",
+    duplicate: "{ const b = 'docs/b.mjs'; } { const b = 'docs/z.mjs'; execFileSync(process.execPath, [b]); }",
+    nonLiteralInit: "const b = pick(); execFileSync(process.execPath, [b]);",
+    spread: "execFileSync(process.execPath, [...args]);",
+    incremented: "const b = 'docs/b.mjs'; b++; execFileSync(process.execPath, [b]);",
+  };
+  for (const [name, src] of Object.entries(cases)) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|computed|non-literal|non-relative/i, name);
+});
+
+test("spawn-follow: a child_process reference outside the allowed call shapes throws", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  for (const src of [
+    "import cp from 'node:child_process'; const f = cp.spawn; f('x');",
+    "import * as cp from 'node:child_process'; cp[name]('x');",
+    "const cp = require('node:child_process'); wrap(cp);",
+    "const { execSync: run } = require('node:child_process'); run('x');",
+    "const { spawn: s } = require('node:child_process'); const t = s;",
+    "import { spawn } from 'node:child_process'; const t = spawn;",
+    "import('node:child_process').then(m => m.execSync('x'));",
+    "const cp = require('node:child_process'); cp.ChildProcess;",
+    "execSync;",
+  ]) {
+    assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|computed|non-literal|non-relative|child_process|shell/i, src);
+  }
+  // The allowed shapes through a renamed named binding stay followed.
+  assert.deepEqual(spawned("const { execFileSync: run } = require('node:child_process'); run(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+// #484: dynamic-code and loader escapes the child_process rule cannot see. Written FAILING FIRST.
+test("scanner: eval, Function, vm, process.binding throw", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "eval('x');",
+    "const e = eval; e('x');",
+    "globalThis.eval('x');",
+    "globalThis['eval']('x');",
+    "new Function('return 1')();",
+    "Function('return 1')();",
+    "const F = Function; F('x');",
+    "(() => {}).constructor('return 1')();",
+    "f['constructor']('x');",
+    "import vm from 'node:vm';",
+    "const vm = require('vm');",
+    "const vm = require('node:vm');",
+    "const { Worker } = require('worker_threads');",
+    "import('node:worker_threads');",
+    "process.binding('spawn_sync');",
+    "process._linkedBinding('x');",
+    "process.dlopen(m, 'x');",
+    "process['binding']('x');",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  // Plain code that merely mentions the words stays fine, and the allowed spawn shape is unchanged.
+  assert.deepEqual(spawned("const note = 'eval and Function are text here'; const o = { a: 1 }; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+// #484 (re-confirm 3): process and the global objects are only ever the object of a plain member access. Written FAILING FIRST.
+test("scanner: process and global objects only as plain member access", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "globalThis[a + b]('x');",
+    "const p = process; p.binding('spawn_sync');",
+    "const { binding } = process; binding('x');",
+    "const q = { ...process };",
+    "Reflect.get(globalThis, k);",
+    "f(process);",
+    "process[k];",
+    "globalThis['x'];",
+    "const g = global; g.x;",
+    "const s = self;",
+    "const w = window;",
+    "function r() { return globalThis; }",
+    "with (globalThis) { x; }",
+    "const p = globalThis.process;",
+    "global.global.x;",
+    "process.mainModule.require('x');",
+    "typeof process;",
+    "[process][0];",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  // Plain member access stays fine.
+  assert.deepEqual(spawned("const e = process.env.HOME; process.exit(process.argv.length); execFileSync(process.execPath, ['docs/b.mjs']); const x = obj.process;", "/r/a.mjs"), ["docs/b.mjs"]);
+});
+
+// #484 (re-confirm 4): the Function constructor by any route. Written FAILING FIRST.
+test("scanner: constructor and computed access refused by any route", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "f['constructor']('x');",
+    "const k = 'constructor'; f[k]('x');",
+    "const c = 'constructor'; const F = f[c]; F('x');",
+    "f[a + b]('x');",
+    "f['x'];",
+    "f.constructor`return 1`;",
+    "a.b`x`;",
+    "(0, f)`x`;",
+    "Reflect.get(f, 'constructor')('x');",
+    "Reflect.construct(f, []);",
+    "Reflect.apply(f, null, []);",
+    "const R = Reflect; R.get(f, 'x');",
+    "const { constructor: C } = f; C('x');",
+    "const { constructor } = f;",
+    "const o = { constructor: 1 };",
+    "g('constructor');",
+    "x.constructor;",
+    "AsyncFunction;",
+    "GeneratorFunction;",
+    "AsyncGeneratorFunction;",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  for (const src of ["f[i + 1];", "f[g()];", "const k = `c${x}`; f[k];", "f[`a`];", "const k = 'a' + 'b'; f[k];", "f[(i, 'x')];"]) {
+    assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  }
+  // Numeric element access, identifier-tagged templates and plain member access stay fine, and so do the real index shapes.
+  assert.deepEqual(spawned("const a = list[0]; const b = tag`x`; const c = obj.name; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+  assert.deepEqual(spawned("for (let i = 0; i < fm.length; i++) { fm[i]; fm[j]; body[j]; lines[i]; cells[ratifiedIdx]; c[c.length - 1]; x[(i - 1) * 2 % n / 3]; x[-1]; }", "/r/a.mjs"), []);
+});
+
+// #484 (re-confirm 5): a const bound to the string "constructor" reaches Function through a call argument. Written FAILING FIRST.
+test("scanner: a const bound to the string constructor throws", () => {
+  const shape = "const k = 'constructor'; const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(function () {}), k); d.value('return 1')();";
+  const read = fakeRead({ "/r/docs/a.mjs": shape });
+  assert.equal(fn<Scan>("pluginHookScan")("/r", syntheticSnapshot(["node docs/a.mjs"]), read).unenumerable.length, 1);
+  // The same through a node -e body, and in every quote style the scanner reads as a plain string.
+  for (const lit of ["'constructor'", '"constructor"', "`constructor`"]) {
+    const body = `const k = ${lit}; use(k);`;
+    assert.throws(() => fn<string[]>("spawnedScripts")(body, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, body);
+  }
+  assert.deepEqual(fn<string[]>("spawnedScripts")("const k = 'construct'; use(k);", "/r/a.mjs"), []);
 });
