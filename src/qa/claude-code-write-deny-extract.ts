@@ -25,10 +25,8 @@ export interface Extracted {
   project: string[];
   /** True when the literal .mcp.json appears in the same function (a project-root file). */
   mcpJson: boolean;
-  /** #463 census: every `(<config-dir getter>(),"<name>")` shape anywhere in the binary, not only in the anchored window. Absent for a hand-built Extracted. */
-  userAnywhere?: string[];
-  /** #463 census: every `(<id>,".claude","<name>")` shape anywhere in the binary. */
-  projectAnywhere?: string[];
+  /** #463/#477 census: every `.claude` name found ANYWHERE in the binary, by any shape, one namespace (a name found by either shape is judged once and applies at both levels). Sorted. Absent for a hand-built Extracted. */
+  census?: string[];
 }
 
 /** Where the installed binary is, or undefined. THOTH_CLAUDE_BIN overrides (used by tests). */
@@ -146,29 +144,54 @@ export function extractWriteDeny(bin: Buffer): Extracted {
     for (const s of m[1]!.matchAll(/"([^"]+)"/g)) if (/^[A-Za-z][A-Za-z0-9_.-]*$/.test(s[1]!) && s[1] !== "HEAD" && s[1] !== "objects" && s[1] !== "refs") user.add(s[1]!);
   }
   const getters = new Set<string>();
-  for (const m of text.matchAll(/\((\w+)\(\),"([^"/\\]+)"\)/g)) {
+  for (const m of text.matchAll(/\(([\w$]+)\(\),"([^"/\\]+)"\)/g)) {
     getters.add(m[1]!);
     user.add(m[2]!);
   }
   for (const m of text.matchAll(/\(\w+,"\.claude","([^"/\\]+)"\)/g)) project.add(m[1]!);
-  const census = scanWholeBinary(bin, [...getters]);
-  return { user: [...user].sort(), project: [...project].sort(), mcpJson: text.includes('".mcp.json"'), userAnywhere: [...census.user].sort(), projectAnywhere: [...census.project].sort() };
+  return { user: [...user].sort(), project: [...project].sort(), mcpJson: text.includes('".mcp.json"'), census: scanWholeBinary(bin, [...getters]) };
 }
 
 const SCAN_CHUNK = 16 * 1024 * 1024;
-const SCAN_OVERLAP = 512;
-/** #463 census: the same two path shapes over the WHOLE binary, in chunks (a 200 MB latin1 string is never built). The user shape is restricted to the config-dir getter ids the anchored window used, so a generic `(f(),"x")` call elsewhere is not read as a path. Disclosed limit: a path built any other way (a join with several segments) is not seen. */
-function scanWholeBinary(bin: Buffer, getters: string[]): { user: Set<string>; project: Set<string> } {
-  const user = new Set<string>();
-  const project = new Set<string>();
-  const userRe = getters.length === 0 ? undefined : new RegExp(`\\((?:${getters.join("|")})\\(\\),"([^"/\\\\]+)"\\)`, "g");
-  const projectRe = /\(\w+,"\.claude","([^"/\\]+)"\)/g;
+const SCAN_OVERLAP = 1024;
+/** How far after `<id>=<getter>()` a use of the variable `<id>` is still read as a use of the config dir. */
+const BIND_WINDOW = 600;
+const NAME = "[A-Za-z0-9_.-]+";
+const escapeId = (id: string): string => id.replaceAll("$", "\\$");
+/** #463/#477 census, fail closed (extra names are fine, a missed name is not). Four shapes over the WHOLE binary, in chunks (a 200 MB latin1 string is never built):
+ *   1. `".claude","<name>"`: the base before it can be anything (identifier, call, member, home directory), so no base is parsed;
+ *   2. a whole-string literal `".claude/<name>"` or `"~/.claude/<name>"` (a sentence that merely mentions a path is not a whole literal);
+ *   3. `<getter>(),"<name>"` where the getter id is one the anchored window used for the user config dir;
+ *   4. `<var>=<getter>()` followed, within BIND_WINDOW characters, by `(<var>,"<name>"` or `,<var>,"<name>"` (the config dir held in a variable).
+ * Names are one namespace: a name from any shape is judged once for both `~/.claude/<name>` and `<project>/.claude/<name>`. Disclosed limits: a window getter id has unrelated definitions elsewhere (extra names, safe); a variable bound further than BIND_WINDOW, or reached through an alias of an alias, is not seen; a name assembled at run time is not a literal and is not seen. */
+function scanWholeBinary(bin: Buffer, getters: string[]): string[] {
+  const names = new Set<string>();
+  const pairRe = new RegExp(`"\\.claude","(${NAME})"`, "g");
+  const literalRe = new RegExp(`"(?:~/|\\./)?\\.claude/(${NAME})/?"`, "g");
+  const g = getters.map(escapeId).join("|");
+  const callRe = getters.length === 0 ? undefined : new RegExp(`(?:${g})\\(\\),"(${NAME})"[,)]`, "g");
+  const useRes = new Map<string, RegExp>();
+  const bindRe = getters.length === 0 ? undefined : new RegExp(`=(?:${g})\\(\\)`, "g");
   for (let start = 0; start < bin.length; start += SCAN_CHUNK) {
     const text = bin.subarray(start, Math.min(bin.length, start + SCAN_CHUNK + SCAN_OVERLAP)).toString("latin1");
-    if (userRe !== undefined) for (const m of text.matchAll(userRe)) user.add(m[1]!);
-    for (const m of text.matchAll(projectRe)) project.add(m[1]!);
+    for (const m of text.matchAll(pairRe)) names.add(m[1]!);
+    for (const m of text.matchAll(literalRe)) names.add(m[1]!);
+    if (callRe !== undefined) for (const m of text.matchAll(callRe)) names.add(m[1]!);
+    if (bindRe !== undefined) {
+      for (const b of text.matchAll(bindRe)) {
+        // the variable name is read BACKWARDS from the "=" (a forward identifier regex is quadratic on a long run of word characters)
+        let from = b.index;
+        while (from > 0 && b.index - from < 64 && /[\w$]/.test(text[from - 1]!)) from--;
+        const id = text.slice(from, b.index);
+        if (id === "" || /^[0-9]/.test(id)) continue;
+        const after = text.slice(b.index, b.index + BIND_WINDOW);
+        let re = useRes.get(id);
+        if (re === undefined) useRes.set(id, (re = new RegExp(`[(,]${escapeId(id)},"(${NAME})"[,)]`, "g")));
+        for (const u of after.matchAll(re)) names.add(u[1]!);
+      }
+    }
   }
-  return { user, project };
+  return [...names].sort();
 }
 
 export function extractFromInstalled(env: NodeJS.ProcessEnv = process.env): (Extracted & { binary: string }) | undefined {
@@ -184,14 +207,21 @@ export interface JudgedEntry {
   /** The named protected path (protected entries only), in the project-relative or ~/ form of namedPaths. */
   path?: string;
 }
+export interface JudgedAnywhere {
+  name: string;
+  judgment: "protected" | "residual";
+  reason: string;
+  /** protected only: the user-level named path (~/.claude/<name>) and the project-level one (.claude/<name>); both must be named protected paths. */
+  userPath?: string;
+  projectPath?: string;
+}
 export interface Judged {
   claudeCodeVersion: string;
   user: JudgedEntry[];
   project: JudgedEntry[];
   projectRoot?: JudgedEntry[];
-  /** #463: sites the extractor's anchored window does not reach, judged from the whole-binary census. Not subject to judged-but-not-extracted. */
-  userOutsideWindow?: JudgedEntry[];
-  projectOutsideWindow?: JudgedEntry[];
+  /** #477/#478: census names, judged ONCE for both levels (~/.claude/<name> and <project>/.claude/<name>). Not subject to judged-but-not-extracted. */
+  anywhere?: JudgedAnywhere[];
 }
 
 /** One line per extracted entry that has no judgment; empty when every entry is judged. */
@@ -202,10 +232,9 @@ export function unjudged(ex: Extracted, j: Judged): string[] {
   for (const n of ex.user) if (!user.has(n)) out.push(`user:${n}`);
   for (const n of ex.project) if (!project.has(n)) out.push(`project:${n}`);
   if (ex.mcpJson && !(j.projectRoot ?? []).some((e) => e.name === ".mcp.json")) out.push("projectRoot:.mcp.json");
-  const userAll = new Set([...user, ...(j.userOutsideWindow ?? []).map((e) => e.name)]);
-  const projectAll = new Set([...project, ...(j.projectOutsideWindow ?? []).map((e) => e.name)]);
-  for (const n of ex.userAnywhere ?? []) if (!userAll.has(n)) out.push(`census:user:${n}`);
-  for (const n of ex.projectAnywhere ?? []) if (!projectAll.has(n)) out.push(`census:project:${n}`);
+  // #477/#478: a census name is covered when it is judged in the anywhere section, or judged in BOTH window lists; one level alone leaves the other open
+  const anywhere = new Set((j.anywhere ?? []).map((e) => e.name));
+  for (const n of ex.census ?? []) if (!anywhere.has(n) && !(user.has(n) && project.has(n))) out.push(`census:${n}`);
   return out;
 }
 
@@ -362,5 +391,5 @@ function checkOne(b: FoundBinary, j: Judged, versionProvider: (binary: string) =
 if (import.meta.url ===`file://${process.argv[1]?.replaceAll("\\", "/")}` || process.argv[1]?.endsWith("claude-code-write-deny-extract.ts") === true) {
   const r = extractFromInstalled();
   if (r === undefined) console.log("claude-code-write-deny-extract: no installed Claude Code binary found");
-  else console.log(JSON.stringify({ user: r.user, project: r.project, mcpJson: r.mcpJson, userAnywhere: r.userAnywhere, projectAnywhere: r.projectAnywhere }, null, 2));
+  else console.log(JSON.stringify({ user: r.user, project: r.project, mcpJson: r.mcpJson, census: r.census }, null, 2));
 }

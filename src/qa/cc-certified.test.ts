@@ -7,12 +7,27 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkExtraction, discoverClaudeBinaries, extractWriteDeny, type Judged } from "./claude-code-write-deny-extract.ts";
+import { checkExtraction, discoverClaudeBinaries, extractWriteDeny, type CheckOptions, type Judged } from "./claude-code-write-deny-extract.ts";
 import { runCli } from "./cc-extraction-covers-judged.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const JUDGMENT_FILE = `${ROOT}docs/qa/claude-code-write-deny-judgment.json`;
 const judged = (): Judged => JSON.parse(readFileSync(JUDGMENT_FILE, "utf8")) as Judged;
+
+/** #477: a census name must be judged in the anywhere section or in BOTH window lists. The fake binaries carry every window entry, so the judgment
+ * the tests run against is the real one plus residual anywhere scaffolding for the names judged at one level only. The real file is untouched. */
+const scaffoldedJudgment = (): string => {
+  const j = judged();
+  const user = new Set(j.user.map((e) => e.name));
+  const have = new Set((j.anywhere ?? []).map((e) => e.name));
+  const extra = j.project.filter((e) => !user.has(e.name) && !have.has(e.name)).map((e) => ({ name: e.name, judgment: "residual" as const, reason: "test scaffold" }));
+  const p = join(mkdtempSync(join(tmpdir(), "cc-judgment-")), "judgment.json");
+  writeFileSync(p, JSON.stringify({ ...j, anywhere: [...(j.anywhere ?? []), ...extra] }), "utf8");
+  return p;
+};
+const SCAFFOLD = scaffoldedJudgment();
+const check = (env: NodeJS.ProcessEnv, vp?: (b: string) => string, jp: string = SCAFFOLD, o?: CheckOptions): ReturnType<typeof checkExtraction> => checkExtraction(env, vp, jp, o);
+const cli = (env: NodeJS.ProcessEnv, vp?: (b: string) => string, jp: string = SCAFFOLD): ReturnType<typeof runCli> => runCli(env, vp, jp);
 const names = (es: { name: string }[]): string[] => es.map((e) => e.name);
 const OPT_IN = { THOTH_EXEC_UNPROTECTED: "1" };
 
@@ -43,7 +58,7 @@ test("CC-cert/certified-with-gap: a certified binary (local CLI) with an unjudge
   const h = home();
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", [...user, "brand-new-dir"], project);
-  const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion }));
+  const r = check(envOf(h), versions({ [local]: judged().claudeCodeVersion }));
   const b = find(r.binaries, local);
   assert.equal(b.certified, true);
   assert.equal(b.status, "FAIL");
@@ -56,7 +71,7 @@ test("CC-cert/uncertified-with-gap: a retained versions/ entry with a gap is FAI
   const h = home();
   const { user, project } = full();
   const v = place(h, ".local/share/claude/versions/2.1.240", [...user, "brand-new-dir"], project);
-  const r = checkExtraction(envOf(h), versions({ [v]: judged().claudeCodeVersion }));
+  const r = check(envOf(h), versions({ [v]: judged().claudeCodeVersion }));
   const b = find(r.binaries, v);
   assert.equal(b.certified, false);
   assert.equal(b.status, "FAIL");
@@ -69,7 +84,7 @@ test("CC-cert/uncertified-clean: a retained versions/ entry at the judged versio
   const h = home();
   const { user, project } = full();
   const v = place(h, ".local/share/claude/versions/2.1.267", user, project);
-  const r = checkExtraction(envOf(h), versions({ [v]: judged().claudeCodeVersion }));
+  const r = check(envOf(h), versions({ [v]: judged().claudeCodeVersion }));
   const b = find(r.binaries, v);
   assert.equal(b.certified, false);
   assert.equal(b.status, "PASS");
@@ -82,7 +97,7 @@ test("CC-cert/versions-entry: a versions/ entry at another version is FAIL prune
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project);
   const old = place(h, ".local/share/claude/versions/2.1.240", user, project);
-  const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion, [old]: "2.1.240" }));
+  const r = check(envOf(h), versions({ [local]: judged().claudeCodeVersion, [old]: "2.1.240" }));
   assert.equal(find(r.binaries, local).status, "PASS");
   const b = find(r.binaries, old);
   assert.deepEqual([b.status, b.remedy, b.certified], ["FAIL", "prune", false]);
@@ -93,7 +108,7 @@ test("CC-cert/certified-version-mismatch: the local CLI at another version is FA
   const h = home();
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project);
-  const r = checkExtraction(envOf(h), versions({ [local]: "9.9.9" }));
+  const r = check(envOf(h), versions({ [local]: "9.9.9" }));
   const b = find(r.binaries, local);
   assert.deepEqual([b.status, b.remedy, b.certified], ["FAIL", "update", true]);
   const text = b.reasons.join("\n");
@@ -107,13 +122,13 @@ test("CC-cert/obsolete-vscode-dir: an extension dir listed in the editor's .obso
   const obsolete = place(h, EXT("2.1.267"), user, project);
   const active = place(h, EXT("2.1.250"), user, project);
   writeFileSync(join(h, ".vscode", "extensions", ".obsolete"), JSON.stringify({ "anthropic.claude-code-2.1.267-win32-x64": true }), "utf8");
-  const r = checkExtraction(envOf(h), versions({ [obsolete]: "2.1.100", [active]: "2.1.250" }));
+  const r = check(envOf(h), versions({ [obsolete]: "2.1.100", [active]: "2.1.250" }));
   const o = find(r.binaries, obsolete);
   const a = find(r.binaries, active);
   assert.deepEqual([o.certified, o.status, o.remedy], [false, "FAIL", "prune"]);
   assert.deepEqual([a.certified, a.status, a.remedy], [true, "FAIL", "update"]);
   // an obsolete dir that is clean at the judged version is PASS, still uncertified
-  const r2 = checkExtraction(envOf(h), versions({ [obsolete]: judged().claudeCodeVersion, [active]: judged().claudeCodeVersion }));
+  const r2 = check(envOf(h), versions({ [obsolete]: judged().claudeCodeVersion, [active]: judged().claudeCodeVersion }));
   assert.deepEqual([find(r2.binaries, obsolete).certified, find(r2.binaries, obsolete).status], [false, "PASS"]);
   assert.equal(r2.status, "PASS");
 });
@@ -136,7 +151,7 @@ test("CC-cert/obsolete-file-invalid: a malformed .obsolete file fails closed: ev
   writeFileSync(join(h, ".vscode", "extensions", ".obsolete"), "{ not json", "utf8");
   const found = discoverClaudeBinaries(envOf(h));
   assert.ok(found.every((b) => b.certified));
-  const r = checkExtraction(envOf(h), versions({ [e1]: judged().claudeCodeVersion, [e2]: judged().claudeCodeVersion }));
+  const r = check(envOf(h), versions({ [e1]: judged().claudeCodeVersion, [e2]: judged().claudeCodeVersion }));
   assert.equal(r.status, "FAIL");
   assert.ok(r.reasons.join("\n").includes(".obsolete"));
 });
@@ -169,7 +184,7 @@ test("CC-cert/final-line: the final line marks each binary certified or uncertif
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project);
   const old = place(h, ".local/share/claude/versions/2.1.240", user, project);
-  const r = runCli(envOf(h), versions({ [local]: judged().claudeCodeVersion, [old]: "2.1.240" }));
+  const r = cli(envOf(h), versions({ [local]: judged().claudeCodeVersion, [old]: "2.1.240" }));
   assert.equal(r.code, 1);
   assert.match(r.line, /^CC-extraction-covers-judged: FAIL /);
   const checked = r.line.split("checked: ")[1]!.split(" | ")[0]!;
@@ -182,11 +197,11 @@ test("CC-cert/flag-union: BinaryResult.flag admits a second literal; an uncertif
   const h = home();
   const { user, project } = full();
   const old = place(h, ".local/share/claude/versions/2.1.240", user, project);
-  const r = checkExtraction(envOf(h), versions({ [old]: "2.1.240" }));
+  const r = check(envOf(h), versions({ [old]: "2.1.240" }));
   assert.equal(find(r.binaries, old).flag, "UNCERTIFIED-STALE");
   const h2 = home();
   const outside = place(h2, "pathbin/claude.exe", user, project);
-  const r2 = checkExtraction({ ...envOf(h2), PATH: join(h2, "pathbin"), THOTH_EXEC_UNPROTECTED: "" }, versions({}));
+  const r2 = check({ ...envOf(h2), PATH: join(h2, "pathbin"), THOTH_EXEC_UNPROTECTED: "" }, versions({}));
   assert.equal(find(r2.binaries, outside).flag, "UNVERIFIED-UNPROTECTED");
 });
 
@@ -196,10 +211,10 @@ test("CC-cert/options-object: the protected list is passed as an options object 
   const local = place(h, ".local/bin/claude.exe", user, project);
   const asked: string[] = [];
   const spy = (b: string): string => { asked.push(b); return `${judged().claudeCodeVersion} (Claude Code)`; };
-  checkExtraction({ ...envOf(h), THOTH_EXEC_UNPROTECTED: "" }, spy, undefined, { protectedList: ["~/.local/bin/"] });
+  check({ ...envOf(h), THOTH_EXEC_UNPROTECTED: "" }, spy, undefined, { protectedList: ["~/.local/bin/"] });
   assert.deepEqual(asked, [local], "listed as protected: executed");
   asked.length = 0;
-  checkExtraction({ ...envOf(h), THOTH_EXEC_UNPROTECTED: "" }, spy, undefined, { protectedList: [] });
+  check({ ...envOf(h), THOTH_EXEC_UNPROTECTED: "" }, spy, undefined, { protectedList: [] });
   assert.deepEqual(asked, [], "not on the list: not executed");
 });
 
@@ -249,15 +264,15 @@ test("CC-census/home-rooted-project-shape: a home-rooted .claude site is one cen
   const homeRooted = 'r.push(_m(TO.homedir(),".claude","ide").normalize("NFC"));if(n)r.push(_m(n,".claude","ide"));';
   const local = place(h, ".local/bin/claude.exe", user, project, homeRooted);
   const vp = versions({ [local]: judged().claudeCodeVersion });
-  const bare = checkExtraction(envOf(h), vp);
+  const bare = check(envOf(h), vp);
   assert.ok(bare.reasons.join("\n").includes("census:ide"), bare.reasons.join("\n"));
   assert.ok(!bare.reasons.join("\n").includes("census:project:") && !bare.reasons.join("\n").includes("census:user:"), "no per-level label");
   const p = join(h, "judgment.json");
-  writeFileSync(p, JSON.stringify({ ...judged(), project: [...judged().project, { name: "ide", judgment: "protected", path: ".claude/ide/", reason: "test" }] }), "utf8");
-  const projectOnly = checkExtraction(envOf(h), vp, p);
+  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), project: [...judged().project, { name: "ide", judgment: "protected", path: ".claude/ide/", reason: "test" }] }), "utf8");
+  const projectOnly = check(envOf(h), vp, p);
   assert.ok(projectOnly.reasons.join("\n").includes("census:ide"), "a project-level judgment alone leaves the user level open");
-  writeFileSync(p, JSON.stringify({ ...judged(), anywhere: [{ name: "ide", judgment: "residual", reason: "test" }] }), "utf8");
-  const both = checkExtraction(envOf(h), vp, p);
+  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "ide", judgment: "residual", reason: "test" }] }), "utf8");
+  const both = check(envOf(h), vp, p);
   assert.equal(both.status, "PASS", both.reasons.join("; "));
 });
 
@@ -266,7 +281,7 @@ test("CC-census/covered-when-judged-at-both-levels: a name judged in both window
   const { user, project } = full();
   const both = judged().user.map((e) => e.name).find((n) => judged().project.some((e) => e.name === n))!;
   const local = place(h, ".local/bin/claude.exe", user, project, `G(Ml(Ie,".claude","${both}"),!0);`);
-  const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion }));
+  const r = check(envOf(h), versions({ [local]: judged().claudeCodeVersion }));
   assert.equal(r.status, "PASS", r.reasons.join("; "));
 });
 
@@ -275,14 +290,14 @@ test("CC-census/unjudged-fails-then-judged-passes: an out-of-window name fails a
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project, OUTSIDE);
   const vp = versions({ [local]: judged().claudeCodeVersion });
-  const bad = checkExtraction(envOf(h), vp);
+  const bad = check(envOf(h), vp);
   assert.equal(bad.status, "FAIL");
   assert.ok(bad.reasons.join("\n").includes("census:ide"), bad.reasons.join("\n"));
   assert.ok(bad.reasons.join("\n").includes("census:outside-user"));
-  const withAnywhere = { ...judged(), anywhere: [{ name: "ide", judgment: "residual", reason: "test" }, { name: "outside-user", judgment: "residual", reason: "test" }] };
+  const withAnywhere = { ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "ide", judgment: "residual", reason: "test" }, { name: "outside-user", judgment: "residual", reason: "test" }] };
   const p = join(h, "judgment.json");
   writeFileSync(p, JSON.stringify(withAnywhere), "utf8");
-  const ok = checkExtraction(envOf(h), vp, p);
+  const ok = check(envOf(h), vp, p);
   assert.equal(ok.status, "PASS", ok.reasons.join("; "));
 });
 
@@ -291,8 +306,8 @@ test("CC-census/anywhere-entries-not-required-in-extraction: a judged anywhere e
   const { user, project } = full();
   const local = place(h, ".local/bin/claude.exe", user, project);
   const p = join(h, "judgment.json");
-  writeFileSync(p, JSON.stringify({ ...judged(), anywhere: [{ name: "worktrees", judgment: "residual", reason: "test" }] }), "utf8");
-  const r = checkExtraction(envOf(h), versions({ [local]: judged().claudeCodeVersion }), p);
+  writeFileSync(p, JSON.stringify({ ...(JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged), anywhere: [...((JSON.parse(readFileSync(SCAFFOLD, "utf8")) as Judged).anywhere ?? []), { name: "worktrees", judgment: "residual", reason: "test" }] }), "utf8");
+  const r = check(envOf(h), versions({ [local]: judged().claudeCodeVersion }), p);
   assert.equal(r.status, "PASS", r.reasons.join("; "));
 });
 
@@ -366,7 +381,7 @@ test("CC-cert/final-line-readable: per-binary status, certified flag and remedy 
   const { user, project } = full();
   const a = place(h, ".local/bin/claude.exe", user, project, OUTSIDE);
   const b = place(h, ".local/share/claude/versions/2.1.240", user, project, OUTSIDE);
-  const r = runCli(envOf(h), versions({ [a]: judged().claudeCodeVersion, [b]: "2.1.240" }));
+  const r = cli(envOf(h), versions({ [a]: judged().claudeCodeVersion, [b]: "2.1.240" }));
   assert.equal(r.code, 1);
   assert.match(r.line, /^CC-extraction-covers-judged: FAIL checked: /);
   assert.equal(r.line.split("outside-user").length - 1, 1, "a census name is printed once, not once per binary");
