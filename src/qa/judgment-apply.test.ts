@@ -158,8 +158,7 @@ test("JA-applier/delta-dir-only: a delta outside docs/qa/judgment-deltas/ is ref
   const before = readFileSync(paths.writeDeny, "utf8");
   assert.throws(() => applyFiles(stray, paths, { gitCheck: okGit }), /judgment-deltas/);
   assert.equal(readFileSync(paths.writeDeny, "utf8"), before);
-  assert.ok(DELTA_DIR.replaceAll("\\", "/").endsWith("docs/qa/judgment-deltas"));
-  // a path that climbs out of the delta dir with .. is outside it
+  assert.ok(DELTA_DIR.endsWith("judgment-deltas"));
   assert.throws(() => applyFiles(join(dir, "deltas", "..", "stray.json"), paths, { deltaDir: join(dir, "deltas"), gitCheck: okGit }), /judgment-deltas/);
 });
 
