@@ -11,10 +11,15 @@ import { fileURLToPath } from "node:url";
 import { applyDelta, applyFiles, DELTA_DIR, gitTrackedAndClean, missingFromDelta, type Delta, type JudgmentFiles } from "./judgment-apply.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const real = (): JudgmentFiles => ({
-  writeDeny: JSON.parse(readFileSync(`${ROOT}docs/qa/claude-code-write-deny-judgment.json`, "utf8")) as JudgmentFiles["writeDeny"],
-  toolExec: JSON.parse(readFileSync(`${ROOT}docs/qa/tool-exec-judgment.json`, "utf8")) as JudgmentFiles["toolExec"],
-});
+/** The real files with what this test file adds taken back out, so the tests do not depend on which judgments the repo already holds. */
+const real = (): JudgmentFiles => {
+  const writeDeny = JSON.parse(readFileSync(`${ROOT}docs/qa/claude-code-write-deny-judgment.json`, "utf8")) as JudgmentFiles["writeDeny"];
+  delete writeDeny["anywhere"];
+  writeDeny.user = writeDeny.user.filter((e) => e.name !== "localSettings");
+  const toolExec = JSON.parse(readFileSync(`${ROOT}docs/qa/tool-exec-judgment.json`, "utf8")) as JudgmentFiles["toolExec"];
+  toolExec.judgments = toolExec.judgments.filter((e) => e.tool !== "BrandNewTool");
+  return { writeDeny, toolExec };
+};
 const delta = (): Delta => ({
   writeDeny: {
     claudeCodeVersion: "9.9.9",
@@ -178,4 +183,23 @@ test("JA-applier/tracked-and-unmodified: a delta must be tracked in git and matc
   assert.match(gitTrackedAndClean(file) ?? "", /modified/, "staged but not committed is still not the committed record");
   const { dir, paths, deltaPath } = sandbox();
   assert.throws(() => applyFiles(deltaPath, paths, { deltaDir: join(dir, "deltas"), gitCheck: () => "d1.json is not tracked in git" }), /not tracked/);
+});
+
+test("JA-applier/version-guard-typeof-and-calendar: a non-string version is refused with the same error, and a tool version must be a real calendar date", () => {
+  for (const v of [2.1, null, ["2.1.289"], { v: "2.1.289" }, true]) {
+    const d = delta();
+    (d.writeDeny as { claudeCodeVersion?: unknown }).claudeCodeVersion = v;
+    assert.throws(() => applyDelta(clone(real()), d), /claudeCodeVersion/, JSON.stringify(v));
+    const t = delta();
+    (t.toolExec as { version?: unknown }).version = v;
+    assert.throws(() => applyDelta(clone(real()), t), /version/, JSON.stringify(v));
+  }
+  for (const v of ["2026-13-01", "2026-02-30", "2026-00-10", "2026-10-32", "0000-01-01"]) {
+    const t = delta();
+    t.toolExec!.version = v;
+    assert.throws(() => applyDelta(clone(real()), t), /version/, v);
+  }
+  const ok = delta();
+  ok.toolExec!.version = "2024-02-29";
+  assert.doesNotThrow(() => applyDelta(clone(real()), ok));
 });
