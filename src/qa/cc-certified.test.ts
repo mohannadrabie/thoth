@@ -389,3 +389,35 @@ test("CC-cert/final-line-readable: per-binary status, certified flag and remedy 
   assert.ok(r.line.indexOf("checked:") < r.line.indexOf("census-unjudged"));
   assert.ok(r.details.filter((d) => d.includes("outside-user")).length <= 1, "the printed detail lines collapse it too");
 });
+
+// ---- #477 round 2: structural census (red-team round 2) -------------------------------------------------------------------
+/** Byte snippets copied (read-only) from the 2.1.289 VS Code extension binary on 2026-10-06. */
+const REAL_289_ROUND2 = [
+  'var Le=["**/.claude/scheduled_tasks.lock","**/.claude/scheduled_tasks.json","**/.claude/routines/.state/","**/.claude/worktrees/","**/.claude/checkpoints/","**/.claude/mailbox/","**/.claude/agent-registry.json","**/.claude/agent-memory-local","**/.claude/first-run","**/.claude/assistant-daemon-state.json"],pe="# claude-code-runtime";',
+  '"Read(~/.claude/settings.json)","Read(~/.claude/settings.local.json)","Read(~/.claude/projects/**)","Read(~/.claude/shell-snapshots/**)","Read(~/.claude/history*)","Read(~/.claude/todos/**)","Read(~/.claude/statsig/**)","Read(~/.claude/ide/**)","Read(~/.netrc)",',
+  'function DS(){let e=process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;if(e!==void 0)return(e||u(o(),".claude")).normalize("NFC");return we()}function dee(e=""){return e}',
+  'r;try{r=(await Ek(Lf(DS(),".credentials.json"))).mtimeMs}catch{return If(e,n)}',
+].join("");
+
+test("CC-census/glob-prefix-rule-string-and-second-getter: glob-prefixed literals, rule strings and a second config-dir getter are census names (2.1.289 byte snippets)", () => {
+  const { user, project } = full();
+  const census = extractWriteDeny(Buffer.from(fakeBinary(user, project, REAL_289_ROUND2, "we"), "latin1")).census ?? [];
+  for (const name of ["mailbox", "checkpoints", "agent-registry.json", "first-run", "assistant-daemon-state.json", "history", "todos", "statsig", ".credentials.json"]) assert.ok(census.includes(name), `${name} is in the census`);
+  assert.ok(!census.some((n) => n.includes("*") || n.endsWith("/")), "glob characters and trailing slashes are stripped");
+});
+
+test("CC-census/getter-by-definition: a getter is any function or arrow binding whose body names .claude or a CONFIG_DIR variable, not only the window's ids", () => {
+  const { user, project } = full();
+  const text = 'function QQ(){return process.env.CLAUDE_CONFIG_DIR??"x"}const RR=cs(()=>(s()??i(R(),".claude")).normalize("NFC"),s);a(QQ(),"viaFunction");b(RR(),"viaArrow");c(NotAGetter(),"notThis");';
+  const census = extractWriteDeny(Buffer.from(fakeBinary(user, project, text, "we"), "latin1")).census ?? [];
+  assert.ok(census.includes("viaFunction") && census.includes("viaArrow"));
+  assert.ok(!census.includes("notThis"), "an id with no config-dir definition is not a getter");
+});
+
+test("CC-census/prose-and-quotes: a name in a quoted sentence or template is found with trailing punctuation trimmed; no name comes from an unquoted run", () => {
+  const { user, project } = full();
+  const text = 'a="see the .claude/hooks. directory";b=`.claude/skills/x`;c=\'.claude/sq-name\';';
+  const census = extractWriteDeny(Buffer.from(fakeBinary(user, project, text), "latin1")).census ?? [];
+  for (const n of ["hooks", "skills", "sq-name"]) assert.ok(census.includes(n), n);
+  assert.ok(!census.includes("hooks."));
+});

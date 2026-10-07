@@ -203,3 +203,26 @@ test("JA-applier/version-guard-typeof-and-calendar: a non-string version is refu
   ok.toolExec!.version = "2024-02-29";
   assert.doesNotThrow(() => applyDelta(clone(real()), ok));
 });
+
+test("JA-applier/applies-committed-blob-not-worktree: bytes hidden from git by assume-unchanged are not applied; the committed blob is", () => {
+  const repo = mkdtempSync(join(tmpdir(), "ja-blob-"));
+  const git = (...args: string[]): string => execFileSync("git", ["-c", "user.email=tester", "-c", "user.name=t", "-c", "core.hooksPath=/dev/null", ...args], { cwd: repo, encoding: "utf8", timeout: 30000 });
+  git("init", "-q");
+  const deltaDir = join(repo, "deltas");
+  mkdirSync(deltaDir);
+  const file = join(deltaDir, "d1.json");
+  writeFileSync(file, JSON.stringify({ toolExec: { version: "2030-01-01" } }));
+  git("add", "deltas/d1.json");
+  git("commit", "-q", "--no-verify", "-m", "delta");
+  writeFileSync(file, JSON.stringify({ toolExec: { version: "2099-12-31" } }));
+  git("update-index", "--assume-unchanged", "deltas/d1.json");
+  const { paths } = sandbox();
+  try {
+    applyFiles(file, paths, { deltaDir });
+  } catch {
+    // a refusal is acceptable too
+  }
+  const version = (JSON.parse(readFileSync(paths.toolExec, "utf8")) as { version: string }).version;
+  assert.notEqual(version, "2099-12-31", "the uncommitted work-tree bytes were not applied");
+  assert.ok(version === "2030-01-01" || version === real().toolExec.version, `version is the committed value or unchanged, got ${version}`);
+});
