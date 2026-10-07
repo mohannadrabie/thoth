@@ -184,6 +184,13 @@ export function gitTrackedAndClean(path: string): string | undefined {
   return undefined;
 }
 
+/** The file's bytes as committed at HEAD. Throws when git cannot produce them. */
+export function committedBlob(path: string): string {
+  const r = spawnSync("git", ["show", `HEAD:./${basename(path)}`], { cwd: dirname(path), encoding: "utf8", timeout: 30000, maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`${path}: cannot read the committed blob (git show HEAD:./${basename(path)} exited ${String(r.status)})`);
+  return r.stdout;
+}
+
 export interface ApplyOptions {
   dryRun?: boolean;
   /** Where a delta may live (tests inject a temp dir). */
@@ -199,7 +206,10 @@ export function applyFiles(deltaPath: string, paths: Paths = DEFAULT_PATHS, opts
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`delta ${deltaPath} is outside docs/qa/judgment-deltas/ (a delta is accepted only from there)`);
   const refused = (opts.gitCheck ?? gitTrackedAndClean)(resolve(deltaPath));
   if (refused !== undefined) throw new Error(refused);
-  const delta = JSON.parse(readFileSync(deltaPath, "utf8")) as Delta;
+  // the COMMITTED bytes are what gets applied (git show HEAD:./file), never the work tree: assume-unchanged, skip-worktree and a symlink cannot smuggle in uncommitted content.
+  // When a test stubs gitCheck it also reads the file directly (no repository there).
+  const text = opts.gitCheck !== undefined ? readFileSync(deltaPath, "utf8") : committedBlob(resolve(deltaPath));
+  const delta = JSON.parse(text) as Delta;
   const before = { writeDeny: readFileSync(paths.writeDeny, "utf8"), toolExec: readFileSync(paths.toolExec, "utf8") };
   const files: JudgmentFiles = { writeDeny: JSON.parse(before.writeDeny) as JudgmentFiles["writeDeny"], toolExec: JSON.parse(before.toolExec) as JudgmentFiles["toolExec"] };
   applyDelta(files, delta);
