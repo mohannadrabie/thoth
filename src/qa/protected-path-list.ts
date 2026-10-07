@@ -276,7 +276,7 @@ const CP_MODULES = new Set(["child_process", "node:child_process"]);
 const CP_FNS = new Set(["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"]);
 const NODE_COMMANDS = new Set(["node", "node.exe"]);
 // #484: ways to run code the scanner cannot read. Any use throws, in every scanned file and body.
-// The name "constructor" is refused by any route (member, destructuring key, object key, string argument): it reaches the Function constructor.
+// The name "constructor" is refused by any route (member, destructuring key, object key, or the string anywhere): it reaches the Function constructor.
 const DYNAMIC_NAMES = new Set(["eval", "Function", "AsyncFunction", "GeneratorFunction", "AsyncGeneratorFunction", "constructor"]);
 const REFLECT_ESCAPES = new Set(["construct", "apply", "get"]);
 const NUMERIC_OPS = new Set([ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken, ts.SyntaxKind.PercentToken]);
@@ -414,7 +414,7 @@ export function scanSource(text: string, fileName: string): SourceScan {
     if (ts.isElementAccessExpression(node) && !numericKey(node.argumentExpression)) refuse("a computed element access (the key is not a number by construction)");
     if (ts.isTaggedTemplateExpression(node) && !ts.isIdentifier(node.tag)) refuse("a tagged template whose tag is not a plain identifier");
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Reflect" && REFLECT_ESCAPES.has(node.name.text)) refuse(`Reflect.${node.name.text}`);
-    if (ts.isStringLiteralLike(node) && node.text === "constructor" && ts.isCallExpression(node.parent)) refuse("the name constructor as a call argument");
+    if (ts.isStringLiteralLike(node) && node.text === "constructor") refuse("the string constructor (any quote style, anywhere)");
     if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text)) refuse(`.${node.name.text}`);
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && GLOBAL_OBJECTS.has(node.expression.text) && GLOBAL_OBJECTS.has(node.name.text)) refuse(`${node.expression.text}.${node.name.text} (a global object reached through another)`);
     if (ts.isIdentifier(node) && GLOBAL_OBJECTS.has(node.text) && !isDeclName(node)) {
