@@ -5,6 +5,13 @@
     "add": {
       "anywhere": [
         {
+          "name": "mcp-skill-archives",
+          "judgment": "protected",
+          "reason": "Serves SKILL.md as a skill: the MCP skill cache returns skillMd read from ~/.claude/mcp-skill-archives/<slug>/<key>/SKILL.md with no extraction into the skills directory, and the key can come from a session-writable meta.json. Same class as skills and agent-memory (#486). Evidence: var Alt=\"mcp-skill-archives\",oon=\"SKILL.md\"; v(m(D,oon),\"utf8\") returns {hit:!0,skillMd:l}.",
+          "userPath": "~/.claude/mcp-skill-archives/",
+          "projectPath": ".claude/mcp-skill-archives/"
+        },
+        {
           "name": "daemon.lock",
           "judgment": "residual",
           "reason": "Pid and start-time lock for the daemon. Evidence: var L=\"daemon.lock\";function wP(){return w(we(),L)}; De.state(\"daemon-lock\")."
@@ -156,17 +163,6 @@
             "judgment": "protected",
             "path": "~/.claude/mcp-skill-archives/",
             "reason": "Serves SKILL.md as a skill: the MCP skill cache returns skillMd read from ~/.claude/mcp-skill-archives/<slug>/<key>/SKILL.md with no extraction into the skills directory, and the key can come from a session-writable meta.json. Same class as skills and agent-memory (#486). Evidence: var Alt=\"mcp-skill-archives\",oon=\"SKILL.md\"; v(m(D,oon),\"utf8\") returns {hit:!0,skillMd:l}."
-          }
-        }
-      ],
-      "anywhere": [
-        {
-          "entry": {
-            "name": "mcp-skill-archives",
-            "judgment": "protected",
-            "reason": "Serves SKILL.md as a skill: the MCP skill cache returns skillMd read from ~/.claude/mcp-skill-archives/<slug>/<key>/SKILL.md with no extraction into the skills directory, and the key can come from a session-writable meta.json. Same class as skills and agent-memory (#486). Evidence: var Alt=\"mcp-skill-archives\",oon=\"SKILL.md\"; v(m(D,oon),\"utf8\") returns {hit:!0,skillMd:l}.",
-            "userPath": "~/.claude/mcp-skill-archives/",
-            "projectPath": ".claude/mcp-skill-archives/"
           }
         }
       ]
