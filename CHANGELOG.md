@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - #455: repo scripts that enabled plugins' hooks execute are on the protected list, derived from the hook commands (scope s308-455, #308 K blocker)
+
+Refs #308. CRITICAL tier (guard policy generator, shipped deny rules, K precondition). Plan `docs/plans/s308-455-plan-2026-10-06.md`. No wiring.
+
+- `src/qa/protected-path-list.ts`: the generator now derives plugin-hook scripts from a committed snapshot of the enabled plugins' hook commands (docs/qa/plugin-hook-snapshot.json, produced only by `--write` from the live plugin data under the home directory; CI has none, so the default run reads the snapshot). Script tokens resolving inside the repo and existing are protected, with spawn-followed children (an AST scan of node spawns with literal script arguments, iterated to a fixpoint; a non-literal one throws) and their relative imports. Tokens resolving outside the repo are reported, not protected. A command naming no script is listed as unenumerable, not thrown. One list: the rules and the Edit-deny proposal are regenerated from it. Result: `docs/session-brief.mjs`, `docs/adr-cache.mjs`, `docs/decisions-archive.mjs` protected, plus three named paths (the snapshot, the F1 instrument, the judgments file).
+- Data files the plugin scripts read or write (`docs/decisions.md`, `docs/.maat-state.json`) are deliberately not protected: read-by-path data stays derived from the gate's own closure only.
+- src/qa/f1-settings-named-scripts-judged.ts (new, npm script `qa:f1-settings-named-scripts-judged`): the K precondition now covers plugin-registered hooks. Fails on an unprotected plugin or settings hook script, an unjudged unenumerable command (judgments in docs/qa/f1-hook-judgments.json, keyed by plugin and command hash), an enabled plugin with no install record, an inconsistent snapshot, or snapshot drift from the live plugin (checked locally only; with no live data it reports UNVERIFIED).
+- `docs/qa/k-proposed-merged-settings.fixture.txt` and `src/policy/config/shipped-defaults.json` regenerated; hooks wired in this repo's own settings were already covered and stay covered (tested).
+- Tests (written failing first, commit e106f1e): `src/qa/protected-path-list.plugin-hooks.test.ts` and `src/qa/f1-settings-named-scripts-judged.test.ts`.
+- Disclosed limits: snapshot drift is undetectable in CI (only the committed list against the committed snapshot is proven there); exec/execSync command strings and non-node spawns are not followed; a hook reaching a repo script only by a runtime-built path is not enumerable; a plugin upgrade that rewrites these scripts now needs the human.
+
 ### Changed - #466: the readiness check no longer executes Claude binaries from unprotected locations; Desktop roots and dev-mods protected (scope s308-466, #308 K blocker)
 
 Refs #308, #452, #456. CRITICAL tier (policy delivery list, guard rules and the K-readiness certifier's exec gate). Plan `docs/plans/s308-466-plan-2026-10-06.md`. No wiring.

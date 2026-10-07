@@ -18,6 +18,15 @@
 // forward slash. In this module's lists a trailing "/" marks a DIRECTORY entry (the canonicalizer itself drops it);
 // a directory entry gets a rule for the directory and for its children. The user settings file is the literal `~/...` form.
 //
+// #455 (S7): plugin-registered hooks are not settings fields, yet they run repo scripts at session start (the maat plugin's SessionStart
+// hook runs docs/session-brief.mjs, which spawns docs/adr-cache.mjs and docs/decisions-archive.mjs). Those scripts are DERIVED from the
+// enabled plugins' hook commands via a committed snapshot (docs/qa/plugin-hook-snapshot.json, produced only by --write from the live
+// ~/.claude data; CI has no ~/.claude, so the default run reads the snapshot). A command's script tokens that resolve inside the repo
+// (and exist) are protected, with their spawn-followed children and relative imports; tokens that resolve outside the repo are
+// REPORTED, not protected (plugin-root paths sit under the protected ~/.claude/plugins/). A command naming no script is listed as
+// unenumerable (not thrown); the F1 instrument fails until the human judges it. Drift of the snapshot from the live plugin is detected
+// locally only (the default run and the F1 row); CI proves only that the list matches the committed snapshot.
+//
 // Disclosed limits: hooks wired in USER or MANAGED settings (outside the repo) are not walked; only the project
 // settings file (committed) and the gitignored local settings file are read, and a local-file command that names no
 // project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
@@ -26,8 +35,10 @@
 // `--print-worktree-targets --form=relative|absolute` prints the Edit(...) lines a linked worktree needs (worktreeExtraPaths; --form is required, #442).
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { canonicalizePathTarget } from "../policy/normalizer/path-canonical.ts";
@@ -39,6 +50,8 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HOOK_REL = "hooks/pretooluse-kernel-gate.mjs";
 const SHIPPED_REL = "src/policy/config/shipped-defaults.json";
 const PROPOSAL_REL = "docs/plans/s308-K-proposed-settings-2026-10-04.json";
+export const SNAPSHOT_REL = "docs/qa/plugin-hook-snapshot.json";
+export const JUDGMENTS_REL = "docs/qa/f1-hook-judgments.json";
 
 /** Mutating verbs only: reading and running a protected file stays free ("read freely, protect the gate"). */
 export const PROTECTED_VERBS = ["write", "create", "modify", "delete", "move", "rename"] as const;
@@ -89,6 +102,7 @@ function specifierOf(node: ts.Node): string | undefined {
 }
 
 const JS_ROOT = /\.(mjs|js|cjs|ts|mts)$/;
+const SCRIPT_EXT = /\.(mjs|js|cjs|ts|mts|sh|ps1|py)$/i;
 
 /** Project scripts named by the command hooks wired in .claude/settings.json and .claude/settings.local.json (read-only
  * parse, Issue #419). A command is expected to reference its script as ${CLAUDE_PROJECT_DIR}/<path>; a wired command
@@ -131,6 +145,271 @@ export function wiredHookScan(root: string, readSettings: Reader = readReal): Wi
     }
   }
   return { scripts: [...out].sort(), skipped };
+}
+
+// ---- #455: plugin-registered hooks ----
+
+export interface SnapshotFile {
+  /** Hooks file path relative to the plugin install (never an absolute path: the snapshot is committed). */
+  path: string;
+  /** sha256 of the file's raw bytes (or of the inline hooks JSON): compared against the live plugin locally. */
+  sha256: string;
+  /** sha256 of JSON.stringify(commands): the internal consistency check (a hand-edited command list fails it). */
+  commandsSha256: string;
+  commands: string[];
+}
+export interface SnapshotPlugin {
+  id: string;
+  version: string;
+  gitCommitSha: string;
+  /** Enabled but no install record: no hook files could be read (F1 fails on it). */
+  unresolved?: true;
+  files: SnapshotFile[];
+}
+export interface PluginHookSnapshot {
+  version: 1;
+  plugins: SnapshotPlugin[];
+}
+export interface PluginHookScan {
+  /** Repo-relative scripts to protect: in-repo, existing, spawn-followed. Sorted. */
+  scripts: string[];
+  /** "<plugin>: <token>" for each script token resolving outside the repo (reported, not protected). */
+  outside: string[];
+  /** "<plugin>: <token>" for each in-repo script token that does not exist on disk (reported, not protected). */
+  absent: string[];
+  /** Commands naming no script at all (listed, not thrown; F1 requires a human judgment). */
+  unenumerable: string[];
+  unenumerableBy: Array<{ plugin: string; command: string }>;
+  /** Enabled plugins with no install record. */
+  unresolved: string[];
+}
+
+const sha256Hex = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+/** Script-looking tokens of a hook command: anything with a script extension between delimiters, so the relative literals inside an
+ * inline `node -e "..."` body are found as well as ${CLAUDE_PROJECT_DIR}/<path> captures. */
+export function extractScriptTokens(command: string): string[] {
+  // The delimiter class spells double quote, single quote and backtick as hex escapes (the R1-6b comment stripper mis-parses a literal quote in a regex).
+  const tokens = command.split(/[\s\x22\x27\x60;|&(),[\]=<>]+/).filter((t) => SCRIPT_EXT.test(t));
+  return [...new Set(tokens)];
+}
+
+type TokenClass = { kind: "inside"; rel: string; read: string } | { kind: "outside" };
+
+function classifyToken(token: string): TokenClass {
+  const proj = /^\$\{?CLAUDE_PROJECT_DIR\}?[\\/](.+)$/.exec(token);
+  if (proj === null && (token.includes("$") || token.startsWith("~") || token.startsWith("/") || token.startsWith("\\") || /^[A-Za-z]:/.test(token))) return { kind: "outside" };
+  const n = posix.normalize((proj === null ? token : proj[1]!).split("\\").join("/"));
+  if (n === ".." || n.startsWith("../") || n.startsWith("/")) return { kind: "outside" };
+  return { kind: "inside", rel: canonicalizePathTarget(n), read: n };
+}
+
+const SPAWN_FNS = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
+const NODE_COMMANDS = new Set(["node", "node.exe"]);
+
+/** Script literals a source text spawns with node: execFile/execFileSync/spawn/spawnSync(process.execPath | "node", ["x.mjs", ...]) and
+ * fork("x.mjs"). Returned as written (they are relative to the hook's working directory, the repo root). Fails closed (throws) on a
+ * node spawn whose script argument is not a literal. Not followed (disclosed): exec/execSync command strings and non-node spawns. */
+export function spawnedScripts(text: string, fileName: string): string[] {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, /\.(mjs|js|cjs)$/.test(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const found = new Set<string>();
+  const refuse = (what: string): never => {
+    throw new Error(`${fileName}: a spawned script that cannot be followed statically (computed or non-literal ${what})`);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression);
+      if (name === "fork") {
+        const a = node.arguments[0];
+        if (a === undefined || !ts.isStringLiteralLike(a)) refuse("fork() argument");
+        else if (SCRIPT_EXT.test(a.text)) found.add(a.text);
+      } else if (name !== undefined && SPAWN_FNS.has(name)) {
+        const cmd = node.arguments[0];
+        const isNode = cmd !== undefined && (cmd.getText(sf) === "process.execPath" || cmd.getText(sf) === "process.argv0" || (ts.isStringLiteralLike(cmd) && NODE_COMMANDS.has(cmd.text)));
+        if (isNode) {
+          const args = node.arguments[1];
+          if (args === undefined || !ts.isArrayLiteralExpression(args)) refuse(`${name}() argument list`);
+          else {
+            const first = args.elements[0];
+            if (first !== undefined) {
+              if (!ts.isStringLiteralLike(first)) refuse(`${name}() script argument`);
+              else if (SCRIPT_EXT.test(first.text)) found.add(first.text);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...found].sort();
+}
+
+/** Derive the repo scripts the snapshot's hook commands execute (the one derivation instrument for #455). `read` is injectable. */
+export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read: Reader = readReal): PluginHookScan {
+  const scripts = new Set<string>();
+  const outside = new Set<string>();
+  const absent = new Set<string>();
+  const unenumerable: string[] = [];
+  const unenumerableBy: Array<{ plugin: string; command: string }> = [];
+  const queue: Array<{ rel: string; plugin: string }> = [];
+  const take = (plugin: string, token: string): void => {
+    const c = classifyToken(token);
+    if (c.kind === "outside") {
+      outside.add(`${plugin}: ${token}`);
+      return;
+    }
+    if (read(resolve(root, c.read)) === undefined) {
+      absent.add(`${plugin}: ${token}`);
+      return;
+    }
+    if (!scripts.has(c.rel)) {
+      scripts.add(c.rel);
+      queue.push({ rel: c.read, plugin });
+    }
+  };
+  for (const p of snapshot.plugins) {
+    for (const f of p.files) {
+      for (const cmd of f.commands) {
+        const tokens = extractScriptTokens(cmd);
+        if (tokens.length === 0) {
+          unenumerable.push(cmd);
+          unenumerableBy.push({ plugin: p.id, command: cmd });
+          continue;
+        }
+        for (const t of tokens) take(p.id, t);
+      }
+    }
+  }
+  // Spawn-follow to a fixpoint: a hook script that runs another repo script with node protects that one too.
+  while (queue.length > 0) {
+    const { rel, plugin } = queue.shift()!;
+    if (!JS_ROOT.test(rel)) continue;
+    const abs = resolve(root, rel);
+    const text = read(abs);
+    if (text === undefined) continue;
+    for (const s of spawnedScripts(text, abs)) take(plugin, s);
+  }
+  return {
+    scripts: [...scripts].sort(),
+    outside: [...outside].sort(),
+    absent: [...absent].sort(),
+    unenumerable,
+    unenumerableBy,
+    unresolved: snapshot.plugins.filter((p) => p.unresolved === true).map((p) => p.id),
+  };
+}
+
+export const pluginHookScripts = (root: string, snapshot: PluginHookSnapshot, read: Reader = readReal): string[] => pluginHookScan(root, snapshot, read).scripts;
+
+/** Internal consistency: each file's stored commands still hash to the stored commandsSha256. */
+export function snapshotInternalProblems(snapshot: PluginHookSnapshot): string[] {
+  const out: string[] = [];
+  if (snapshot.version !== 1 || !Array.isArray(snapshot.plugins)) return ["unsupported snapshot shape"];
+  for (const p of snapshot.plugins) {
+    for (const f of p.files) {
+      if (sha256Hex(JSON.stringify(f.commands)) !== f.commandsSha256) out.push(`${p.id} ${f.path}: commands do not match commandsSha256`);
+    }
+  }
+  return out;
+}
+
+export interface LiveDrift {
+  status: "ok" | "drift" | "unverified";
+  detail: string;
+}
+
+/** Committed snapshot against one freshly built from the live plugin data (`undefined` = no live data: unverified, never a pass). */
+export function snapshotLiveDrift(committed: PluginHookSnapshot, live: PluginHookSnapshot | undefined): LiveDrift {
+  if (live === undefined) return { status: "unverified", detail: "no live plugin data on this machine; drift of the snapshot from the real plugin is not checked here" };
+  const a = new Map(committed.plugins.map((p) => [p.id, JSON.stringify(p)]));
+  const b = new Map(live.plugins.map((p) => [p.id, JSON.stringify(p)]));
+  const bad = [
+    ...[...b.keys()].filter((id) => !a.has(id)).map((id) => `${id} is enabled live but missing from the snapshot`),
+    ...[...a.keys()].filter((id) => !b.has(id)).map((id) => `${id} is in the snapshot but not enabled live`),
+    ...[...a.keys()].filter((id) => b.has(id) && a.get(id) !== b.get(id)).map((id) => `${id} hooks changed since the snapshot`),
+  ];
+  return bad.length === 0 ? { status: "ok", detail: "snapshot matches the live plugin data" } : { status: "drift", detail: `${bad.join("; ")}; run: node src/qa/protected-path-list.ts --write` };
+}
+
+const asObj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+/** Every command-type hook command in a hooks.json body ({hooks: {Event: [{hooks: [{type, command}]}]}}). */
+function hookCommands(body: unknown): string[] {
+  const out: string[] = [];
+  for (const entries of Object.values(asObj(asObj(body).hooks))) {
+    if (!Array.isArray(entries)) continue;
+    for (const e of entries) {
+      const inner = asObj(e).hooks;
+      if (!Array.isArray(inner)) continue;
+      for (const h of inner) {
+        const o = asObj(h);
+        if (typeof o.command === "string" && (o.type === undefined || o.type === "command")) out.push(o.command);
+      }
+    }
+  }
+  return out;
+}
+
+/** Build the snapshot from the LIVE data: enabled plugins (user, project and local settings; enabled in any scope is enough, the safe
+ * superset), their install records, and their hooks files (hooks/hooks.json, hooks.json and whatever plugin.json's hooks field names).
+ * Returns undefined when there is no live plugin data at all (installed_plugins.json absent). Never stores an absolute path. */
+export function buildPluginSnapshot(env: { home: string; root: string; read?: Reader }): PluginHookSnapshot | undefined {
+  const read = env.read ?? readReal;
+  const installedText = read(join(env.home, ".claude", "plugins", "installed_plugins.json"));
+  if (installedText === undefined) return undefined;
+  const enabled = new Set<string>();
+  for (const f of [join(env.home, ".claude", "settings.json"), join(env.root, ".claude", "settings.json"), join(env.root, ".claude", "settings.local.json")]) {
+    const text = read(f);
+    if (text === undefined) continue;
+    for (const [id, on] of Object.entries(asObj(asObj(JSON.parse(text)).enabledPlugins))) if (on === true) enabled.add(id);
+  }
+  const installed = asObj(asObj(JSON.parse(installedText)).plugins);
+  const plugins: SnapshotPlugin[] = [];
+  for (const id of [...enabled].sort()) {
+    const entries = Array.isArray(installed[id]) ? (installed[id] as unknown[]).map(asObj) : [];
+    const rec = entries.find((e) => e.scope === "user") ?? entries[0];
+    if (rec === undefined || typeof rec.installPath !== "string") {
+      plugins.push({ id, version: "", gitCommitSha: "", unresolved: true, files: [] });
+      continue;
+    }
+    const base = rec.installPath;
+    const candidates = new Set<string>(["hooks/hooks.json", "hooks.json"]);
+    const inline: Array<{ path: string; body: unknown }> = [];
+    for (const m of ["plugin.json", ".claude-plugin/plugin.json"]) {
+      const mt = read(join(base, m));
+      if (mt === undefined) continue;
+      const h = asObj(JSON.parse(mt)).hooks;
+      for (const x of (Array.isArray(h) ? h : [h]) as unknown[]) {
+        if (typeof x === "string") candidates.add(posix.normalize(x.split("\\").join("/")).replace(/^\.\//, ""));
+        else if (typeof x === "object" && x !== null) inline.push({ path: `${m}#hooks`, body: { hooks: x } });
+      }
+    }
+    const files: SnapshotFile[] = [];
+    for (const rel of candidates) {
+      const raw = read(join(base, rel));
+      if (raw === undefined) continue;
+      const commands = hookCommands(JSON.parse(raw));
+      files.push({ path: rel, sha256: sha256Hex(raw), commandsSha256: sha256Hex(JSON.stringify(commands)), commands });
+    }
+    for (const i of inline) {
+      const commands = hookCommands(i.body);
+      files.push({ path: i.path, sha256: sha256Hex(JSON.stringify(i.body)), commandsSha256: sha256Hex(JSON.stringify(commands)), commands });
+    }
+    files.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
+    plugins.push({ id, version: typeof rec.version === "string" ? rec.version : "", gitCommitSha: typeof rec.gitCommitSha === "string" ? rec.gitCommitSha : "", files });
+  }
+  return { version: 1, plugins };
+}
+
+export const renderSnapshot = (s: PluginHookSnapshot): string => `${JSON.stringify(s, null, 2)}\n`;
+
+export function readSnapshot(root: string, read: Reader = readReal): PluginHookSnapshot {
+  const text = read(resolve(root, SNAPSHOT_REL));
+  if (text === undefined) throw new Error(`plugin hook snapshot missing: ${SNAPSHOT_REL}; run: node src/qa/protected-path-list.ts --write`);
+  const parsed = JSON.parse(text) as PluginHookSnapshot;
+  if (parsed.version !== 1 || !Array.isArray(parsed.plugins)) throw new Error(`plugin hook snapshot has an unsupported shape: ${SNAPSHOT_REL}`);
+  return parsed;
 }
 
 const READ_FNS = new Set(["readFileSync", "readFile", "readdirSync", "readdir", "createReadStream", "openSync", "readSync"]);
@@ -192,9 +471,9 @@ export function readByPathCandidates(root: string, files: readonly string[], rea
 
 /** Repo-relative posix paths of the hook and its relative-import closure, sorted. `read` and `fallback` are
  * injectable so a mutant can add an import (F3-mutant-add-import); `fallback` supplies a file `read` lacks. */
-export function importGraphFiles(root: string, read: Reader = readReal, fallback: Reader = () => undefined): string[] {
+export function importGraphFiles(root: string, read: Reader = readReal, fallback: Reader = () => undefined, extraRoots: readonly string[] = []): string[] {
   const seen = new Set<string>();
-  const roots = [HOOK_REL, ...wiredHookScripts(root).filter((r) => JS_ROOT.test(r))];
+  const roots = [HOOK_REL, ...wiredHookScripts(root).filter((r) => JS_ROOT.test(r)), ...extraRoots.filter((r) => JS_ROOT.test(r))];
   const queue = [...new Set(roots)].map((r) => resolve(root, r));
   while (queue.length > 0) {
     const abs = queue.shift()!;
@@ -332,6 +611,10 @@ function namedPaths(root: string): string[] {
     "src/qa/k-readiness.ts",
     "src/qa/cc-extraction-covers-judged.ts", // #452 certifier (refs #456)
     "docs/plans/s308-K-proposed-entry-2026-10-05.json",
+    // #455 (S7): the plugin-hook snapshot the derivation reads, the F1 instrument that certifies it, and the judgments file a session must not self-write.
+    SNAPSHOT_REL,
+    "src/qa/f1-settings-named-scripts-judged.ts",
+    JUDGMENTS_REL,
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
@@ -409,15 +692,25 @@ export interface ProtectedPaths {
   generated: string[];
   named: string[];
   all: string[];
+  /** What the plugin-hook derivation found (#455): scripts protected, commands reported or unenumerable. */
+  pluginHooks: PluginHookScan;
 }
 
-export function protectedPaths(root: string): ProtectedPaths {
-  const graph = importGraphFiles(root);
+export function protectedPaths(root: string, opts: { snapshot?: PluginHookSnapshot } = {}): ProtectedPaths {
+  const snapshot = opts.snapshot ?? readSnapshot(root);
+  const problems = snapshotInternalProblems(snapshot);
+  if (problems.length > 0) throw new Error(`plugin hook snapshot is inconsistent: ${problems.join("; ")}; run: node src/qa/protected-path-list.ts --write`);
+  const pluginHooks = pluginHookScan(root, snapshot);
+  const graph = importGraphFiles(root, readReal, () => undefined, pluginHooks.scripts);
+  // Data files are derived from the GATE's closure only: a plugin script (session-brief and its children) reads docs/decisions.md and writes
+  // docs/.maat-state.json as ordinary inputs and outputs, and protecting those would block the normal workflow. Protect the plugin scripts' code, not their data.
+  const gateGraph = importGraphFiles(root);
   const wiredNonJs = wiredHookScripts(root).filter((r) => !JS_ROOT.test(r));
-  const generated = [...new Set([...graph, ...wiredNonJs, ...readByPathCandidates(root, graph)])].sort();
+  const pluginNonJs = pluginHooks.scripts.filter((r) => !JS_ROOT.test(r));
+  const generated = [...new Set([...graph, ...wiredNonJs, ...pluginNonJs, ...readByPathCandidates(root, gateGraph)])].sort();
   const named = namedPaths(root);
   for (const m of [...MUST_EXIST, named[0]!]) if (!existsSync(join(root, m))) throw new Error(`named protected path does not exist: ${m}`);
-  return { generated, named, all: [...new Set([...generated, ...named])].sort() };
+  return { generated, named, all: [...new Set([...generated, ...named])].sort(), pluginHooks };
 }
 
 export function buildDenyRules(paths: readonly string[]): Rule[] {
@@ -534,7 +827,17 @@ export function main(argv: readonly string[]): number {
     return runWorktreeTargets(argv, REPO_ROOT, (l) => console.log(l), (l) => console.error(l));
   }
   const write = argv.includes("--write");
-  const { all } = protectedPaths(REPO_ROOT);
+  const committed = existsSync(join(REPO_ROOT, SNAPSHOT_REL)) ? readFileSync(join(REPO_ROOT, SNAPSHOT_REL), "utf8") : undefined;
+  const live = buildPluginSnapshot({ home: homedir(), root: REPO_ROOT });
+  if (write && live === undefined) {
+    console.error("protected-path-list: --write needs the live plugin data (~/.claude/plugins/installed_plugins.json), which is absent; the snapshot is produced only from it");
+    return 1;
+  }
+  const snapshot = write ? live! : readSnapshot(REPO_ROOT);
+  const { all, pluginHooks } = protectedPaths(REPO_ROOT, { snapshot });
+  for (const o of pluginHooks.outside) console.log(`protected-path-list: plugin hook script outside the repo (reported, not protected): ${o}`);
+  for (const o of pluginHooks.absent) console.log(`protected-path-list: plugin hook script not in the repo (reported, not protected): ${o}`);
+  for (const o of pluginHooks.unenumerable) console.log(`protected-path-list: plugin hook command names no script (unenumerable; needs a human judgment): ${o.slice(0, 80)}`);
   const skipped = wiredHookScan(REPO_ROOT).skipped;
   if (skipped.length > 0) console.log(`protected-path-list: skipped ${String(skipped.length)} non-project hook command(s) in the local settings file: ${skipped.join(" | ")}`);
   const shippedPath = join(REPO_ROOT, SHIPPED_REL);
@@ -542,6 +845,7 @@ export function main(argv: readonly string[]): number {
   const wantShipped = renderShippedDefaults(readFileSync(shippedPath, "utf8"), all);
   const wantProposal = buildSettingsProposal(all);
   if (write) {
+    writeFileSync(join(REPO_ROOT, SNAPSHOT_REL), renderSnapshot(snapshot), "utf8");
     writeFileSync(shippedPath, wantShipped, "utf8");
     writeFileSync(proposalPath, wantProposal, "utf8");
     console.log(`protected-path-list: wrote ${SHIPPED_REL} and ${PROPOSAL_REL} (${String(all.length)} paths)`);
@@ -549,13 +853,20 @@ export function main(argv: readonly string[]): number {
   }
   const norm = (s: string): string => s.replaceAll("\r\n", "\n");
   const drift: string[] = [];
+  const liveDrift = snapshotLiveDrift(snapshot, live);
+  if (liveDrift.status === "drift") {
+    console.error(`protected-path-list: DRIFT, ${liveDrift.detail}`);
+    return 1;
+  }
+  if (liveDrift.status === "unverified") console.log(`protected-path-list: plugin snapshot UNVERIFIED, ${liveDrift.detail}`);
+  if (committed !== undefined && norm(committed) !== renderSnapshot(snapshot)) drift.push(SNAPSHOT_REL);
   if (norm(readFileSync(shippedPath, "utf8")) !== wantShipped) drift.push(SHIPPED_REL);
   if (!existsSync(proposalPath) || norm(readFileSync(proposalPath, "utf8")) !== wantProposal) drift.push(PROPOSAL_REL);
   if (drift.length > 0) {
     console.error(`protected-path-list: DRIFT in ${drift.join(", ")}; run: node src/qa/protected-path-list.ts --write`);
     return 1;
   }
-  console.log(`protected-path-list: PASS, ${String(all.length)} protected paths, committed rules and proposal match the generator`);
+  console.log(`protected-path-list: PASS, ${String(all.length)} protected paths (${String(pluginHooks.scripts.length)} from plugin hooks), committed rules and proposal match the generator`);
   return 0;
 }
 

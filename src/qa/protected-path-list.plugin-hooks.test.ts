@@ -2,6 +2,7 @@
 // generator-produced snapshot) and join the one protected list. Written FAILING FIRST.
 // The namespace import makes a missing export fail the one test that uses it, not the whole file.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,11 +14,11 @@ const SNAPSHOT_REL = "docs/qa/plugin-hook-snapshot.json";
 
 // The ppl module is imported as a namespace, so a not-yet-built export is reached through this loose view.
 const api = ppl as unknown as Record<string, (...a: never[]) => unknown>;
-const fn = <T>(name: string): ((...a: unknown[]) => T) => {
+function fn<T>(name: string): (...a: unknown[]) => T {
   const f = api[name];
   if (typeof f !== "function") throw new Error(`export ${name} does not exist yet`);
   return f as unknown as (...a: unknown[]) => T;
-};
+}
 
 interface Snap {
   version: number;
@@ -31,7 +32,7 @@ interface Scan {
 
 const syntheticSnapshot = (commands: string[]): Snap => ({
   version: 1,
-  plugins: [{ id: "t@t", version: "1", gitCommitSha: "abc", files: [{ path: "hooks/hooks.json", sha256: "x", commandsSha256: "x", commands }] }],
+  plugins: [{ id: "t@t", version: "1", gitCommitSha: "abc", files: [{ path: "hooks/hooks.json", sha256: "x", commandsSha256: createHash("sha256").update(JSON.stringify(commands)).digest("hex"), commands }] }],
 });
 
 const loadSnapshot = (): Snap => JSON.parse(readFileSync(`${REPO}${SNAPSHOT_REL}`, "utf8")) as Snap;
@@ -96,7 +97,7 @@ test("protected-path-list: repo settings hooks stay covered", () => {
 
 test("plugin-hooks: the snapshot and the F1 files are protected", () => {
   const named = ppl.protectedPaths(REPO).named;
-  for (const want of [SNAPSHOT_REL, "src/qa/f1-settings-named-scripts-judged.ts", "docs/qa/f1-hook-judgments.json"]) assert.ok(named.includes(want), `${want} is named`);
+  for (const want of [SNAPSHOT_REL, "src/qa/f1-settings-named-scripts-judged.ts", "docs/qa/f1-hook-judgments.json"]) assert.ok(named.includes(want), want + " is named");
 });
 
 // ---- spawn-follow ----
@@ -130,7 +131,7 @@ test("spawn-follow: transitive fixpoint", () => {
   const read = fakeRead({
     "/r/docs/a.mjs": "execFileSync(process.execPath, ['docs/b.mjs']);",
     "/r/docs/b.mjs": "execFileSync(process.execPath, ['docs/c.mjs']);",
-    "/r/docs/c.mjs": "execFileSync(process.execPath, ['docs/a.mjs']); // a cycle back to the first",
+    "/r/docs/c.mjs": "execFileSync(process.execPath, ['docs/a.mjs']);",
   });
   const scan = fn<Scan>("pluginHookScan")("/r", syntheticSnapshot(["node docs/a.mjs"]), read);
   assert.deepEqual(scan.scripts, ["docs/a.mjs", "docs/b.mjs", "docs/c.mjs"]);
