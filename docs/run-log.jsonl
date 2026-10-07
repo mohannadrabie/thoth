@@ -242,3 +242,7 @@
 {"at":"2026-10-06T00:58:56.291Z","event":"receipt-reopened","scope":"s308-K0","agent":"red-team","trigger":"receipt-check","report":"docs/reviews/s308-K0-red-team-2026-10-05.md"}
 {"at":"2026-10-06T01:25:14.201Z","event":"story-shipped","scope":"s308-K0","rounds":"1","reports":"8","findings":"44","adrTokensSaved":"18800","councilFired":"false"}
 {"at":"2026-10-06T01:25:14.288Z","event":"story-shipped","scope":"s308-452","rounds":"1","reports":"8","findings":"37","adrTokensSaved":"0","councilFired":"false"}
+{"at":"2026-10-07T00:02:19.424Z","event":"tier-ratified","scope":"s308-463-467","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"sensitive-policy-or-secret-scan-surface"}
+{"at":"2026-10-07T00:02:19.535Z","event":"tier-ratified","scope":"s308-455","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"sensitive-policy-or-secret-scan-surface"}
+{"at":"2026-10-07T00:02:19.630Z","event":"tier-ratified","scope":"s308-466","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"sensitive-policy-or-secret-scan-surface"}
+{"at":"2026-10-07T00:02:19.713Z","event":"tier-ratified","scope":"s308-archive-sweep","proposed":"CRITICAL","ratified":"CRITICAL","changed":"false","reason":"sensitive-policy-or-secret-scan-surface"}
