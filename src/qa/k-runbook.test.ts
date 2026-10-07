@@ -110,6 +110,9 @@ test("k-runbook: readiness line lists every location the code checks, and says r
   const l = lines.find((x) => /^Readiness checks every Claude Code binary/.test(x));
   assert.ok(l !== undefined);
   for (const p of ["~/.local/bin", "~/.local/share/claude/versions", "anthropic.claude-code-*", "VS Code Insiders", "Cursor", "Roaming", "MSIX", "absolute PATH"]) assert.ok(l.includes(p), p);
-  const m = lines.find((x) => /one judged version/i.test(x));
-  assert.ok(m !== undefined && /prunes/i.test(m) && m.includes("#467") && /does not turn the row green/i.test(m));
+  // 2026-10-06 ruling: pin 2.1.289, certified set, three remedies; #467 is decided
+  const m = lines.find((x) => /^K certifies one Claude Code version/.test(x));
+  assert.ok(m !== undefined && m.includes("2.1.289") && m.includes("#467") && /decided/i.test(m) && /certified/.test(m));
+  const n = lines.find((x) => /does not turn the row green/i.test(x));
+  assert.ok(n !== undefined && /prune/.test(lines.join(" ")));
 });

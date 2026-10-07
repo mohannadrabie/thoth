@@ -20,9 +20,15 @@ It prints one row per precondition (PASS, FAIL or MISSING) and exits 1 unless ev
 
 Readiness checks every Claude Code binary in the enumerated install locations: `~/.local/bin`, every `~/.local/share/claude/versions` entry, every VS Code, VS Code Insiders and Cursor `anthropic.claude-code-*` extension, Claude Desktop's Roaming and MSIX bundles, and absolute PATH entries. The final line of `qa:cc-extraction-covers-judged` names each one with its version; a THOTH_CLAUDE_BIN override is checked in addition and marked `[override]`. Each must pass on its own, so a stale binary cannot hide a newer one.
 
-With one judged version, every binary at another version FAILs; the human prunes stale versions entries or decides #467. Re-judging alone does not turn the row green.
+K certifies one Claude Code version, 2.1.289 (human ruling 2026-10-06; #467 is decided, not open). The judgments describe that version only, and the human updates or removes any binary that is not at it. The certified set is the binaries a governed session can run: the local CLI, every VS Code, VS Code Insiders and Cursor extension that is not marked obsolete in that editor's .obsolete file, Claude Desktop's bundles, absolute PATH entries and a `THOTH_CLAUDE_BIN` override. Retained entries are not certified: every `~/.local/share/claude/versions` entry and every extension dir the editor marks obsolete. The final line of `qa:cc-extraction-covers-judged` marks each binary `certified` or `uncertified` and gives its remedy:
 
-CLI drift: when `qa:cc-extraction-covers-judged` FAILs on a new version, re-vendor and re-judge (Issue #463) with the human reviewing the judgment. Do not bump the pin by hand.
+- **update** (certified, other version): update it to 2.1.289, or remove it. For Desktop, the bundle must contain 2.1.289 or the app must be removed.
+- **re-judge** (certified, extraction gap): re-run the extraction and the whole-binary census, have the human judge each new name, and apply the judgment with `qa:judgment-apply`. Do not edit a judgment file by hand.
+- **prune** (uncertified, failing): delete the retained entry or the obsolete extension dir. Re-judging never fixes it.
+
+An uncertified binary that is at 2.1.289 and fully judged passes and needs no action. Re-judging alone does not turn the row green while a stale binary remains.
+
+CLI drift: when `qa:cc-extraction-covers-judged` FAILs on a new version, re-vendor the tool inventory and re-judge (Issue #463) with the human reviewing the judgment, through the generators only. Do not bump the pin by hand.
 
 Disclosed residual: the blocker row accepts an empty list only when two independent `gh` queries agree. If GitHub's list endpoints show list lag on both at once (for example right after you edit labels), a stale empty answer could pass. Re-run readiness after any label edit, and again just before wiring.
 
