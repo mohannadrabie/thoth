@@ -72,6 +72,14 @@ function checkToolEntry(e: ToolEntry): void {
   if (!TOOL_JUDGMENTS.includes(e.judgment)) throw new Error(`${label}: unknown judgment ${JSON.stringify(e.judgment)}`);
   if (typeof e.reason !== "string" || e.reason.trim() === "") throw new Error(`${label}: empty reason`);
 }
+/** YYYY-MM-DD that is a real calendar date (no month 13, no 30 February). */
+function isCalendarDate(v: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (m === null) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (y < 1 || mo < 1 || mo > 12 || d < 1) return false;
+  return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
+}
 function checkSection(section: string): void {
   if (!(WRITE_DENY_SECTIONS as readonly string[]).includes(section)) throw new Error(`writeDeny: unknown section ${JSON.stringify(section)}`);
 }
@@ -81,7 +89,7 @@ export function applyDelta(files: JudgmentFiles, delta: Delta): JudgmentFiles {
   const wd = delta.writeDeny;
   if (wd !== undefined) {
     if (wd.claudeCodeVersion !== undefined) {
-      if (!/^\d+\.\d+\.\d+$/.test(wd.claudeCodeVersion)) throw new Error(`writeDeny: claudeCodeVersion must be x.y.z, got ${JSON.stringify(wd.claudeCodeVersion)}`);
+      if (typeof wd.claudeCodeVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(wd.claudeCodeVersion)) throw new Error(`writeDeny: claudeCodeVersion must be x.y.z, got ${JSON.stringify(wd.claudeCodeVersion)}`);
       files.writeDeny.claudeCodeVersion = wd.claudeCodeVersion;
     }
     for (const [section, entries] of Object.entries(wd.add ?? {})) {
@@ -118,7 +126,7 @@ export function applyDelta(files: JudgmentFiles, delta: Delta): JudgmentFiles {
   const te = delta.toolExec;
   if (te !== undefined) {
     if (te.version !== undefined) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(te.version)) throw new Error(`toolExec: version must be a date YYYY-MM-DD, got ${JSON.stringify(te.version)}`);
+      if (typeof te.version !== "string" || !isCalendarDate(te.version)) throw new Error(`toolExec: version must be a date YYYY-MM-DD, got ${JSON.stringify(te.version)}`);
       files.toolExec.version = te.version;
     }
     const seen = new Set<string>();
