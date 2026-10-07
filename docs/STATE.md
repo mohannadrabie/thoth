@@ -22,7 +22,9 @@ _Read this first (PRINCIPLES.md rule 14). The Manager keeps it current at every 
 - **Stage 1 probes:** pre-approved (cap USD 1.60) but not started; they wait for the merge and a readiness showing only human-owned blockers.
 - **Process:** `python3` on this machine is the Windows Python Manager stub and hangs agents; briefs say node only. Each agent uses its own scratch subfolder.
 
-**Single next action:** the human pushes `s308/k-blockers` and opens its PR, then does the binary cleanup and the inventory capture.
+- **Human ruling 2026-10-07:** K moves to folder-level protection of `~/.claude` and `.claude` (Issue #489), so updates need no re-judge; the human keeps Claude Code on auto-update. The binary cleanup and inventory capture for 2.1.289 are no longer needed for K; deleting old leftover binaries is still good hygiene.
+
+**Single next action:** the human pushes `s308/k-blockers` and opens its PR; the next session plans #489 (CRITICAL) for approval.
 
 ## Prior entry (superseded above): 2026-10-05, session `s308/k-stage0`: K stage 0 and #452 review-complete; merged as PR #468
 
