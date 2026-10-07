@@ -102,7 +102,6 @@ function specifierOf(node: ts.Node): string | undefined {
 }
 
 const JS_ROOT = /\.(mjs|js|cjs|ts|mts)$/;
-const SCRIPT_EXT = /\.(mjs|js|cjs|ts|mts|sh|ps1|py)$/i;
 
 /** Project scripts named by the command hooks wired in .claude/settings.json and .claude/settings.local.json (read-only
  * parse, Issue #419). A command is expected to reference its script as ${CLAUDE_PROJECT_DIR}/<path>; a wired command
@@ -177,7 +176,7 @@ export interface PluginHookScan {
   outside: string[];
   /** "<plugin>: <token>" for each in-repo script token that does not exist on disk (reported, not protected). */
   absent: string[];
-  /** Commands not fully accounted for (no script, an extensionless or unknown program, a partly assembled or missing path, a substitution), and spawned scripts naming no file: listed, not thrown; F1 requires a human judgment. */
+  /** Commands outside the allowlist, and anything a followed script spawns or imports that cannot be resolved or is refused: listed, not thrown; F1 requires a human judgment. */
   unenumerable: string[];
   unenumerableBy: Array<{ plugin: string; command: string }>;
   /** Enabled plugins with no install record. */
@@ -185,14 +184,6 @@ export interface PluginHookScan {
 }
 
 const sha256Hex = (s: string): string => createHash("sha256").update(s).digest("hex");
-
-/** Script-looking tokens of a hook command: anything with a script extension between delimiters, so the relative literals inside an
- * inline `node -e "..."` body are found as well as ${CLAUDE_PROJECT_DIR}/<path> captures. */
-export function extractScriptTokens(command: string): string[] {
-  // The delimiter class spells double quote, single quote and backtick as hex escapes (the R1-6b comment stripper mis-parses a literal quote in a regex).
-  const tokens = command.split(/[\s\x22\x27\x60;|&(),[\]=<>]+/).filter((t) => SCRIPT_EXT.test(t));
-  return [...new Set(tokens)];
-}
 
 /** "unresolved": the token is partly assembled at run time (a variable or template piece), so what it names cannot be known. Fails closed. */
 type TokenClass = { kind: "inside"; rel: string; read: string } | { kind: "outside" } | { kind: "unresolved" };
@@ -208,169 +199,214 @@ function classifyToken(token: string): TokenClass {
   return { kind: "inside", rel: canonicalizePathTarget(n), read: n };
 }
 
-interface ShellWord {
+// ---- the hook-command allowlist (#455 round 2) ----
+// A hook command is enumerable ONLY if, trimmed, it is exactly one of: `node <script>`, `node -e <body>`, `bash|sh <script>.sh`, each with
+// optional literal trailing arguments and no shell operator, substitution, redirection or env prefix. Everything else is unenumerable, and
+// the F1 instrument fails until the human judges it. There is no heuristic to patch one shape at a time.
+
+interface HookWord {
   text: string;
-  /** A command substitution ($( or a backtick) outside single quotes: its result cannot be known. */
-  subst: boolean;
+  /** A $ or backtick outside single quotes: the shell would expand it, so the text is not what runs. */
+  expands: boolean;
 }
 
-/** Quote-aware split of a hook command into simple commands (separated by newline, ;, |, & and their doubles). Returns undefined for an
- * unterminated quote. A separator inside quotes (the body of node -e) does not split. */
-function shellSimpleCommands(cmd: string): ShellWord[][] | undefined {
-  const cmds: ShellWord[][] = [];
-  let cur: ShellWord[] = [];
+/** Shell words of a command with quotes removed; undefined for an unterminated quote or any unquoted operator, grouping, substitution or backslash. */
+function hookWords(cmd: string): HookWord[] | undefined {
+  const words: HookWord[] = [];
   let w = "";
   let has = false;
-  let subst = false;
+  let expands = false;
   let q = "";
-  const endWord = (): void => {
-    if (has) cur.push({ text: w, subst });
+  const end = (): void => {
+    if (has) words.push({ text: w, expands });
     w = "";
     has = false;
-    subst = false;
-  };
-  const endCmd = (): void => {
-    endWord();
-    if (cur.length > 0) cmds.push(cur);
-    cur = [];
+    expands = false;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd.charAt(i);
     if (q === "'") {
       if (c === "'") q = "";
       else w += c;
-      continue;
-    }
-    if (q === '"') {
-      if (c === "\\" && i + 1 < cmd.length) {
-        w += cmd.charAt(++i);
-        continue;
+    } else if (q === '"') {
+      if (c === '"') q = "";
+      else {
+        if (c === "$" || c === "`") expands = true;
+        w += c;
       }
-      if (c === '"') {
-        q = "";
-        continue;
-      }
-      if (c === "`" || (c === "$" && cmd.charAt(i + 1) === "(")) subst = true;
-      w += c;
-      continue;
-    }
-    if (c === "'" || c === '"') {
+    } else if (c === "'" || c === '"') {
       q = c;
       has = true;
-      continue;
-    }
-    if (c === "\\" && i + 1 < cmd.length) {
-      w += cmd.charAt(++i);
-      has = true;
-      continue;
-    }
-    if (c === "`" || (c === "$" && cmd.charAt(i + 1) === "(")) subst = true;
-    if (c === " " || c === "\t" || c === "\r") endWord();
-    else if (c === "\n" || c === ";" || c === "|" || c === "&") endCmd();
+    } else if (c === " " || c === "\t") end();
+    else if (";&|<>()\n\r\\`".includes(c) || (c === "$" && cmd.charAt(i + 1) === "(")) return undefined;
     else {
+      if (c === "$") expands = true;
       w += c;
       has = true;
     }
   }
   if (q !== "") return undefined;
-  endCmd();
-  return cmds;
+  end();
+  return words;
 }
 
-const INTERPRETERS = new Set(["node", "nodejs", "bash", "sh", "zsh", "dash", "pwsh", "powershell", "python", "python3", "bun", "tsx", "ts-node"]);
-const INLINE_FLAGS = new Set(["-e", "--eval", "-p", "--print", "-c"]);
+export type HookCommand = { kind: "script"; token: string } | { kind: "inline"; body: string };
 
-/** Every executed program in the command is accounted for: each simple command is an interpreter run on a script file (or with an inline
- * body that names at least one script), or runs a script file directly. Anything else (an extensionless program, a command substitution,
- * an unterminated quote) is not accounted for, so the whole command is unenumerable (#473). Disclosed: an inline body is only checked to
- * name a script; what else it runs is covered by the spawn-follow of the scripts it names, not here. */
-export function commandFullyAccounted(command: string): boolean {
-  const simple = shellSimpleCommands(command);
-  if (simple === undefined || simple.length === 0) return false;
-  for (const words of simple) {
-    let i = 0;
-    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!.text)) i++;
-    const prog = words[i];
-    if (prog === undefined || prog.subst) return false;
-    const base = (prog.text.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.exe$/, "");
-    if (SCRIPT_EXT.test(prog.text)) {
-      if (words.slice(i + 1).some((x) => x.subst)) return false;
-      continue;
-    }
-    if (!INTERPRETERS.has(base)) return false;
-    let ok = false;
-    for (let j = i + 1; j < words.length; j++) {
-      const a = words[j]!;
-      if (INLINE_FLAGS.has(a.text)) {
-        const body = words[j + 1];
-        ok = body !== undefined && extractScriptTokens(body.text).length > 0 && !words.slice(j + 2).some((x) => x.subst);
-        break;
-      }
-      if (a.text.startsWith("-")) continue;
-      ok = !a.subst && SCRIPT_EXT.test(a.text) && !words.slice(j + 1).some((x) => x.subst);
-      break;
-    }
-    if (!ok) return false;
+/** The one allowed shape a hook command is, or undefined (unenumerable). */
+export function classifyHookCommand(command: string): HookCommand | undefined {
+  const ws = hookWords(command.trim());
+  const [prog, a1, a2] = ws ?? [];
+  if (ws === undefined || prog === undefined || a1 === undefined) return undefined;
+  const literalFrom = (i: number): boolean => ws.slice(i).every((x) => !x.expands);
+  // A script word may name CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT (braced or not); nothing else may expand.
+  const scriptWord = (x: HookWord, ext: RegExp): boolean => !x.text.startsWith("-") && ext.test(x.text) && !x.text.replace(/^\$\{?CLAUDE_(PROJECT_DIR|PLUGIN_ROOT)\}?(?=[\\/])/, "").includes("$");
+  if (prog.text === "node") {
+    if (a1.text === "-e") return a2 !== undefined && !a2.expands && literalFrom(3) ? { kind: "inline", body: a2.text } : undefined;
+    return scriptWord(a1, JS_ROOT) && literalFrom(2) ? { kind: "script", token: a1.text } : undefined;
   }
-  return true;
+  if ((prog.text === "bash" || prog.text === "sh") && scriptWord(a1, /\.sh$/) && literalFrom(2)) return { kind: "script", token: a1.text };
+  return undefined;
 }
 
-const SPAWN_FNS = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
+// ---- the source scanner: one AST walk over a script, a node -e body or an imported module ----
 
-/** exec(...) / execSync(...): a bare call, any .execSync(...), or .exec(...) on child_process / cp (RegExp.exec is not a process call). */
-function isShellExecCall(node: ts.CallExpression, name: string | undefined): boolean {
-  if (name !== "exec" && name !== "execSync") return false;
-  const callee = node.expression;
-  if (ts.isIdentifier(callee)) return true;
-  if (!ts.isPropertyAccessExpression(callee)) return false;
-  return name === "execSync" || /^(child_?process|cp)$/i.test(callee.expression.getText());
-}
+const CP_MODULES = new Set(["child_process", "node:child_process"]);
+const CP_FNS = new Set(["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"]);
 const NODE_COMMANDS = new Set(["node", "node.exe"]);
 
-/** Script literals a source text spawns with node: execFile/execFileSync/spawn/spawnSync(process.execPath | "node", ["x.mjs", ...]) and
- * fork("x.mjs"). Returned as written (they are relative to the hook's working directory, the repo root). Fails closed (throws) on a
- * node spawn whose script argument is not a literal. Not followed (disclosed): exec/execSync command strings and non-node spawns. */
-export function spawnedScripts(text: string, fileName: string): string[] {
-  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, /\.(mjs|js|cjs)$/.test(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
-  const found = new Set<string>();
-  const refuse = (what: string): never => {
-    throw new Error(`${fileName}: a spawned script that cannot be followed statically (computed or non-literal ${what})`);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const name = calleeName(node.expression);
-      if (name === "fork") {
-        const a = node.arguments[0];
-        if (a === undefined || !ts.isStringLiteralLike(a)) refuse("fork() argument");
-        else if (SCRIPT_EXT.test(a.text)) found.add(a.text);
-      } else if (isShellExecCall(node, name)) {
-        // exec / execSync run a shell command string: nothing here can be followed statically.
-        refuse(`${name ?? "exec"}() shell command string`);
-      } else if (name !== undefined && SPAWN_FNS.has(name)) {
-        const cmd = node.arguments[0];
-        // The program must be a literal: process.execPath / "node" (followed) or another string literal such as "git" (not followed).
-        // An alias, a variable or any computed program cannot be told apart from node, so it fails closed.
-        const cmdText = cmd?.getText(sf);
-        const isNode = cmd !== undefined && (cmdText === "process.execPath" || cmdText === "process.argv0" || (ts.isStringLiteralLike(cmd) && NODE_COMMANDS.has(cmd.text)));
-        if (cmd === undefined || (!isNode && !ts.isStringLiteralLike(cmd))) refuse(`${name}() program`);
-        if (isNode) {
-          const args = node.arguments[1];
-          if (args === undefined || !ts.isArrayLiteralExpression(args)) refuse(`${name}() argument list`);
-          else {
-            const first = args.elements[0];
-            if (first !== undefined) {
-              if (!ts.isStringLiteralLike(first)) refuse(`${name}() script argument`);
-              else if (SCRIPT_EXT.test(first.text)) found.add(first.text);
-            }
-          }
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return [...found].sort();
+export interface SourceScan {
+  /** Repo scripts spawned with node, as written (relative to the hook's working directory, the repo root). */
+  spawned: string[];
+  /** Relative import / require specifiers, as written (relative to the file). */
+  imports: string[];
 }
+
+/** Scan one source text. Throws (fails closed) on anything that cannot be followed statically: a computed or non-relative import, any
+ * child_process use other than a call of execFile / execFileSync / spawn / spawnSync / fork whose program is process.execPath or "node" (all
+ * args literal, or a const bound to a plain string literal) or another string literal such as "git" (allowed, not followed), exec and
+ * execSync always, and any alias, member or module reference outside those call shapes. The followed script is the first arg not starting
+ * with "-". */
+export function scanSource(text: string, fileName: string): SourceScan {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, /\.(mjs|js|cjs)$/.test(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const refuse = (what: string): never => {
+    throw new Error(`${fileName}: ${what} cannot be followed statically (computed, non-literal or outside the allowed child_process call shapes)`);
+  };
+  const spawned = new Set<string>();
+  const imports = new Set<string>();
+  const cpNs = new Set<string>(); // identifiers bound to the child_process module
+  const cpLocal = new Map<string, string>(); // local name -> imported function name
+  const okSpecifier = new Set<ts.Node>(); // the one place each child_process specifier may appear
+  const consts = new Map<string, string>();
+  const tainted = new Set<string>();
+  const taint = (n: ts.Node): void => {
+    if (ts.isIdentifier(n)) tainted.add(n.text);
+    else ts.forEachChild(n, taint);
+  };
+  const requireOf = (e: ts.Expression | undefined): ts.StringLiteralLike | undefined => {
+    const a = e !== undefined && ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "require" ? e.arguments[0] : undefined;
+    return a !== undefined && ts.isStringLiteralLike(a) && CP_MODULES.has(a.text) ? a : undefined;
+  };
+  const bindModule = (n: ts.BindingName, spec: ts.Node): void => {
+    okSpecifier.add(spec);
+    if (ts.isIdentifier(n)) cpNs.add(n.text);
+    else
+      for (const el of n.elements) {
+        if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name) || el.dotDotDotToken !== undefined) refuse("a child_process destructuring");
+        else cpLocal.set(el.name.text, (el.propertyName ?? el.name).getText(sf));
+      }
+  };
+
+  // Pass 1: imports, bindings, and which identifiers are a const bound once to a plain string literal.
+  const collect = (node: ts.Node): void => {
+    const spec = specifierOf(node);
+    if (spec === "(computed)") refuse("a load form");
+    else if (spec !== undefined) {
+      if (spec.startsWith(".")) imports.add(spec);
+      else if (!spec.startsWith("node:")) refuse(`non-relative, non-node: import "${spec}"`);
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      const direct = requireOf(node.expression); // require("node:child_process").fn(...): the module is used on the spot
+      if (direct !== undefined) okSpecifier.add(direct);
+    }
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier) && CP_MODULES.has(node.moduleSpecifier.text)) {
+      okSpecifier.add(node.moduleSpecifier);
+      const c = node.importClause;
+      if (c?.name !== undefined) cpNs.add(c.name.text);
+      const nb = c?.namedBindings;
+      if (nb !== undefined && ts.isNamespaceImport(nb)) cpNs.add(nb.name.text);
+      else if (nb !== undefined) for (const el of nb.elements) cpLocal.set(el.name.text, (el.propertyName ?? el.name).text);
+    } else if (ts.isVariableDeclaration(node)) {
+      const req = requireOf(node.initializer);
+      if (req !== undefined) bindModule(node.name, req);
+      else if (ts.isIdentifier(node.name) && node.initializer !== undefined && ts.isStringLiteralLike(node.initializer) && (node.parent.flags & ts.NodeFlags.Const) !== 0 && !consts.has(node.name.text)) consts.set(node.name.text, node.initializer.text);
+      else taint(node.name);
+    } else if (ts.isParameter(node) || ts.isImportSpecifier(node) || ts.isImportClause(node) || ts.isNamespaceImport(node)) taint(node.name ?? node);
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name !== undefined) taint(node.name);
+    else if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) taint(node.left);
+    else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) taint(node.operand);
+    else if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) taint(node.initializer);
+    if (ts.isStringLiteralLike(node) && CP_MODULES.has(node.text) && !okSpecifier.has(node)) refuse(`a child_process specifier (${node.text})`);
+    ts.forEachChild(node, collect);
+  };
+  collect(sf);
+  // A const name declared twice, or also bound, assigned or passed as a parameter anywhere, is not a resolvable constant.
+  const literalOf = (e: ts.Expression): string => {
+    const v = ts.isStringLiteralLike(e) ? e.text : ts.isIdentifier(e) && !tainted.has(e.text) ? consts.get(e.text) : undefined;
+    return v ?? refuse(`an argument (${e.getText(sf).slice(0, 40)})`);
+  };
+
+  const call = (node: ts.CallExpression, fn: string): void => {
+    if (fn === "exec" || fn === "execSync") refuse(`${fn}() shell command string`);
+    const [p, args] = node.arguments;
+    if (fn === "fork") {
+      spawned.add(p === undefined ? refuse("fork() argument") : literalOf(p));
+      return;
+    }
+    if (p === undefined) refuse(`${fn}() program`);
+    else if (!ts.isStringLiteralLike(p) && p.getText(sf) !== "process.execPath" && p.getText(sf) !== "process.argv0") refuse(`${fn}() program`);
+    else if (ts.isStringLiteralLike(p) && !NODE_COMMANDS.has(p.text)) return; // another literal program (git): allowed, not followed
+    if (args === undefined || !ts.isArrayLiteralExpression(args)) refuse(`${fn}() argument list`);
+    else {
+      const lits = args.elements.map(literalOf);
+      const script = lits.find((l) => !l.startsWith("-"));
+      if (script !== undefined) spawned.add(script);
+    }
+  };
+  const cpish = (e: ts.Expression): boolean => requireOf(e) !== undefined || (ts.isIdentifier(e) && (cpNs.has(e.text) || /^(child_?process|cp)$/i.test(e.text)));
+  const isDeclName = (id: ts.Identifier): boolean => {
+    const p = id.parent;
+    return (
+      ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isFunctionDeclaration(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) && p.name === id) ||
+      ((ts.isBindingElement(p) || ts.isImportSpecifier(p)) && (p.name === id || p.propertyName === id)) ||
+      (ts.isPropertyAssignment(p) && p.name === id)
+    );
+  };
+
+  // Pass 2: every call and every reference to the module or one of its functions.
+  const check = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const c = node.expression;
+      if (ts.isIdentifier(c)) {
+        const fn = cpLocal.get(c.text) ?? (CP_FNS.has(c.text) ? c.text : undefined);
+        if (fn !== undefined) call(node, fn);
+      } else if (ts.isPropertyAccessExpression(c) && CP_FNS.has(c.name.text) && (c.name.text !== "exec" || cpish(c.expression))) call(node, c.name.text);
+    } else if (ts.isIdentifier(node) && !isDeclName(node)) {
+      const p = node.parent;
+      const callee = ts.isCallExpression(p) && p.expression === node;
+      if (ts.isPropertyAccessExpression(p) && p.name === node) {
+        const called = ts.isCallExpression(p.parent) && p.parent.expression === p;
+        if (CP_FNS.has(node.text) && !called && (node.text !== "exec" || cpish(p.expression))) refuse(`a reference to ${node.text}`);
+      } else if (cpNs.has(node.text)) {
+        if (!(ts.isPropertyAccessExpression(p) && p.expression === node && CP_FNS.has(p.name.text) && ts.isCallExpression(p.parent) && p.parent.expression === p)) refuse(`a use of the child_process module (${node.text})`);
+      } else if ((cpLocal.has(node.text) || CP_FNS.has(node.text)) && !callee) refuse(`a reference to ${node.text}`);
+    }
+    ts.forEachChild(node, check);
+  };
+  check(sf);
+  return { spawned: [...spawned].sort(), imports: [...imports].sort() };
+}
+
+export const spawnedScripts = (text: string, fileName: string): string[] => scanSource(text, fileName).spawned;
 
 /** Derive the repo scripts the snapshot's hook commands execute (the one derivation instrument for #455). `read` is injectable. */
 export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read: Reader = readReal): PluginHookScan {
@@ -402,25 +438,39 @@ export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read:
     unenumerable.push(command);
     unenumerableBy.push({ plugin, command });
   };
+  /** Scan one source text and take what it spawns and imports. A refusal or an unresolvable target is reported through `mark`. */
+  const follow = (plugin: string, text: string, fileName: string, baseDir: string, mark: (detail: string) => void): void => {
+    try {
+      const s = scanSource(text, fileName);
+      for (const t of s.spawned) if (!take(plugin, t)) mark(`spawns ${t}`);
+      for (const i of s.imports) {
+        const rel = toRel(root, resolve(baseDir, i));
+        if (!take(plugin, rel)) mark(`imports ${rel}`);
+      }
+    } catch (e) {
+      mark((e as Error).message);
+    }
+  };
   for (const p of snapshot.plugins) {
     for (const f of p.files) {
       for (const cmd of f.commands) {
-        // Fail closed: a command is enumerable only if every program or script in it is accounted for and every token resolves cleanly.
-        // Otherwise the whole command is unenumerable and the F1 row fails until the human judges it. Tokens that do resolve are still protected.
-        let clean = commandFullyAccounted(cmd);
-        for (const t of extractScriptTokens(cmd)) if (!take(p.id, t)) clean = false;
-        if (!clean) markUnenumerable(p.id, cmd);
+        // Fail closed: only the allowlisted shapes are enumerable; anything else is unenumerable and F1 fails until the human judges it.
+        const cls = classifyHookCommand(cmd);
+        const whole = (): void => markUnenumerable(p.id, cmd);
+        if (cls === undefined) whole();
+        else if (cls.kind === "script") {
+          if (!take(p.id, cls.token)) whole();
+        } else follow(p.id, cls.body, "inline-e-body.js", root, whole);
       }
     }
   }
-  // Spawn-follow to a fixpoint: a hook script that runs another repo script with node protects that one too.
+  // Follow to a fixpoint: every script, node -e body and imported module is scanned by the same scanner.
   while (queue.length > 0) {
     const { rel, plugin } = queue.shift()!;
     if (!JS_ROOT.test(rel)) continue;
     const abs = resolve(root, rel);
     const text = read(abs);
-    if (text === undefined) continue;
-    for (const s of spawnedScripts(text, abs)) if (!take(plugin, s)) markUnenumerable(plugin, `spawned by ${rel}: ${s}`);
+    if (text !== undefined) follow(plugin, text, abs, dirname(abs), (d) => markUnenumerable(plugin, `${rel}: ${d}`));
   }
   return {
     scripts: [...scripts].sort(),
