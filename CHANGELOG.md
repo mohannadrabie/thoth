@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed - #463 / #467 round-3 fix-now: applied deltas immutable, lock files protected (scope s308-463-467, #308 K blocker)
+
+Refs #308, refs #463, refs #467, refs #479. CRITICAL tier.
+
+- `JA-replay/applied-deltas-immutable`: every applied delta must equal its content at the commit that first applied it (ignoring `sequence` and `status`), so editing an applied delta and the judgment together in one commit (mutation M8) is caught. Its detector is tested on a temp repository. Shallow clones skip with a reason.
+- Delta d (sequence 5): `server.lock` and `computer-use.lock` re-judged protected, failing closed (the IDE lock files are protected). Protected list: 238 paths.
+
 ### Changed - #463 / #467 a1 round 3: mcp-skill-archives protected, replay detector, config-dir children names judged (scope s308-463-467, #308 K blocker)
 
 Refs #308, refs #463, refs #467, refs #479. CRITICAL tier.
