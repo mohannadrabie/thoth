@@ -386,3 +386,31 @@ test("spawn-follow: a child_process reference outside the allowed call shapes th
   // The allowed shapes through a renamed named binding stay followed.
   assert.deepEqual(spawned("const { execFileSync: run } = require('node:child_process'); run(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
 });
+
+// #484: dynamic-code and loader escapes the child_process rule cannot see. Written FAILING FIRST.
+test("scanner: eval, Function, vm, process.binding throw", () => {
+  const spawned = fn<string[]>("spawnedScripts");
+  const bad = [
+    "eval('x');",
+    "const e = eval; e('x');",
+    "globalThis.eval('x');",
+    "globalThis['eval']('x');",
+    "new Function('return 1')();",
+    "Function('return 1')();",
+    "const F = Function; F('x');",
+    "(() => {}).constructor('return 1')();",
+    "f['constructor']('x');",
+    "import vm from 'node:vm';",
+    "const vm = require('vm');",
+    "const vm = require('node:vm');",
+    "const { Worker } = require('worker_threads');",
+    "import('node:worker_threads');",
+    "process.binding('spawn_sync');",
+    "process._linkedBinding('x');",
+    "process.dlopen(m, 'x');",
+    "process['binding']('x');",
+  ];
+  for (const src of bad) assert.throws(() => spawned(src, "/r/a.mjs"), /cannot be followed|non-relative|computed|non-literal/i, src);
+  // Plain code that merely mentions the words stays fine, and the allowed spawn shape is unchanged.
+  assert.deepEqual(spawned("const note = 'eval and Function are text here'; const o = { a: 1 }; execFileSync(process.execPath, ['docs/b.mjs']);", "/r/a.mjs"), ["docs/b.mjs"]);
+});
