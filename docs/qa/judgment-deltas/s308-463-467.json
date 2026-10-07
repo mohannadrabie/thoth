@@ -1,5 +1,5 @@
 {
-  "//": "Draft delta for story a2 (scope s308-463-467). Commit under docs/qa/judgment-deltas/s308-463-467.json BEFORE running node src/qa/judgment-apply.ts. Proposed judgments are DRAFTS until the human/Manager ratifies; ArtifactCheck stays pending the live inventory capture.",
+  "//": "Draft delta for story a2 (scope s308-463-467). Commit under docs/qa/judgment-deltas/s308-463-467.json BEFORE running node src/qa/judgment-apply.ts. Proposed judgments are DRAFTS until the human/Manager ratifies; ArtifactCheck stays pending the live inventory capture. The tool judgments live in s308-463-467-tools.json and are applied after the capture.",
   "rulings": [
     "Prep decision 3 (approved 2026-10-06): Judge the 2.1.289 entries: `localSettings` and `projectSettings` as not a write-deny site (section 1.2).",
     "Prep decision 4 (approved 2026-10-06): Judge the out-of-window project shapes: `CLAUDE.md`, `rules`, `.git` and `ide` as write-deny; `worktrees` as not a write-deny site (section 1.3).",
@@ -434,28 +434,5 @@
         }
       ]
     }
-  },
-  "toolExec": {
-    "version": "2026-10-06",
-    "add": [
-      {
-        "tool": "ArtifactComments",
-        "judgment": "not-exec",
-        "reason": "Reads and answers comments on a hosted artifact; no local execution (same class as Artifact). Human ruling 2026-10-06."
-      },
-      {
-        "tool": "ArtifactData",
-        "judgment": "not-exec",
-        "reason": "Reads and writes a hosted artifact's database; no local execution (same class as Artifact). Human ruling 2026-10-06."
-      },
-      {
-        "tool": "EnterPlanMode",
-        "judgment": "not-exec",
-        "reason": "Mode switch (same class as ExitPlanMode). Human ruling 2026-10-06."
-      }
-    ]
-  },
-  "pending": [
-    "ArtifactCheck: judged after the live tool-inventory capture shows it (human ruling 2026-10-06)."
-  ]
+  }
 }
