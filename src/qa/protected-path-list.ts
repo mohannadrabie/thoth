@@ -26,6 +26,8 @@
 // REPORTED, not protected (plugin-root paths sit under the protected ~/.claude/plugins/). A command naming no script is listed as
 // unenumerable (not thrown); the F1 instrument fails until the human judges it. Drift of the snapshot from the live plugin is detected
 // locally only (the default run and the F1 row); CI proves only that the list matches the committed snapshot.
+// The source scanner (scanSource) is a syntax allowlist for human-installed, protected scripts, not a sandbox: dynamic-code routes it does not
+// recognise are a residual, and an identifier element key bound by let or var to a runtime string is not refused.
 //
 // Disclosed limits: hooks wired in USER or MANAGED settings (outside the repo) are not walked; only the project
 // settings file (committed) and the gitignored local settings file are read, and a local-file command that names no
@@ -274,12 +276,15 @@ const CP_MODULES = new Set(["child_process", "node:child_process"]);
 const CP_FNS = new Set(["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"]);
 const NODE_COMMANDS = new Set(["node", "node.exe"]);
 // #484: ways to run code the scanner cannot read. Any use throws, in every scanned file and body.
-const DYNAMIC_NAMES = new Set(["eval", "Function"]);
+// The name "constructor" is refused by any route (member, destructuring key, object key, string argument): it reaches the Function constructor.
+const DYNAMIC_NAMES = new Set(["eval", "Function", "AsyncFunction", "GeneratorFunction", "AsyncGeneratorFunction", "constructor"]);
+const REFLECT_ESCAPES = new Set(["construct", "apply", "get"]);
+const NUMERIC_OPS = new Set([ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken, ts.SyntaxKind.PercentToken]);
 const LOADER_MODULES = new Set(["vm", "node:vm", "worker_threads", "node:worker_threads"]);
 const PROCESS_ESCAPES = new Set(["binding", "_linkedBinding", "dlopen", "mainModule"]);
 // Structural rule: these names may appear ONLY as the object of a plain (non-computed) member access, so an alias, a destructuring, an
 // argument, a computed access, a spread, a return or a with-scope can never smuggle one of them past the name checks above.
-const GLOBAL_OBJECTS = new Set(["process", "globalThis", "global", "self", "window"]);
+const GLOBAL_OBJECTS = new Set(["process", "globalThis", "global", "self", "window", "Reflect"]);
 
 export interface SourceScan {
   /** Repo scripts spawned with node, as written (relative to the hook's working directory, the repo root). */
@@ -288,7 +293,7 @@ export interface SourceScan {
   imports: string[];
 }
 
-/** Scan one source text. Throws (fails closed) on anything that cannot be followed statically: a computed or non-relative import, any
+/** The scanner is a syntax allowlist for human-installed, protected scripts, not a sandbox: dynamic-code routes it does not recognise are a residual. Disclosed: an identifier element key bound by let or var to a runtime string is not refused. Scan one source text. Throws (fails closed) on anything that cannot be followed statically: a computed or non-relative import, any
  * child_process use other than a call of execFile / execFileSync / spawn / spawnSync / fork whose program is process.execPath or "node" (all
  * args literal, or a const bound to a plain string literal) or another string literal such as "git" (allowed, not followed), exec and
  * execSync always, and any alias, member or module reference outside those call shapes. The followed script is the first arg not starting
@@ -304,6 +309,16 @@ export function scanSource(text: string, fileName: string): SourceScan {
   const cpLocal = new Map<string, string>(); // local name -> imported function name
   const okSpecifier = new Set<ts.Node>(); // the one place each child_process specifier may appear
   const consts = new Map<string, string>();
+  const stringy = new Set<string>(); // consts whose initializer holds a string or template: never a safe element key
+  const containsString = (n: ts.Node): boolean => ts.isStringLiteralLike(n) || ts.isTemplateExpression(n) || ts.forEachChild(n, (c) => (containsString(c) ? true : undefined)) === true;
+  /** An element-access key must be a number by construction: a numeric literal, an identifier that is not a string const, or those joined by - * / % and .length. */
+  const numericKey = (e: ts.Expression): boolean =>
+    ts.isNumericLiteral(e) ||
+    (ts.isIdentifier(e) && !stringy.has(e.text)) ||
+    (ts.isParenthesizedExpression(e) && numericKey(e.expression)) ||
+    (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && numericKey(e.operand)) ||
+    (ts.isPropertyAccessExpression(e) && e.name.text === "length" && ts.isIdentifier(e.expression)) ||
+    (ts.isBinaryExpression(e) && NUMERIC_OPS.has(e.operatorToken.kind) && numericKey(e.left) && numericKey(e.right));
   const tainted = new Set<string>();
   const taint = (n: ts.Node): void => {
     if (ts.isIdentifier(n)) tainted.add(n.text);
@@ -343,6 +358,7 @@ export function scanSource(text: string, fileName: string): SourceScan {
       if (nb !== undefined && ts.isNamespaceImport(nb)) cpNs.add(nb.name.text);
       else if (nb !== undefined) for (const el of nb.elements) cpLocal.set(el.name.text, (el.propertyName ?? el.name).text);
     } else if (ts.isVariableDeclaration(node)) {
+      if (ts.isIdentifier(node.name) && node.initializer !== undefined && (node.parent.flags & ts.NodeFlags.Const) !== 0 && containsString(node.initializer)) stringy.add(node.name.text);
       const req = requireOf(node.initializer);
       if (req !== undefined) bindModule(node.name, req);
       else if (ts.isIdentifier(node.name) && node.initializer !== undefined && ts.isStringLiteralLike(node.initializer) && (node.parent.flags & ts.NodeFlags.Const) !== 0 && !consts.has(node.name.text)) consts.set(node.name.text, node.initializer.text);
@@ -392,10 +408,13 @@ export function scanSource(text: string, fileName: string): SourceScan {
 
   // Pass 2: every call and every reference to the module or one of its functions.
   const check = (node: ts.Node): void => {
-    // Dynamic code: eval and Function by any route, a .constructor call, and the process loader escapes.
+    // Dynamic code: eval, Function and its siblings, the name constructor, and the process loader escapes.
     if (ts.isIdentifier(node) && DYNAMIC_NAMES.has(node.text)) refuse(`a reference to ${node.text}`);
-    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && (DYNAMIC_NAMES.has(node.argumentExpression.text) || PROCESS_ESCAPES.has(node.argumentExpression.text) || node.argumentExpression.text === "constructor")) refuse(`a computed access to ${node.argumentExpression.text}`);
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "constructor") refuse("a .constructor call");
+    // Structural: an element access needs a numeric key (write a string key as .name); a tagged template needs a plain identifier tag; Reflect.get, apply and construct are refused outright.
+    if (ts.isElementAccessExpression(node) && !numericKey(node.argumentExpression)) refuse("a computed element access (the key is not a number by construction)");
+    if (ts.isTaggedTemplateExpression(node) && !ts.isIdentifier(node.tag)) refuse("a tagged template whose tag is not a plain identifier");
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Reflect" && REFLECT_ESCAPES.has(node.name.text)) refuse(`Reflect.${node.name.text}`);
+    if (ts.isStringLiteralLike(node) && node.text === "constructor" && ts.isCallExpression(node.parent)) refuse("the name constructor as a call argument");
     if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text)) refuse(`.${node.name.text}`);
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && GLOBAL_OBJECTS.has(node.expression.text) && GLOBAL_OBJECTS.has(node.name.text)) refuse(`${node.expression.text}.${node.name.text} (a global object reached through another)`);
     if (ts.isIdentifier(node) && GLOBAL_OBJECTS.has(node.text) && !isDeclName(node)) {
