@@ -1,5 +1,6 @@
 {
   "//": "Second a2 delta (scope s308-463-467): the names the structural census (round 2, #477) adds on 2.1.289. Same criterion as s308-463-467.json. Apply through qa:judgment-apply after s308-463-467.json.",
+  "sequence": 2,
   "writeDeny": {
     "add": {
       "anywhere": [

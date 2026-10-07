@@ -1,5 +1,7 @@
 {
   "//": "Tool judgments approved 2026-10-06 (ArtifactComments, ArtifactData, EnterPlanMode as not-exec). Apply ONLY after the human-run tool-inventory capture has been vendored: a judged tool that is not in the vendored inventory fails K-every-vendored-tool-judged-exec. ArtifactCheck is judged after the capture shows it.",
+  "status": "pending",
+  "sequence": 4,
   "rulings": [
     "Prep decision 5 (approved 2026-10-06): Judge the new tools: `ArtifactComments`, `ArtifactData` and `EnterPlanMode` as not-exec. `ArtifactCheck` waits for decision 2."
   ],

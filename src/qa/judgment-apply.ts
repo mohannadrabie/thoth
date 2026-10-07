@@ -49,6 +49,10 @@ export interface Replace<T> {
   entry: T;
 }
 export interface Delta {
+  /** "pending": not to be applied yet (the replay test skips it and checks it is still unapplied); the marker is removed in a committed edit when it is time. */
+  status?: "pending";
+  /** Order in which deltas are replayed from the pre-delta base (the replay test); unique per delta. */
+  sequence?: number;
   writeDeny?: { claudeCodeVersion?: string; add?: Partial<Record<Section, WriteDenyEntry[]>>; replace?: Partial<Record<Section, Replace<WriteDenyEntry>[]>> };
   toolExec?: { version?: string; add?: ToolEntry[]; replace?: Replace<ToolEntry>[] };
 }
@@ -210,6 +214,7 @@ export function applyFiles(deltaPath: string, paths: Paths = DEFAULT_PATHS, opts
   // When a test stubs gitCheck it also reads the file directly (no repository there).
   const text = opts.gitCheck !== undefined ? readFileSync(deltaPath, "utf8") : committedBlob(resolve(deltaPath));
   const delta = JSON.parse(text) as Delta;
+  if (delta.status === "pending") throw new Error(`delta ${deltaPath} is marked pending: it is applied only after the marker is removed in a committed edit`);
   const before = { writeDeny: readFileSync(paths.writeDeny, "utf8"), toolExec: readFileSync(paths.toolExec, "utf8") };
   const files: JudgmentFiles = { writeDeny: JSON.parse(before.writeDeny) as JudgmentFiles["writeDeny"], toolExec: JSON.parse(before.toolExec) as JudgmentFiles["toolExec"] };
   applyDelta(files, delta);

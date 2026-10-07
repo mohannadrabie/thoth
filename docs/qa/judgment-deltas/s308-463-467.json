@@ -1,5 +1,6 @@
 {
   "//": "Draft delta for story a2 (scope s308-463-467). Commit under docs/qa/judgment-deltas/s308-463-467.json BEFORE running node src/qa/judgment-apply.ts. Proposed judgments are DRAFTS until the human/Manager ratifies; ArtifactCheck stays pending the live inventory capture. The tool judgments live in s308-463-467-tools.json and are applied after the capture.",
+  "sequence": 1,
   "rulings": [
     "Prep decision 3 (approved 2026-10-06): Judge the 2.1.289 entries: `localSettings` and `projectSettings` as not a write-deny site (section 1.2).",
     "Prep decision 4 (approved 2026-10-06): Judge the out-of-window project shapes: `CLAUDE.md`, `rules`, `.git` and `ide` as write-deny; `worktrees` as not a write-deny site (section 1.3).",
