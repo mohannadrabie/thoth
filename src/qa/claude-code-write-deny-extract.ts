@@ -8,7 +8,7 @@
 // Reliability: this is an extraction from minified code, valid for the version recorded in the judgment file; a layout change
 // makes it return fewer entries or throw "anchor not found", and the test fails loudly rather than passing vacuously.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,9 +51,10 @@ export interface FoundBinary {
 }
 
 /** #463/#467: the ONE definition of the certified set. Certified = every discovered binary except a retained versions/ entry and an extension dir the editor marks obsolete. */
-function certifyBinary(source: string, obsolete: boolean): { certified: boolean; uncertifiedWhy?: string } {
-  if (source === "versions") return { certified: false, uncertifiedWhy: "retained versions/ entry" };
-  if (obsolete) return { certified: false, uncertifiedWhy: "VS Code-obsolete extension dir" };
+const EDITOR_LABEL: Readonly<Record<string, string>> = { vscode: "VS Code", "vscode-insiders": "VS Code Insiders", cursor: "Cursor" };
+function certifyBinary(source: string, obsolete: boolean, isLocalCliTarget = false): { certified: boolean; uncertifiedWhy?: string } {
+  if (source === "versions") return isLocalCliTarget ? { certified: true } : { certified: false, uncertifiedWhy: "retained versions/ entry" };
+  if (obsolete) return { certified: false, uncertifiedWhy: `${EDITOR_LABEL[source] ?? source}-obsolete extension dir` };
   return { certified: true };
 }
 
@@ -83,22 +84,41 @@ const isFile = (p: string): boolean => {
     return false;
   }
 };
+const realPathOrSelf = (p: string): string => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
 const firstFile = (dir: string): string | undefined => [join(dir, "claude.exe"), join(dir, "claude")].find(isFile);
 
 /** #462: EVERY installed Claude Code binary, not the first one found. Order: override, local bin, every versions/ entry, every extension per editor, Claude Desktop bundles, absolute PATH entries (resolved without a shell). */
-export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): FoundBinary[] {
+export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env, realpath: (p: string) => string = realPathOrSelf): FoundBinary[] {
   const home = env["USERPROFILE"] || env["HOME"] || homedir();
   const out: FoundBinary[] = [];
-  const seen = new Set<string>();
-  const add = (path: string | undefined, source: string, override = false, obsolete = false, notes: string[] = []): void => {
+  const seen = new Map<string, FoundBinary>();
+  const add = (path: string | undefined, source: string, override = false, obsolete = false, notes: string[] = [], isLocalCliTarget = false): void => {
     if (path === undefined || path === "" || !isFile(path)) return;
     const key = resolve(path).toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ path, source, override, ...certifyBinary(source, obsolete), ...(notes.length === 0 ? {} : { notes }) });
+    const cert = certifyBinary(source, obsolete, isLocalCliTarget);
+    const earlier = seen.get(key);
+    if (earlier !== undefined) {
+      // one binary found by several sources: certified wins (a binary launchable by name or run as the CLI is certified whatever else lists it)
+      if (!earlier.certified && cert.certified) {
+        earlier.certified = true;
+        delete earlier.uncertifiedWhy;
+      }
+      return;
+    }
+    const found: FoundBinary = { path, source, override, ...cert, ...(notes.length === 0 ? {} : { notes }) };
+    seen.set(key, found);
+    out.push(found);
   };
   add(env["THOTH_CLAUDE_BIN"], "override", true);
-  add(firstFile(join(home, ".local", "bin")), "local-bin");
+  const localCli = firstFile(join(home, ".local", "bin"));
+  add(localCli, "local-bin");
+  const localReal = localCli === undefined ? undefined : realpath(localCli).toLowerCase();
   const list = (dir: string): string[] => {
     try {
       return readdirSync(dir);
@@ -108,7 +128,7 @@ export function discoverClaudeBinaries(env: NodeJS.ProcessEnv = process.env): Fo
   };
   // every versions/ entry, not the newest only (a downgraded active binary must not hide behind an obsolete newer one)
   const versions = join(home, ".local", "share", "claude", "versions");
-  for (const n of list(versions).filter((x) => /^\d+\.\d+\.\d+$/.test(x)).sort(cmpVersion)) add(join(versions, n), "versions");
+  for (const n of list(versions).filter((x) => /^\d+\.\d+\.\d+$/.test(x)).sort(cmpVersion)) add(join(versions, n), "versions", false, false, [], localReal !== undefined && realpath(join(versions, n)).toLowerCase() === localReal);
   for (const [root, source] of [[".vscode", "vscode"], [".vscode-insiders", "vscode-insiders"], [".cursor", "cursor"]] as const) {
     const dir = join(home, root, "extensions");
     const obsolete = readObsolete(dir);
