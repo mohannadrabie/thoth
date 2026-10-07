@@ -1,0 +1,286 @@
+{
+  "//": "Second a2 delta (scope s308-463-467): the names the structural census (round 2, #477) adds on 2.1.289. Same criterion as s308-463-467.json. Apply through qa:judgment-apply after s308-463-467.json.",
+  "sequence": 2,
+  "writeDeny": {
+    "add": {
+      "anywhere": [
+        {
+          "name": ".claude",
+          "judgment": "residual",
+          "reason": "Not a .claude path: the config directory's own name. Evidence: we=ps(()=>(o()??u(R(),\".claude\")).normalize(\"NFC\"),o)."
+        },
+        {
+          "name": ".codex",
+          "judgment": "residual",
+          "reason": "Not a .claude path: another tool's home dir that a one-off import reads. Evidence: A(Yt(),\".codex\"), ~/.codex/config.toml."
+        },
+        {
+          "name": ".config",
+          "judgment": "residual",
+          "reason": "Not a .claude path: XDG config dir. Evidence: Xe(wt(),\".config\",\"git\",\"ignore\")."
+        },
+        {
+          "name": ".credentials.json",
+          "judgment": "protected",
+          "reason": "OAuth credential store; the binary's own classifier marks a profile-store write as substituting the credential behind managed settings. Evidence: Lf(DS(),\".credentials.json\"); Read(~/.claude/.credentials.json) in the built-in read-deny list. [human instruction: protected]",
+          "userPath": "~/.claude/.credentials.json",
+          "projectPath": ".claude/.credentials.json"
+        },
+        {
+          "name": ".gitconfig",
+          "judgment": "residual",
+          "reason": "Not a .claude path: the home .gitconfig. Evidence: he(zs(),\".gitconfig\")."
+        },
+        {
+          "name": ".local",
+          "judgment": "residual",
+          "reason": "Not a .claude path: ~/.local/bin and ~/.local/share install dirs, already named protected. Evidence: p(P(),\".local\",\"bin\",\"claude\")."
+        },
+        {
+          "name": ".storage-write",
+          "judgment": "residual",
+          "reason": "Lock file for the secure-storage write. Evidence: ca(re(DS(),\".storage-write\"),{retries,stale})."
+        },
+        {
+          "name": ".txt",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a file extension literal. Evidence: Qt=new Set([...,\".txt\",\".csv\",...])."
+        },
+        {
+          "name": "AppData",
+          "judgment": "residual",
+          "reason": "Not a .claude path: Windows AppData path segment. Evidence: ln(Do(),\"AppData\",\"Local\")."
+        },
+        {
+          "name": "Library",
+          "judgment": "residual",
+          "reason": "Not a .claude path: macOS Library path segment. Evidence: ln(Do(),\"Library\",\"Keychains\")."
+        },
+        {
+          "name": "Managed",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a settings-source label. Evidence: case\"policySettings\":return\"Managed\"."
+        },
+        {
+          "name": "active_config",
+          "judgment": "protected",
+          "reason": "Credential profile store pointer (which profile is active); tampering swaps the credential and organization. Evidence: {dirs:[x(n,\"configs\"),x(n,\"credentials\")],files:[x(n,\"active_config\")]}. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/active_config",
+          "projectPath": ".claude/active_config"
+        },
+        {
+          "name": "agent",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a label argument. Evidence: m(Ao(),\"agent\",_w())."
+        },
+        {
+          "name": "agent-registry.json",
+          "judgment": "protected",
+          "reason": "Multi-agent coordination file Claude Code writes under a project's .claude (its own runtime-file list). Evidence: var Le=[...\"**/.claude/agent-registry.json\"...,pe=\"# claude-code-runtime\"]. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/agent-registry.json",
+          "projectPath": ".claude/agent-registry.json"
+        },
+        {
+          "name": "assistant-daemon-state.json",
+          "judgment": "protected",
+          "reason": "Assistant daemon state read back at startup (its own runtime-file list). Evidence: \"**/.claude/assistant-daemon-state.json\" in the same list. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/assistant-daemon-state.json",
+          "projectPath": ".claude/assistant-daemon-state.json"
+        },
+        {
+          "name": "autoedit-",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a temp-directory prefix. Evidence: cs($r(ls(),\"autoedit-\"))."
+        },
+        {
+          "name": "bash-log.txt",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a documentation example for a user hook (>> ~/.claude/bash-log.txt). Evidence: text of a bundled hooks guide."
+        },
+        {
+          "name": "binary",
+          "judgment": "residual",
+          "reason": "Not a .claude path: an encoding argument. Evidence: Buffer.from(...,\"binary\")."
+        },
+        {
+          "name": "checkpoints",
+          "judgment": "protected",
+          "reason": "File snapshots a rewind restores into the work tree (its own runtime-file list). Evidence: \"**/.claude/checkpoints/\"; rde(...,\"rewind\"). [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/checkpoints/",
+          "projectPath": ".claude/checkpoints/"
+        },
+        {
+          "name": "claude",
+          "judgment": "residual",
+          "reason": "Not a .claude path: the binary inside ~/.claude/local, already covered by the local entry. Evidence: V(K(),\"claude\") with K()=V(we(),\"local\")."
+        },
+        {
+          "name": "claude-audio-",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a temp-directory prefix. Evidence: jco(rAt(zco(),\"claude-audio-\"))."
+        },
+        {
+          "name": "cleanup",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a label argument. Evidence: Z(ce.closeStrayWindows(),\"cleanup\")."
+        },
+        {
+          "name": "client",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a label argument. Evidence: m(To(),\"client\",wY())."
+        },
+        {
+          "name": "configs",
+          "judgment": "protected",
+          "reason": "Credential profile store (per-profile config files). Evidence: x(n,\"configs\"), _(n,\"configs\",`${r}.json`). [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/configs/",
+          "projectPath": ".claude/configs/"
+        },
+        {
+          "name": "decided",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a state label. Evidence: B(L(),\"decided\")."
+        },
+        {
+          "name": "edit",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a permission verb. Evidence: Ra(D,s.permissions(),\"edit\",\"deny\")."
+        },
+        {
+          "name": "first-run",
+          "judgment": "residual",
+          "reason": "Marker file for the first run (its own runtime-file list). Evidence: \"**/.claude/first-run\"."
+        },
+        {
+          "name": "header_rejected",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a state label. Evidence: J9(IS(),\"header_rejected\")."
+        },
+        {
+          "name": "hillclimb",
+          "judgment": "protected",
+          "reason": "Project eval flows a bundled eval script runs (.claude/hillclimb/<name>); instruction-like. Evidence: node run-eval.mjs --flow .claude/hillclimb/<name>; flow: '.claude/hillclimb/flow'. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/hillclimb/",
+          "projectPath": ".claude/hillclimb/"
+        },
+        {
+          "name": "history",
+          "judgment": "residual",
+          "reason": "Prompt history; the name comes from the glob history*, whose real file history.jsonl is already judged residual. Evidence: \"Read(~/.claude/history*)\" in the built-in read-deny list."
+        },
+        {
+          "name": "late_plugin_install",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a reason label. Evidence: applyPluginMcpDiff(...,\"late_plugin_install\")."
+        },
+        {
+          "name": "mailbox",
+          "judgment": "protected",
+          "reason": "Messages between agents delivered into a session's context (its own runtime-file list). Evidence: \"**/.claude/mailbox/\". [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/mailbox/",
+          "projectPath": ".claude/mailbox/"
+        },
+        {
+          "name": "managed-settings",
+          "judgment": "protected",
+          "reason": "Settings that govern the session (managed-settings and its .d drop-in dir). Evidence: g=[...uqr(),\"managed-settings\",...]. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/managed-settings/",
+          "projectPath": ".claude/managed-settings/"
+        },
+        {
+          "name": "read",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a permission verb. Evidence: Ra(D,s.permissions(),\"read\",\"deny\")."
+        },
+        {
+          "name": "released",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a state label. Evidence: B(L(),\"released\")."
+        },
+        {
+          "name": "remote",
+          "judgment": "protected",
+          "reason": "Remote-session dir that holds .oauth_token, .api_key, .session_ingress_token and spare.sock. Evidence: /home/claude/.claude/remote/spare.sock and /.oauth_token, /.api_key next to it. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/remote/",
+          "projectPath": ".claude/remote/"
+        },
+        {
+          "name": "rewind",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a label argument. Evidence: rde(si(),\"rewind\")."
+        },
+        {
+          "name": "s",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a one-letter fragment from prose that mentions .claude/settings.local.json. Evidence: \"check permissions on .claude/settings.local.json\". [context not conclusive; harmless if wrong]"
+        },
+        {
+          "name": "settings",
+          "judgment": "protected",
+          "reason": "Prefix of .claude/settings* paths in prose and settings lookups; a settings directory would be loaded as settings. Evidence: \"...permissions on .claude/settings.local.json\"; trimmed from \"settings.\". [AMBIGUOUS, fail closed (likely a prose fragment; protecting a path that may not exist costs nothing)]",
+          "userPath": "~/.claude/settings/",
+          "projectPath": ".claude/settings/"
+        },
+        {
+          "name": "srt-ca-",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a temp-directory prefix for the sandbox proxy CA. Evidence: Ov(Mu(Bv(),\"srt-ca-\"))."
+        },
+        {
+          "name": "statsig",
+          "judgment": "protected",
+          "reason": "Feature-gate cache the harness loads; a planted cache could flip gates. Evidence: \"Read(~/.claude/statsig/**)\" in the built-in read-deny list. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/statsig/",
+          "projectPath": ".claude/statsig/"
+        },
+        {
+          "name": "todos",
+          "judgment": "protected",
+          "reason": "Persisted todo lists read back into a session. Evidence: \"Read(~/.claude/todos/**)\" in the built-in read-deny list. [AMBIGUOUS, fail closed (same class as tasks)]",
+          "userPath": "~/.claude/todos/",
+          "projectPath": ".claude/todos/"
+        },
+        {
+          "name": "upload_settled",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a state label. Evidence: B(L(),\"upload_settled\")."
+        },
+        {
+          "name": "userSettings",
+          "judgment": "residual",
+          "reason": "A setting-source name, like localSettings and projectSettings. Evidence: woe(nt,\"userSettings\"); ge(\"userSettings\")."
+        },
+        {
+          "name": "utf-8",
+          "judgment": "residual",
+          "reason": "Not a .claude path: an encoding argument. Evidence: ge(gBt(),\"utf-8\")."
+        },
+        {
+          "name": "utf8",
+          "judgment": "residual",
+          "reason": "Not a .claude path: an encoding argument. Evidence: D(hhn(),\"utf8\")."
+        },
+        {
+          "name": "value",
+          "judgment": "residual",
+          "reason": "Not a .claude path: an object key. Evidence: Object.hasOwn(e,\"value\")."
+        },
+        {
+          "name": "withdrawn",
+          "judgment": "residual",
+          "reason": "Not a .claude path: a state label. Evidence: B(L(),\"withdrawn\")."
+        },
+        {
+          "name": "x64",
+          "judgment": "residual",
+          "reason": "Not a .claude path: an architecture literal. Evidence: p8(O(),\"x64\")."
+        },
+        {
+          "name": "zed",
+          "judgment": "residual",
+          "reason": "Not a .claude path: another editor's config dir. Evidence: re(Fe(),\".config\",\"zed\")."
+        }
+      ]
+    }
+  }
+}

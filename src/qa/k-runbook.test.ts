@@ -98,10 +98,11 @@ test("k-runbook: readiness checks every Claude Code binary in the enumerated ins
   assert.ok(/final line/i.test(l) && /names? each/i.test(l));
 });
 
-test("k-runbook: Desktop roots are stated as not yet protected, executed from, tracked in #466 (hash-and-flag instead of executing)", () => {
-  const l = lines.find((x) => /Claude Desktop/i.test(x) && /not yet protected/i.test(x));
-  assert.ok(l !== undefined, "a residual line about the Desktop roots exists");
-  assert.ok(l.includes("#466") && /executes/i.test(l) && /hash-and-flag/.test(l) && l.includes("claude-code"));
+test("k-runbook: Desktop roots are stated as protected (#466), non-protected binaries are hashed and flagged, and the opt-in is named", () => {
+  const l = lines.find((x) => /Claude Desktop/i.test(x) && /UNVERIFIED-UNPROTECTED/.test(x));
+  assert.ok(l !== undefined, "a residual line about the Desktop roots and the flag exists");
+  assert.ok(l.includes("#466") && /now protected/i.test(l) && /sha256/.test(l) && l.includes("THOTH_EXEC_UNPROTECTED=1") && l.includes("claude-code"));
+  assert.ok(!/not yet protected/i.test(text), "the old not-yet-protected residual is gone");
   assert.ok(!/machine-specific|suffix/i.test(text), "the false MSIX-suffix premise is gone");
 });
 
@@ -109,6 +110,9 @@ test("k-runbook: readiness line lists every location the code checks, and says r
   const l = lines.find((x) => /^Readiness checks every Claude Code binary/.test(x));
   assert.ok(l !== undefined);
   for (const p of ["~/.local/bin", "~/.local/share/claude/versions", "anthropic.claude-code-*", "VS Code Insiders", "Cursor", "Roaming", "MSIX", "absolute PATH"]) assert.ok(l.includes(p), p);
-  const m = lines.find((x) => /one judged version/i.test(x));
-  assert.ok(m !== undefined && /prunes/i.test(m) && m.includes("#467") && /does not turn the row green/i.test(m));
+  // 2026-10-06 ruling: pin 2.1.289, certified set, three remedies; #467 is decided
+  const m = lines.find((x) => /^K certifies one Claude Code version/.test(x));
+  assert.ok(m !== undefined && m.includes("2.1.289") && m.includes("#467") && /decided/i.test(m) && /certified/.test(m));
+  const n = lines.find((x) => /does not turn the row green/i.test(x));
+  assert.ok(n !== undefined && /prune/.test(lines.join(" ")));
 });

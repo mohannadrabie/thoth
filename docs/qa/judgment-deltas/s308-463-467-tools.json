@@ -1,0 +1,31 @@
+{
+  "//": "Tool judgments approved 2026-10-06 (ArtifactComments, ArtifactData, EnterPlanMode as not-exec). Apply ONLY after the human-run tool-inventory capture has been vendored: a judged tool that is not in the vendored inventory fails K-every-vendored-tool-judged-exec. ArtifactCheck is judged after the capture shows it.",
+  "status": "pending",
+  "sequence": 4,
+  "rulings": [
+    "Prep decision 5 (approved 2026-10-06): Judge the new tools: `ArtifactComments`, `ArtifactData` and `EnterPlanMode` as not-exec. `ArtifactCheck` waits for decision 2."
+  ],
+  "toolExec": {
+    "version": "2026-10-06",
+    "add": [
+      {
+        "tool": "ArtifactComments",
+        "judgment": "not-exec",
+        "reason": "Reads and answers comments on a hosted artifact; no local execution (same class as Artifact). Human ruling 2026-10-06."
+      },
+      {
+        "tool": "ArtifactData",
+        "judgment": "not-exec",
+        "reason": "Reads and writes a hosted artifact's database; no local execution (same class as Artifact). Human ruling 2026-10-06."
+      },
+      {
+        "tool": "EnterPlanMode",
+        "judgment": "not-exec",
+        "reason": "Mode switch (same class as ExitPlanMode). Human ruling 2026-10-06."
+      }
+    ]
+  },
+  "pending": [
+    "ArtifactCheck: judged after the live tool-inventory capture shows it (human ruling 2026-10-06)."
+  ]
+}

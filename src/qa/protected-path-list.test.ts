@@ -1,12 +1,12 @@
 // #308 story K stage 0 (refs #442): `--print-worktree-targets --form=relative|absolute`. Both forms are tested over a
 // synthetic linked worktree. Which form Claude Code honors is the stage-1 live probe P-K4's question, so both exist.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { absoluteEditBody, protectedPaths, runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
+import { absoluteEditBody, editDenyEntries, parentDirs, protectedPaths, runWorktreeTargets, worktreeEditLines } from "./protected-path-list.ts";
 
 const posix = (p: string): string => p.split("\\").join("/");
 
@@ -132,11 +132,49 @@ test("protected-path-list: K certifiers are protected paths", () => {
 });
 
 // App-security round 2 finding 1 (refs #456): discovery EXECUTES binaries from these install directories (`--version`), so a session
-// able to write there could plant one the certifier would run. The two Claude Desktop paths stay unprotected (machine-specific MSIX suffix).
+// able to write there could plant one the certifier would run. The two Claude Desktop roots are protected too (#466, PPL-desktop-roots-named below).
 test("protected-path-list: Claude Code install dirs are protected", () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const all = protectedPaths(root).all;
   for (const want of ["~/.local/bin/", "~/.local/share/claude/", "~/.vscode/extensions/", "~/.vscode-insiders/extensions/", "~/.cursor/extensions/"]) {
     assert.ok(all.includes(want), `${want} is on the protected list`);
   }
+});
+
+// #466 (S7): the two Claude Desktop bundle roots and ~/.claude/dev-mods/. The MSIX publisher ID is machine-independent, so the root is
+// a plain ~/ directory entry with no per-machine segment. Written FAILING FIRST.
+const DESKTOP_ROOTS = ["~/appdata/roaming/claude/claude-code/", "~/appdata/local/packages/claude_pzs8sxrjxfjjc/localcache/roaming/claude/claude-code/"];
+const NEW_ENTRIES = [...DESKTOP_ROOTS, "~/.claude/dev-mods/"];
+const REPO = fileURLToPath(new URL("../../", import.meta.url));
+
+test("PPL-desktop-roots-named: both Claude Desktop bundle roots are named protected paths in canonical form", () => {
+  const { named } = protectedPaths(REPO);
+  for (const want of DESKTOP_ROOTS) assert.ok(named.includes(want), `${want} is a named protected path`);
+});
+
+test("PPL-desktop-roots-rules-and-edit-entries: each root has a shipped deny rule, K Edit entries and parent-dir rules", () => {
+  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets?: string[]; verbs?: string[] }> }).rules;
+  const proposal = readFileSync(`${REPO}docs/plans/s308-K-proposed-settings-2026-10-04.json`, "utf8");
+  for (const root of DESKTOP_ROOTS) {
+    const hit = rules.find((r) => r.targets?.includes(root.slice(0, -1)) && r.targets?.includes(root));
+    assert.ok(hit, `${root}: a deny rule covers the directory and its children`);
+    assert.deepEqual([...(hit.verbs ?? [])].sort(), ["create", "delete", "modify", "move", "rename", "write"]);
+    for (const e of editDenyEntries(root)) assert.ok(proposal.includes(JSON.stringify(e).slice(1, -1)), `K Edit entry present: ${e}`);
+    for (const d of parentDirs([root])) assert.ok(rules.some((r) => r.targets?.includes(d) && r.verbs?.includes("move")), `parent rule present: ${d}`);
+  }
+});
+
+test("PPL-dev-mods-named-and-denied: ~/.claude/dev-mods/ is a named protected path with a deny rule, K Edit entries and no extra over-reach", () => {
+  const dev = "~/.claude/dev-mods/";
+  assert.ok(protectedPaths(REPO).named.includes(dev));
+  const rules = (JSON.parse(readFileSync(`${REPO}src/policy/config/shipped-defaults.json`, "utf8")) as { rules: Array<{ targets?: string[] }> }).rules;
+  assert.ok(rules.some((r) => r.targets?.includes("~/.claude/dev-mods") && r.targets?.includes(dev)));
+  const proposal = readFileSync(`${REPO}docs/plans/s308-K-proposed-settings-2026-10-04.json`, "utf8");
+  for (const e of editDenyEntries(dev)) assert.ok(proposal.includes(JSON.stringify(e).slice(1, -1)), e);
+});
+
+test("PPL-new-entries-listed-once: the three new entries are on the list exactly once", () => {
+  const all = protectedPaths(REPO).all;
+  for (const p of NEW_ENTRIES) assert.equal(all.filter((x) => x === p).length, 1, p);
+  assert.ok(all.includes("src/qa/unprotected-location.ts"), "the exec-gate classifier is itself protected");
 });

@@ -1,0 +1,38 @@
+{
+  "//": "Fourth a2 delta (scope s308-463-467): re-judges the two lock files protected, failing closed (red-team round-3 fix-now LOW). Sequence 5: after the pending tools delta (4), which replay skips.",
+  "sequence": 5,
+  "writeDeny": {
+    "replace": {
+      "anywhere": [
+        {
+          "previous": {
+            "name": "computer-use.lock",
+            "judgment": "residual",
+            "reason": "Lock file. Evidence: \"computer-use.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+          },
+          "entry": {
+            "name": "computer-use.lock",
+            "judgment": "protected",
+            "reason": "Lock file judged on its name only; the IDE lock files, the nearest analogue, are protected, and a planted lock can steer a session (fail closed). Evidence: computer-use.lock listed in Claude Code's own ~/.claude child-name set next to ide. [AMBIGUOUS, fail closed; re-judged from residual in round-3 fix-now]",
+            "userPath": "~/.claude/computer-use.lock",
+            "projectPath": ".claude/computer-use.lock"
+          }
+        },
+        {
+          "previous": {
+            "name": "server.lock",
+            "judgment": "residual",
+            "reason": "Lock file. Evidence: \"server.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+          },
+          "entry": {
+            "name": "server.lock",
+            "judgment": "protected",
+            "reason": "Lock file judged on its name only; the IDE lock files, the nearest analogue, are protected, and a planted lock can steer a session (fail closed). Evidence: server.lock listed in Claude Code's own ~/.claude child-name set next to ide. [AMBIGUOUS, fail closed; re-judged from residual in round-3 fix-now]",
+            "userPath": "~/.claude/server.lock",
+            "projectPath": ".claude/server.lock"
+          }
+        }
+      ]
+    }
+  }
+}

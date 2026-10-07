@@ -1,0 +1,171 @@
+{
+  "//": "Third a2 delta (scope s308-463-467): re-judges mcp-skill-archives protected (#486) and judges the names the census does not surface: a const-held name and Claude Code's own ~/.claude child-name sets (red-team round 3). Same criterion as the earlier deltas.",
+  "sequence": 3,
+  "writeDeny": {
+    "add": {
+      "anywhere": [
+        {
+          "name": "mcp-skill-archives",
+          "judgment": "protected",
+          "reason": "Serves SKILL.md as a skill: the MCP skill cache returns skillMd read from ~/.claude/mcp-skill-archives/<slug>/<key>/SKILL.md with no extraction into the skills directory, and the key can come from a session-writable meta.json. Same class as skills and agent-memory (#486). Evidence: var Alt=\"mcp-skill-archives\",oon=\"SKILL.md\"; v(m(D,oon),\"utf8\") returns {hit:!0,skillMd:l}.",
+          "userPath": "~/.claude/mcp-skill-archives/",
+          "projectPath": ".claude/mcp-skill-archives/"
+        },
+        {
+          "name": "daemon.lock",
+          "judgment": "residual",
+          "reason": "Pid and start-time lock for the daemon. Evidence: var L=\"daemon.lock\";function wP(){return w(we(),L)}; De.state(\"daemon-lock\")."
+        },
+        {
+          "name": "agent-memory-project",
+          "judgment": "protected",
+          "reason": "Project-scope subagent memory loaded into a subagent's context (sibling of agent-memory and agent-memory-local). Evidence: \"agent-memory-project\" in Claude Code's own list of ~/.claude child names (wu/z1e sets).",
+          "userPath": "~/.claude/agent-memory-project/",
+          "projectPath": ".claude/agent-memory-project/"
+        },
+        {
+          "name": "api-dumps",
+          "judgment": "residual",
+          "reason": "Debug dumps of API traffic. Evidence: \"api-dumps\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        },
+        {
+          "name": "downloads",
+          "judgment": "residual",
+          "reason": "Files the user downloads (data); exists on this machine. Evidence: \"downloads\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        },
+        {
+          "name": "file-transfers",
+          "judgment": "residual",
+          "reason": "Staging area for file transfers (data). Evidence: \"file-transfers\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        },
+        {
+          "name": "image-cache",
+          "judgment": "residual",
+          "reason": "Cache of pasted images. Evidence: \"image-cache\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        },
+        {
+          "name": "local-settings",
+          "judgment": "protected",
+          "reason": "Settings-source directory name next to localSettings; a settings directory would be loaded as settings. Evidence: \"local-settings\" in Claude Code's own list of ~/.claude child names (wu/z1e sets). [AMBIGUOUS, fail closed (a path that may not exist costs nothing)]",
+          "userPath": "~/.claude/local-settings/",
+          "projectPath": ".claude/local-settings/"
+        },
+        {
+          "name": "logs",
+          "judgment": "residual",
+          "reason": "Log files. Evidence: \"logs\" in Claude Code's own list of ~/.claude child names (wu/z1e sets); also the 'logs' subcommand name."
+        },
+        {
+          "name": "paste-cache",
+          "judgment": "residual",
+          "reason": "Cache of pasted text. Evidence: var P8=\"paste-cache\",LO=1e7."
+        },
+        {
+          "name": "project-settings",
+          "judgment": "protected",
+          "reason": "Settings-source directory name next to projectSettings; a settings directory would be loaded as settings. Evidence: \"project-settings\" in Claude Code's own list of ~/.claude child names (wu/z1e sets). [AMBIGUOUS, fail closed (a path that may not exist costs nothing)]",
+          "userPath": "~/.claude/project-settings/",
+          "projectPath": ".claude/project-settings/"
+        },
+        {
+          "name": "scratch",
+          "judgment": "residual",
+          "reason": "Per-session scratch space the harness creates (data). Evidence: scratch:(e,n)=>({namespace:\"scratch\",sessionId:e,relPath:n})."
+        },
+        {
+          "name": "storage-v2",
+          "judgment": "protected",
+          "reason": "Named ~/.claude child of the v2 storage provider; may hold the live copy of mailbox, agent memory and state, so it fails closed (not present on this machine). Evidence: \"storage-v2\",\"systemd\",jN]) in the children set; namespaced storage keys for mailbox, agentMemory, state, userConfigDir. [fail closed; unproven mapping]",
+          "userPath": "~/.claude/storage-v2/",
+          "projectPath": ".claude/storage-v2/"
+        },
+        {
+          "name": "systemd",
+          "judgment": "protected",
+          "reason": "Named ~/.claude child that may hold service unit files the system executes. Evidence: \"storage-v2\",\"systemd\",jN]) in the children set. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/systemd/",
+          "projectPath": ".claude/systemd/"
+        },
+        {
+          "name": ".claude.json",
+          "judgment": "protected",
+          "reason": "Global config file name inside the config dir (the home-level ~/.claude.json is already protected). Evidence: \".claude.json\" in Claude Code's own list of ~/.claude child names (wu/z1e sets). [fail closed]",
+          "userPath": "~/.claude/.claude.json",
+          "projectPath": ".claude/.claude.json"
+        },
+        {
+          "name": ".claude.json.backup",
+          "judgment": "protected",
+          "reason": "Backup restored over the config file when it is corrupted. Evidence: \".claude.json.backup\" next to \".claude.json\" in the set; 'Claude configuration file ... is corrupted'. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/.claude.json.backup",
+          "projectPath": ".claude/.claude.json.backup"
+        },
+        {
+          "name": ".session_ingress_token",
+          "judgment": "protected",
+          "reason": "Session ingress token (credential file). Evidence: A=new Set([\".oauth_token\",\".api_key\",\".session_ingress_token\"]).",
+          "userPath": "~/.claude/.session_ingress_token",
+          "projectPath": ".claude/.session_ingress_token"
+        },
+        {
+          "name": "antproto.json",
+          "judgment": "protected",
+          "reason": "Unknown config file listed as a ~/.claude child; purpose not found in the bytes. Evidence: \"antproto.json\" in Claude Code's own list of ~/.claude child names (wu/z1e sets). [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/antproto.json",
+          "projectPath": ".claude/antproto.json"
+        },
+        {
+          "name": "bridge-spawn",
+          "judgment": "protected",
+          "reason": "Bridge spawn file Claude Code writes under ~/.claude; purpose not fully traced. Evidence: var CXn=\"bridge-spawn\",C5=w5(_5(),\".claude\",CXn). [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/bridge-spawn",
+          "projectPath": ".claude/bridge-spawn"
+        },
+        {
+          "name": "active-time.json",
+          "judgment": "residual",
+          "reason": "Active-time statistics (data). Evidence: var y=\"active-time.json\"; d(){return{version:1,windows:[]}}."
+        },
+        {
+          "name": "server-sessions.json",
+          "judgment": "protected",
+          "reason": "Registry of server sessions used to resume them; purpose not fully traced. Evidence: \"server-sessions.json\" in Claude Code's own list of ~/.claude child names (wu/z1e sets). [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/server-sessions.json",
+          "projectPath": ".claude/server-sessions.json"
+        },
+        {
+          "name": "stats-cache.json",
+          "judgment": "residual",
+          "reason": "Statistics cache. Evidence: vd=\"stats-cache.json\"."
+        },
+        {
+          "name": "computer-use.lock",
+          "judgment": "residual",
+          "reason": "Lock file. Evidence: \"computer-use.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        },
+        {
+          "name": "server.lock",
+          "judgment": "residual",
+          "reason": "Lock file. Evidence: \"server.lock\" in Claude Code's own list of ~/.claude child names (wu/z1e sets)."
+        }
+      ]
+    },
+    "replace": {
+      "user": [
+        {
+          "previous": {
+            "name": "mcp-skill-archives",
+            "judgment": "residual",
+            "reason": "Cache of fetched skill archives; extraction into a skills directory goes through the protected skills paths. Listed, not protected."
+          },
+          "entry": {
+            "name": "mcp-skill-archives",
+            "judgment": "protected",
+            "path": "~/.claude/mcp-skill-archives/",
+            "reason": "Serves SKILL.md as a skill: the MCP skill cache returns skillMd read from ~/.claude/mcp-skill-archives/<slug>/<key>/SKILL.md with no extraction into the skills directory, and the key can come from a session-writable meta.json. Same class as skills and agent-memory (#486). Evidence: var Alt=\"mcp-skill-archives\",oon=\"SKILL.md\"; v(m(D,oon),\"utf8\") returns {hit:!0,skillMd:l}."
+          }
+        }
+      ]
+    }
+  }
+}

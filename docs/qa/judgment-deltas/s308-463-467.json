@@ -1,0 +1,439 @@
+{
+  "//": "Draft delta for story a2 (scope s308-463-467). Commit under docs/qa/judgment-deltas/s308-463-467.json BEFORE running node src/qa/judgment-apply.ts. Proposed judgments are DRAFTS until the human/Manager ratifies; ArtifactCheck stays pending the live inventory capture. The tool judgments live in s308-463-467-tools.json and are applied after the capture.",
+  "sequence": 1,
+  "rulings": [
+    "Prep decision 3 (approved 2026-10-06): Judge the 2.1.289 entries: `localSettings` and `projectSettings` as not a write-deny site (section 1.2).",
+    "Prep decision 4 (approved 2026-10-06): Judge the out-of-window project shapes: `CLAUDE.md`, `rules`, `.git` and `ide` as write-deny; `worktrees` as not a write-deny site (section 1.3).",
+    "Prep decision 5 (approved 2026-10-06): Judge the new tools: `ArtifactComments`, `ArtifactData` and `EnterPlanMode` as not-exec. `ArtifactCheck` waits for decision 2.",
+    "Prep decision 6 (approved 2026-10-06): Protect `~/.claude/dev-mods/` as a named protected path (section 1.4).",
+    "decisions.md 2026-10-06 ruling (1): #467 / prep decision 8: pin 2.1.289 and prune the rest. One judgment at 2.1.289; the certified set is the active VS Code extension, the local CLI and the Desktop bundles. Retained ~/.local/share/claude/versions entries and VS Code-obsolete extension dirs get the remedy \"prune\", not \"re-judge\".",
+    "decisions.md 2026-10-06 ruling (3): Prep decisions 1-2: the human runs the 2.1.289 extraction and the tool-inventory capture (--dry-run, one turn, cap USD 0.25, extension binary first on PATH); builders vendor the output through the generators only."
+  ],
+  "writeDeny": {
+    "claudeCodeVersion": "2.1.289",
+    "add": {
+      "user": [
+        {
+          "name": "localSettings",
+          "judgment": "residual",
+          "reason": "A setting-source name, not a path under ~/.claude; the file it names, <project>/.claude/settings.local.json, is already a judged protected project entry (human ruling 2026-10-06). Evidence: hM(\"localSettings\") returns Pe(\".claude\",\"settings.local.json\")."
+        },
+        {
+          "name": "projectSettings",
+          "judgment": "residual",
+          "reason": "A setting-source name, not a path under ~/.claude; the file it names, .claude/settings.json, is already a judged protected project entry (human ruling 2026-10-06). Evidence: hM(\"projectSettings\") returns Pe(\".claude\",\"settings.json\")."
+        }
+      ],
+      "anywhere": [
+        {
+          "name": ".config.json",
+          "judgment": "protected",
+          "reason": "Global config; read before ~/.claude.json (MCP servers, settings). Evidence: To(){if(existsSync(I(we(),\".config.json\")))return I(we(),\".config.json\");return Slr()} (Slr = ~/.claude.json).",
+          "userPath": "~/.claude/.config.json",
+          "projectPath": ".claude/.config.json"
+        },
+        {
+          "name": ".deep-link-register-failed",
+          "judgment": "residual",
+          "reason": "Failure marker file Claude Code writes for itself. Evidence: o.join(we(),\".deep-link-register-failed\")."
+        },
+        {
+          "name": ".git",
+          "judgment": "protected",
+          "reason": "Human ruling 2026-10-06: a git dir is an exec lever (#409 class). Evidence: lstatSync(je(e,\".claude\",\".git\")) in the tracked check; prep 1.3. [human ruling]",
+          "userPath": "~/.claude/.git/",
+          "projectPath": ".claude/.git/"
+        },
+        {
+          "name": ".husky",
+          "judgment": "residual",
+          "reason": "Not a .claude child: a name in Claude Code's own list of sensitive root dirs. Evidence: i7n=[\".git\",\".vscode\",\".idea\",\".claude\",\".husky\",\".cargo\",...]."
+        },
+        {
+          "name": ".last-cleanup",
+          "judgment": "residual",
+          "reason": "Timestamp marker for the cleanup job. Evidence: Y(L(we(),\".last-cleanup\"),new Date().toISOString())."
+        },
+        {
+          "name": ".last-update-result.json",
+          "judgment": "residual",
+          "reason": "Result record of the last auto-update (status data). Evidence: X(we(),\".last-update-result.json\"), schema {version_from,version_to,error_code}."
+        },
+        {
+          "name": ".update.lock",
+          "judgment": "residual",
+          "reason": "Lock file for the updater. Evidence: P(we(),\".update.lock\")."
+        },
+        {
+          "name": "AGENTS.md",
+          "judgment": "protected",
+          "reason": "Instruction file loaded into the session like CLAUDE.md. Evidence: z=[\"AGENTS.md\",\".claude/AGENTS.md\"] next to C=[\"CLAUDE.md\",\".claude/CLAUDE.md\",\"CLAUDE.local.md\"].",
+          "userPath": "~/.claude/AGENTS.md",
+          "projectPath": ".claude/AGENTS.md"
+        },
+        {
+          "name": "CLAUDE.md",
+          "judgment": "protected",
+          "reason": "Human ruling 2026-10-06: project .claude/CLAUDE.md is write-deny (user level already protected). Evidence: Hp(wn,\".claude\",\"CLAUDE.md\") loaded as Project memory. [human ruling]",
+          "userPath": "~/.claude/CLAUDE.md",
+          "projectPath": ".claude/CLAUDE.md"
+        },
+        {
+          "name": "RESUME.md",
+          "judgment": "protected",
+          "reason": "Resume notes the checkpoint feature writes and a later session reads as context. Evidence: O=\".claude/RESUME.md\", v=\"refs/claude/checkpoint-\"; consumer not fully traced. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/RESUME.md",
+          "projectPath": ".claude/RESUME.md"
+        },
+        {
+          "name": "agent-memory",
+          "judgment": "protected",
+          "reason": "Subagent memory loaded into a subagent's context. Evidence: case\"project\":return je(oe(),\".claude\",\"agent-memory\",r); case\"user\":je(VV(),\"agent-memory\",r).",
+          "userPath": "~/.claude/agent-memory/",
+          "projectPath": ".claude/agent-memory/"
+        },
+        {
+          "name": "agent-memory-local",
+          "judgment": "protected",
+          "reason": "Local-scope subagent memory loaded into a subagent's context. Evidence: je(oe(),\".claude\",\"agent-memory-local\",e).",
+          "userPath": "~/.claude/agent-memory-local/",
+          "projectPath": ".claude/agent-memory-local/"
+        },
+        {
+          "name": "backups",
+          "judgment": "residual",
+          "reason": "Backups of the config file Claude Code makes for itself (already judged residual at user level). Evidence: cl(){return je(we(),\"backups\")}; 'Claude configuration file ... is corrupted'."
+        },
+        {
+          "name": "cache",
+          "judgment": "residual",
+          "reason": "Derived caches (gateway-models.json, model-capabilities.json). Evidence: kd(){return ty(we(),\"cache\")}; Td()=cache/gateway-models.json. [minor: a poisoned model-capabilities cache could change limits]"
+        },
+        {
+          "name": "ccr",
+          "judgment": "protected",
+          "reason": "Holds ca-bundle.crt, the TLS trust bundle Claude Code loads. Evidence: x=n?.caBundlePath??(hn()?D(we(),\"ccr\",\"ca-bundle.crt\"):...).",
+          "userPath": "~/.claude/ccr/",
+          "projectPath": ".claude/ccr/"
+        },
+        {
+          "name": "chrome",
+          "judgment": "protected",
+          "reason": "Holds the chrome-native-host script the browser executes. Evidence: vi(r,\"chrome-native-host.bat\"), vi(r,\"chrome-native-host\") under vi(we(),\"chrome\").",
+          "userPath": "~/.claude/chrome/",
+          "projectPath": ".claude/chrome/"
+        },
+        {
+          "name": "cowork_plugins",
+          "judgment": "protected",
+          "reason": "Plugin directory (already protected at user level). Evidence: N([P(we(),\"plugins\"),P(we(),\"cowork_plugins\"),...]).",
+          "userPath": "~/.claude/cowork_plugins/",
+          "projectPath": ".claude/cowork_plugins/"
+        },
+        {
+          "name": "daemon",
+          "judgment": "protected",
+          "reason": "Daemon state dir (already protected at user level). Evidence: ie(Ze(we(),\"daemon\"),!0,!0) in the sandbox write list.",
+          "userPath": "~/.claude/daemon/",
+          "projectPath": ".claude/daemon/"
+        },
+        {
+          "name": "daemon-auth-cooldown",
+          "judgment": "residual",
+          "reason": "Cooldown stamp for daemon login attempts. Evidence: de(a,\"daemon-auth-cooldown\")."
+        },
+        {
+          "name": "daemon-auth-status.json",
+          "judgment": "residual",
+          "reason": "Status record of daemon auth, not a credential. Evidence: de(a,\"daemon-auth-status.json\")."
+        },
+        {
+          "name": "daemon.json",
+          "judgment": "protected",
+          "reason": "Daemon config (already protected at user level). Evidence: jA(){return o(we(),\"daemon.json\")}.",
+          "userPath": "~/.claude/daemon.json",
+          "projectPath": ".claude/daemon.json"
+        },
+        {
+          "name": "daemon.log",
+          "judgment": "residual",
+          "reason": "Log file. Evidence: Ite(){return o(we(),\"daemon.log\")}."
+        },
+        {
+          "name": "daemon.scheduled.status.json",
+          "judgment": "residual",
+          "reason": "Status record. Evidence: L(){return se(we(),\"daemon.scheduled.status.json\")}, De.state(\"scheduled-status\")."
+        },
+        {
+          "name": "daemon.status.json",
+          "judgment": "residual",
+          "reason": "Status record. Evidence: WTt(){return d(we(),\"daemon.status.json\")}, De.state(\"daemon-status\")."
+        },
+        {
+          "name": "debug",
+          "judgment": "residual",
+          "reason": "Debug output. Evidence: K(configHomeDir(),\"debug\",`${sessionId}.txt`); also in the default denyRead list."
+        },
+        {
+          "name": "dev-mods",
+          "judgment": "protected",
+          "reason": "Human ruling 2026-10-06: where Claude writes a session's mods. Evidence: Ypt=()=>So(we(),\"dev-mods\"); vendor mods doc. [human ruling]",
+          "userPath": "~/.claude/dev-mods/",
+          "projectPath": ".claude/dev-mods/"
+        },
+        {
+          "name": "dump-prompts",
+          "judgment": "residual",
+          "reason": "Prompt dump output for debugging. Evidence: L(we(),\"dump-prompts\",`${id}.jsonl`)."
+        },
+        {
+          "name": "feedback",
+          "judgment": "residual",
+          "reason": "User feedback drafts. Evidence: ke(we(),\"feedback\",\"drafts\")."
+        },
+        {
+          "name": "feedback-bundles",
+          "judgment": "residual",
+          "reason": "Feedback zip bundles for submission. Evidence: Ms(we(),\"feedback-bundles\"), `${f}.zip`."
+        },
+        {
+          "name": "file-history",
+          "judgment": "residual",
+          "reason": "Per-session backups of edited files (data, not loaded). Evidence: x1(we(),\"file-history\",S)."
+        },
+        {
+          "name": "gh-pr-status-cache.json",
+          "judgment": "residual",
+          "reason": "Cache of PR status. Evidence: tie(we(),\"gh-pr-status-cache.json\"), De.state(\"gh-pr-status-cache\")."
+        },
+        {
+          "name": "hfi-auth.json",
+          "judgment": "protected",
+          "reason": "Auth file (credential material). Evidence: w(we(),\"hfi-auth.json\") cleaned up by a retention job.",
+          "userPath": "~/.claude/hfi-auth.json",
+          "projectPath": ".claude/hfi-auth.json"
+        },
+        {
+          "name": "history.jsonl",
+          "judgment": "residual",
+          "reason": "Prompt history (recall only). Evidence: VO(we(),\"history.jsonl\"), append + lock."
+        },
+        {
+          "name": "ide",
+          "judgment": "protected",
+          "reason": "Human ruling 2026-10-06: IDE connection records (lock files); every 2.1.289 site is home-rooted, so ~/.claude/ide/ is the real path. Evidence: _m(e,\"ide\") with e=we(); _m(TO.homedir(),\".claude\",\"ide\"); 5 *.lock files measured in prep 1.3. [human ruling]",
+          "userPath": "~/.claude/ide/",
+          "projectPath": ".claude/ide/"
+        },
+        {
+          "name": "jobs",
+          "judgment": "protected",
+          "reason": "Jobs dir (already protected at user level). Evidence: uS(we(),\"jobs\") in the sandbox write list.",
+          "userPath": "~/.claude/jobs/",
+          "projectPath": ".claude/jobs/"
+        },
+        {
+          "name": "keybindings.json",
+          "judgment": "protected",
+          "reason": "User keybindings Claude Code loads; bindings can trigger actions. Evidence: Xe(we(),\"keybindings.json\"), 'keybindings loaded' user_binding_count. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/keybindings.json",
+          "projectPath": ".claude/keybindings.json"
+        },
+        {
+          "name": "local",
+          "judgment": "protected",
+          "reason": "Local installation dir that holds an executable (already protected at user level). Evidence: p(P(),\".claude\",\"local\") ... 'Removed local installation at'.",
+          "userPath": "~/.claude/local/",
+          "projectPath": ".claude/local/"
+        },
+        {
+          "name": "mcp-discovery-cache",
+          "judgment": "residual",
+          "reason": "Discovery cache (already judged residual at user level). Evidence: Y(we(),\"mcp-discovery-cache\"), *.json cleaned up."
+        },
+        {
+          "name": "mcp-needs-auth-cache.json",
+          "judgment": "residual",
+          "reason": "Cache of which MCP servers need auth. Evidence: D(we(),\"mcp-needs-auth-cache.json\")."
+        },
+        {
+          "name": "memory",
+          "judgment": "protected",
+          "reason": "Auto-memory loaded into context as instructions (COST: the session's own memory writes there are denied). Evidence: jr(we(),\"memory\",\"personal\"), g0=\"MEMORY.md\".",
+          "userPath": "~/.claude/memory/",
+          "projectPath": ".claude/memory/"
+        },
+        {
+          "name": "plans",
+          "judgment": "residual",
+          "reason": "Plan documents the session writes in plan mode; protecting them would deny plan mode. Evidence: y(){return h(we(),\"plans\")}; cleanup of *.md. [JUDGMENT CALL: instructions-adjacent, cost-based residual]"
+        },
+        {
+          "name": "plugins",
+          "judgment": "protected",
+          "reason": "Plugins (already protected at user level). Evidence: S(we(),\"plugins\",\"cache\").",
+          "userPath": "~/.claude/plugins/",
+          "projectPath": ".claude/plugins/"
+        },
+        {
+          "name": "projects",
+          "judgment": "protected",
+          "reason": "Transcripts and auto-memory (already protected at user level). Evidence: jp(){return S(we(),\"projects\")}.",
+          "userPath": "~/.claude/projects/",
+          "projectPath": ".claude/projects/"
+        },
+        {
+          "name": "remote-control",
+          "judgment": "protected",
+          "reason": "Fork seeds for remote-control sessions (conversation context a fork starts from). Evidence: w(we(),\"remote-control\",\"fork-seeds\") *.json; consumer not fully traced. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/remote-control/",
+          "projectPath": ".claude/remote-control/"
+        },
+        {
+          "name": "remote-settings.json",
+          "judgment": "protected",
+          "reason": "Remote (managed) settings (already protected at user level). Evidence: Ze(we(),\"remote-settings.json\") in the settings source list.",
+          "userPath": "~/.claude/remote-settings.json",
+          "projectPath": ".claude/remote-settings.json"
+        },
+        {
+          "name": "results",
+          "judgment": "residual",
+          "reason": "Not a path: a name in a skip-set literal. Evidence: fr=new Set([\"node_modules\",\".claude\",\"results\",\"mocks\"])."
+        },
+        {
+          "name": "rules",
+          "judgment": "protected",
+          "reason": "Human ruling 2026-10-06: project .claude/rules is write-deny (user level already protected). Evidence: Hp(wn,\".claude\",\"rules\") rulesDir. [human ruling]",
+          "userPath": "~/.claude/rules/",
+          "projectPath": ".claude/rules/"
+        },
+        {
+          "name": "scheduled_tasks.lock",
+          "judgment": "residual",
+          "reason": "Lock file for the scheduler. Evidence: Te(\".claude\",\"scheduled_tasks.lock\"), schema {sessionId,pid,acquiredAt}."
+        },
+        {
+          "name": "seed-admin",
+          "judgment": "protected",
+          "reason": "Seed/admin dir (already protected at user level). Evidence: Ze(we(),\"seed-admin\") in the sandbox write list.",
+          "userPath": "~/.claude/seed-admin/",
+          "projectPath": ".claude/seed-admin/"
+        },
+        {
+          "name": "session-env",
+          "judgment": "protected",
+          "reason": "Per-session environment files (already protected at user level). Evidence: nee(we(),\"session-env\",q()).",
+          "userPath": "~/.claude/session-env/",
+          "projectPath": ".claude/session-env/"
+        },
+        {
+          "name": "sessions",
+          "judgment": "protected",
+          "reason": "Session messaging key files (peer tokens): credential-like. Evidence: dz(){return T(we(),\"sessions\")}, V(e,n)=`${e}.${hash}.key`, peerToken/childToken. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/sessions/",
+          "projectPath": ".claude/sessions/"
+        },
+        {
+          "name": "settings.json",
+          "judgment": "protected",
+          "reason": "Settings (project level already protected, user level named). Evidence: hM: projectSettings -> .claude/settings.json; Ze(ue,\".claude\",\"settings.json\").",
+          "userPath": "~/.claude/settings.json",
+          "projectPath": ".claude/settings.json"
+        },
+        {
+          "name": "settings.local.json",
+          "judgment": "protected",
+          "reason": "Local settings (project level already protected). Evidence: hM: localSettings -> .claude/settings.local.json.",
+          "userPath": "~/.claude/settings.local.json",
+          "projectPath": ".claude/settings.local.json"
+        },
+        {
+          "name": "shares",
+          "judgment": "residual",
+          "reason": "Share zip output (already judged residual at user level). Evidence: w(we(),\"shares\") *.zip cleanup."
+        },
+        {
+          "name": "shell-snapshots",
+          "judgment": "protected",
+          "reason": "Sourced into every shell (already protected at user level). Evidence: jte(we(),\"shell-snapshots\").",
+          "userPath": "~/.claude/shell-snapshots/",
+          "projectPath": ".claude/shell-snapshots/"
+        },
+        {
+          "name": "startup-perf",
+          "judgment": "residual",
+          "reason": "Startup profiling reports. Evidence: Y(we(),\"startup-perf\",`${q()}.txt`)."
+        },
+        {
+          "name": "state",
+          "judgment": "protected",
+          "reason": "Holds settings-review.json, the record of which settings the user reviewed: tampering could skip a review (REPLACES the 2.1.267 user-level residual judgment). Evidence: Vo(e){... _e(Tt(),\".claude\",\"state\") ... _e(r,\"settings-review.json\")}; sandbox write-list entry. [AMBIGUOUS, fail closed; re-judges an existing entry]",
+          "userPath": "~/.claude/state/",
+          "projectPath": ".claude/state/"
+        },
+        {
+          "name": "tasks",
+          "judgment": "protected",
+          "reason": "Shared task lists whose text is read by agents as instructions. Evidence: _e(we(),\"tasks\")+ye 'Task files are allowed for reading'. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/tasks/",
+          "projectPath": ".claude/tasks/"
+        },
+        {
+          "name": "teams",
+          "judgment": "protected",
+          "reason": "Agent-team definitions (members, prompts) Claude Code loads. Evidence: u(we(),\"teams\") eVe(); 'Team files are allowed for reading'. [AMBIGUOUS, fail closed]",
+          "userPath": "~/.claude/teams/",
+          "projectPath": ".claude/teams/"
+        },
+        {
+          "name": "telemetry",
+          "judgment": "residual",
+          "reason": "Queued telemetry events. Evidence: li.join(we(),\"telemetry\"), De.log(q(),\"telemetry\")."
+        },
+        {
+          "name": "themes",
+          "judgment": "residual",
+          "reason": "Custom themes are JSON colour overrides validated per value (UG); they cannot run code. Evidence: g3e(){return w(we(),\"themes\")}, E(): JSON.parse, only overrides[k] passing UG(y) accepted."
+        },
+        {
+          "name": "traces",
+          "judgment": "residual",
+          "reason": "Trace output. Evidence: b(w(we(),\"traces\"),\".json\") cleanup."
+        },
+        {
+          "name": "uploads",
+          "judgment": "residual",
+          "reason": "Files the user attaches (data). Evidence: tGr(){return i(we(),\"uploads\")}."
+        },
+        {
+          "name": "usage-data",
+          "judgment": "residual",
+          "reason": "Usage statistics. Evidence: te(we(),\"usage-data\") facets, session-meta."
+        },
+        {
+          "name": "worktrees",
+          "judgment": "residual",
+          "reason": "Human ruling 2026-10-06: not a write-deny site; vendor docs exclude it from protected paths. Evidence: XRt(e,\".claude\",\"worktrees\"); prep 1.3. [human ruling]"
+        }
+      ]
+    },
+    "replace": {
+      "user": [
+        {
+          "previous": {
+            "name": "state",
+            "judgment": "residual",
+            "reason": "Runtime state kept by the harness; no evidence it is sourced, executed or loaded as instructions. Listed, not protected."
+          },
+          "entry": {
+            "name": "state",
+            "judgment": "protected",
+            "path": "~/.claude/state/",
+            "reason": "Holds settings-review.json, the record of which settings the user reviewed; tampering could skip a review. Re-judged from residual at 2.1.289 (fail closed). Evidence: Vo(e){... _e(Tt(),\".claude\",\"state\") ... settings-review.json}."
+          }
+        }
+      ]
+    }
+  }
+}

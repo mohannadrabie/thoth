@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "maat@maat",
+      "version": "2.0.0",
+      "gitCommitSha": "b15aaf4773f8e38990a776dcc8972fb9f4e628b0",
+      "files": [
+        {
+          "path": "hooks.json",
+          "sha256": "a0fdd4489d3e683b320fc3ad0aa6bb2a5ea62e2244f6eb336a5ab772d6b54a2d",
+          "commandsSha256": "7a352b3dd83da1048ebbbc73131ead930bbfdbcd5466cec599d5c85a64a130a3",
+          "commands": [
+            "node -e \"try{const f=require('node:fs'),c=require('node:child_process'),b='docs/session-brief.mjs',a='docs/adr-cache.mjs';if(f.existsSync(b))c.execFileSync(process.execPath,[b],{stdio:'inherit',timeout:22000});else if(f.existsSync(a))c.execFileSync(process.execPath,[a,'--ensure'],{stdio:'inherit',timeout:10000})}catch(e){}\""
+          ]
+        },
+        {
+          "path": "hooks/hooks.json",
+          "sha256": "a0fdd4489d3e683b320fc3ad0aa6bb2a5ea62e2244f6eb336a5ab772d6b54a2d",
+          "commandsSha256": "7a352b3dd83da1048ebbbc73131ead930bbfdbcd5466cec599d5c85a64a130a3",
+          "commands": [
+            "node -e \"try{const f=require('node:fs'),c=require('node:child_process'),b='docs/session-brief.mjs',a='docs/adr-cache.mjs';if(f.existsSync(b))c.execFileSync(process.execPath,[b],{stdio:'inherit',timeout:22000});else if(f.existsSync(a))c.execFileSync(process.execPath,[a,'--ensure'],{stdio:'inherit',timeout:10000})}catch(e){}\""
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shopify-ai-toolkit@claude-plugins-official",
+      "version": "1.8.4",
+      "gitCommitSha": "57e293be70c7b754429b392e054105272433729d",
+      "files": [
+        {
+          "path": "hooks/hooks.json",
+          "sha256": "7b12b357dcce2980a2b94ea96c511529e93ca2a4f08ce557b8bdf3cc6757f69e",
+          "commandsSha256": "6217b629ddee2fcde30470abe84bf45de451684a7e8e5ea26ce0e90b291de03a",
+          "commands": [
+            "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/track-telemetry.sh\" --hook-source plugin",
+            "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/track-telemetry.sh\" --hook-source plugin"
+          ]
+        }
+      ]
+    }
+  ]
+}

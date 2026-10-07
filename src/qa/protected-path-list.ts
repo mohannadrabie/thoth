@@ -18,6 +18,17 @@
 // forward slash. In this module's lists a trailing "/" marks a DIRECTORY entry (the canonicalizer itself drops it);
 // a directory entry gets a rule for the directory and for its children. The user settings file is the literal `~/...` form.
 //
+// #455 (S7): plugin-registered hooks are not settings fields, yet they run repo scripts at session start (the maat plugin's SessionStart
+// hook runs docs/session-brief.mjs, which spawns docs/adr-cache.mjs and docs/decisions-archive.mjs). Those scripts are DERIVED from the
+// enabled plugins' hook commands via a committed snapshot (docs/qa/plugin-hook-snapshot.json, produced only by --write from the live
+// ~/.claude data; CI has no ~/.claude, so the default run reads the snapshot). A command's script tokens that resolve inside the repo
+// (and exist) are protected, with their spawn-followed children and relative imports; tokens that resolve outside the repo are
+// REPORTED, not protected (plugin-root paths sit under the protected ~/.claude/plugins/). A command naming no script is listed as
+// unenumerable (not thrown); the F1 instrument fails until the human judges it. Drift of the snapshot from the live plugin is detected
+// locally only (the default run and the F1 row); CI proves only that the list matches the committed snapshot.
+// The source scanner (scanSource) is a syntax allowlist for human-installed, protected scripts, not a sandbox: dynamic-code routes it does not
+// recognise are a residual, and an identifier element key bound by let or var to a runtime string is not refused.
+//
 // Disclosed limits: hooks wired in USER or MANAGED settings (outside the repo) are not walked; only the project
 // settings file (committed) and the gitignored local settings file are read, and a local-file command that names no
 // project script is skipped and listed. A ".." inside a CLAUDE_PROJECT_DIR capture is canonicalized lexically and is a
@@ -26,8 +37,10 @@
 // `--print-worktree-targets --form=relative|absolute` prints the Edit(...) lines a linked worktree needs (worktreeExtraPaths; --form is required, #442).
 // Usage: `node src/qa/protected-path-list.ts` checks the committed shipped-defaults.json and the proposed
 // settings text against this output (exit 1 on drift); `--write` regenerates both.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { canonicalizePathTarget } from "../policy/normalizer/path-canonical.ts";
@@ -39,6 +52,8 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const HOOK_REL = "hooks/pretooluse-kernel-gate.mjs";
 const SHIPPED_REL = "src/policy/config/shipped-defaults.json";
 const PROPOSAL_REL = "docs/plans/s308-K-proposed-settings-2026-10-04.json";
+export const SNAPSHOT_REL = "docs/qa/plugin-hook-snapshot.json";
+export const JUDGMENTS_REL = "docs/qa/f1-hook-judgments.json";
 
 /** Mutating verbs only: reading and running a protected file stays free ("read freely, protect the gate"). */
 export const PROTECTED_VERBS = ["write", "create", "modify", "delete", "move", "rename"] as const;
@@ -133,6 +148,491 @@ export function wiredHookScan(root: string, readSettings: Reader = readReal): Wi
   return { scripts: [...out].sort(), skipped };
 }
 
+// ---- #455: plugin-registered hooks ----
+
+export interface SnapshotFile {
+  /** Hooks file path relative to the plugin install (never an absolute path: the snapshot is committed). */
+  path: string;
+  /** sha256 of the file's raw bytes (or of the inline hooks JSON): compared against the live plugin locally. */
+  sha256: string;
+  /** sha256 of JSON.stringify(commands): the internal consistency check (a hand-edited command list fails it). */
+  commandsSha256: string;
+  commands: string[];
+}
+export interface SnapshotPlugin {
+  id: string;
+  version: string;
+  gitCommitSha: string;
+  /** Enabled but no install record: no hook files could be read (F1 fails on it). */
+  unresolved?: true;
+  files: SnapshotFile[];
+}
+export interface PluginHookSnapshot {
+  version: 1;
+  plugins: SnapshotPlugin[];
+}
+export interface PluginHookScan {
+  /** Repo-relative scripts to protect: in-repo, existing, spawn-followed. Sorted. */
+  scripts: string[];
+  /** "<plugin>: <token>" for each script token resolving outside the repo (reported, not protected). */
+  outside: string[];
+  /** "<plugin>: <token>" for each in-repo script token that does not exist on disk (reported, not protected). */
+  absent: string[];
+  /** Commands outside the allowlist, and anything a followed script spawns or imports that cannot be resolved or is refused: listed, not thrown; F1 requires a human judgment. */
+  unenumerable: string[];
+  unenumerableBy: Array<{ plugin: string; command: string }>;
+  /** Enabled plugins with no install record. */
+  unresolved: string[];
+}
+
+const sha256Hex = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+/** "unresolved": the token is partly assembled at run time (a variable or template piece), so what it names cannot be known. Fails closed. */
+type TokenClass = { kind: "inside"; rel: string; read: string } | { kind: "outside" } | { kind: "unresolved" };
+
+function classifyToken(token: string): TokenClass {
+  const proj = /^\$\{?CLAUDE_PROJECT_DIR\}?[\\/](.+)$/.exec(token);
+  const pluginRoot = /^\$\{?CLAUDE_PLUGIN_ROOT\}?[\\/](.+)$/.exec(token);
+  if (pluginRoot !== null) return pluginRoot[1]!.includes("$") ? { kind: "unresolved" } : { kind: "outside" };
+  if ((proj !== null ? proj[1]! : token).includes("$")) return { kind: "unresolved" };
+  if (proj === null && (token.startsWith("~") || token.startsWith("/") || token.startsWith("\\") || /^[A-Za-z]:/.test(token))) return { kind: "outside" };
+  const n = posix.normalize((proj === null ? token : proj[1]!).split("\\").join("/"));
+  if (n === ".." || n.startsWith("../") || n.startsWith("/")) return { kind: "outside" };
+  return { kind: "inside", rel: canonicalizePathTarget(n), read: n };
+}
+
+// ---- the hook-command allowlist (#455 round 2) ----
+// A hook command is enumerable ONLY if, trimmed, it is exactly one of: `node <script>`, `node -e <body>`, `bash|sh <script>.sh`, each with
+// optional literal trailing arguments and no shell operator, substitution, redirection or env prefix. Everything else is unenumerable, and
+// the F1 instrument fails until the human judges it. There is no heuristic to patch one shape at a time.
+
+interface HookWord {
+  text: string;
+  /** A $ or backtick outside single quotes: the shell would expand it, so the text is not what runs. */
+  expands: boolean;
+}
+
+/** Shell words of a command with quotes removed; undefined for an unterminated quote or any unquoted operator, grouping, substitution or backslash. */
+function hookWords(cmd: string): HookWord[] | undefined {
+  const words: HookWord[] = [];
+  let w = "";
+  let has = false;
+  let expands = false;
+  let q = "";
+  const end = (): void => {
+    if (has) words.push({ text: w, expands });
+    w = "";
+    has = false;
+    expands = false;
+  };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd.charAt(i);
+    if (q === "'") {
+      if (c === "'") q = "";
+      else w += c;
+    } else if (q === '"') {
+      if (c === '"') q = "";
+      else {
+        if (c === "$" || c === "`") expands = true;
+        w += c;
+      }
+    } else if (c === "'" || c === '"') {
+      q = c;
+      has = true;
+    } else if (c === " " || c === "\t") end();
+    else if (";&|<>()\n\r\\`".includes(c) || (c === "$" && cmd.charAt(i + 1) === "(")) return undefined;
+    else {
+      if (c === "$") expands = true;
+      w += c;
+      has = true;
+    }
+  }
+  if (q !== "") return undefined;
+  end();
+  return words;
+}
+
+export type HookCommand = { kind: "script"; token: string } | { kind: "inline"; body: string };
+
+/** The one allowed shape a hook command is, or undefined (unenumerable). */
+export function classifyHookCommand(command: string): HookCommand | undefined {
+  const ws = hookWords(command.trim());
+  const [prog, a1, a2] = ws ?? [];
+  if (ws === undefined || prog === undefined || a1 === undefined) return undefined;
+  const literalFrom = (i: number): boolean => ws.slice(i).every((x) => !x.expands);
+  // A script word may name CLAUDE_PROJECT_DIR / CLAUDE_PLUGIN_ROOT (braced or not); nothing else may expand.
+  const scriptWord = (x: HookWord, ext: RegExp): boolean => !x.text.startsWith("-") && ext.test(x.text) && !x.text.replace(/^\$\{?CLAUDE_(PROJECT_DIR|PLUGIN_ROOT)\}?(?=[\\/])/, "").includes("$");
+  if (prog.text === "node") {
+    if (a1.text === "-e") return a2 !== undefined && !a2.expands && literalFrom(3) ? { kind: "inline", body: a2.text } : undefined;
+    return scriptWord(a1, JS_ROOT) && literalFrom(2) ? { kind: "script", token: a1.text } : undefined;
+  }
+  if ((prog.text === "bash" || prog.text === "sh") && scriptWord(a1, /\.sh$/) && literalFrom(2)) return { kind: "script", token: a1.text };
+  return undefined;
+}
+
+// ---- the source scanner: one AST walk over a script, a node -e body or an imported module ----
+
+const CP_MODULES = new Set(["child_process", "node:child_process"]);
+const CP_FNS = new Set(["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"]);
+const NODE_COMMANDS = new Set(["node", "node.exe"]);
+// #484: ways to run code the scanner cannot read. Any use throws, in every scanned file and body.
+// The name "constructor" is refused by any route (member, destructuring key, object key, or the string anywhere): it reaches the Function constructor.
+const DYNAMIC_NAMES = new Set(["eval", "Function", "AsyncFunction", "GeneratorFunction", "AsyncGeneratorFunction", "constructor"]);
+const REFLECT_ESCAPES = new Set(["construct", "apply", "get"]);
+const NUMERIC_OPS = new Set([ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken, ts.SyntaxKind.PercentToken]);
+const LOADER_MODULES = new Set(["vm", "node:vm", "worker_threads", "node:worker_threads"]);
+const PROCESS_ESCAPES = new Set(["binding", "_linkedBinding", "dlopen", "mainModule"]);
+// Structural rule: these names may appear ONLY as the object of a plain (non-computed) member access, so an alias, a destructuring, an
+// argument, a computed access, a spread, a return or a with-scope can never smuggle one of them past the name checks above.
+const GLOBAL_OBJECTS = new Set(["process", "globalThis", "global", "self", "window", "Reflect"]);
+
+export interface SourceScan {
+  /** Repo scripts spawned with node, as written (relative to the hook's working directory, the repo root). */
+  spawned: string[];
+  /** Relative import / require specifiers, as written (relative to the file). */
+  imports: string[];
+}
+
+/** The scanner is a syntax allowlist for human-installed, protected scripts, not a sandbox: dynamic-code routes it does not recognise are a residual. Disclosed: an identifier element key bound by let or var to a runtime string is not refused. Scan one source text. Throws (fails closed) on anything that cannot be followed statically: a computed or non-relative import, any
+ * child_process use other than a call of execFile / execFileSync / spawn / spawnSync / fork whose program is process.execPath or "node" (all
+ * args literal, or a const bound to a plain string literal) or another string literal such as "git" (allowed, not followed), exec and
+ * execSync always, and any alias, member or module reference outside those call shapes. The followed script is the first arg not starting
+ * with "-". */
+export function scanSource(text: string, fileName: string): SourceScan {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, /\.(mjs|js|cjs)$/.test(fileName) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const refuse = (what: string): never => {
+    throw new Error(`${fileName}: ${what} cannot be followed statically (computed, non-literal or outside the allowed child_process call shapes)`);
+  };
+  const spawned = new Set<string>();
+  const imports = new Set<string>();
+  const cpNs = new Set<string>(); // identifiers bound to the child_process module
+  const cpLocal = new Map<string, string>(); // local name -> imported function name
+  const okSpecifier = new Set<ts.Node>(); // the one place each child_process specifier may appear
+  const consts = new Map<string, string>();
+  const stringy = new Set<string>(); // consts whose initializer holds a string or template: never a safe element key
+  const containsString = (n: ts.Node): boolean => ts.isStringLiteralLike(n) || ts.isTemplateExpression(n) || ts.forEachChild(n, (c) => (containsString(c) ? true : undefined)) === true;
+  /** An element-access key must be a number by construction: a numeric literal, an identifier that is not a string const, or those joined by - * / % and .length. */
+  const numericKey = (e: ts.Expression): boolean =>
+    ts.isNumericLiteral(e) ||
+    (ts.isIdentifier(e) && !stringy.has(e.text)) ||
+    (ts.isParenthesizedExpression(e) && numericKey(e.expression)) ||
+    (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken && numericKey(e.operand)) ||
+    (ts.isPropertyAccessExpression(e) && e.name.text === "length" && ts.isIdentifier(e.expression)) ||
+    (ts.isBinaryExpression(e) && NUMERIC_OPS.has(e.operatorToken.kind) && numericKey(e.left) && numericKey(e.right));
+  const tainted = new Set<string>();
+  const taint = (n: ts.Node): void => {
+    if (ts.isIdentifier(n)) tainted.add(n.text);
+    else ts.forEachChild(n, taint);
+  };
+  const requireOf = (e: ts.Expression | undefined): ts.StringLiteralLike | undefined => {
+    const a = e !== undefined && ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "require" ? e.arguments[0] : undefined;
+    return a !== undefined && ts.isStringLiteralLike(a) && CP_MODULES.has(a.text) ? a : undefined;
+  };
+  const bindModule = (n: ts.BindingName, spec: ts.Node): void => {
+    okSpecifier.add(spec);
+    if (ts.isIdentifier(n)) cpNs.add(n.text);
+    else
+      for (const el of n.elements) {
+        if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name) || el.dotDotDotToken !== undefined) refuse("a child_process destructuring");
+        else cpLocal.set(el.name.text, (el.propertyName ?? el.name).getText(sf));
+      }
+  };
+
+  // Pass 1: imports, bindings, and which identifiers are a const bound once to a plain string literal.
+  const collect = (node: ts.Node): void => {
+    const spec = specifierOf(node);
+    if (spec === "(computed)") refuse("a load form");
+    else if (spec !== undefined) {
+      if (spec.startsWith(".")) imports.add(spec);
+      else if (!spec.startsWith("node:")) refuse(`non-relative, non-node: import "${spec}"`);
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      const direct = requireOf(node.expression); // require("node:child_process").fn(...): the module is used on the spot
+      if (direct !== undefined) okSpecifier.add(direct);
+    }
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier) && CP_MODULES.has(node.moduleSpecifier.text)) {
+      okSpecifier.add(node.moduleSpecifier);
+      const c = node.importClause;
+      if (c?.name !== undefined) cpNs.add(c.name.text);
+      const nb = c?.namedBindings;
+      if (nb !== undefined && ts.isNamespaceImport(nb)) cpNs.add(nb.name.text);
+      else if (nb !== undefined) for (const el of nb.elements) cpLocal.set(el.name.text, (el.propertyName ?? el.name).text);
+    } else if (ts.isVariableDeclaration(node)) {
+      if (ts.isIdentifier(node.name) && node.initializer !== undefined && (node.parent.flags & ts.NodeFlags.Const) !== 0 && containsString(node.initializer)) stringy.add(node.name.text);
+      const req = requireOf(node.initializer);
+      if (req !== undefined) bindModule(node.name, req);
+      else if (ts.isIdentifier(node.name) && node.initializer !== undefined && ts.isStringLiteralLike(node.initializer) && (node.parent.flags & ts.NodeFlags.Const) !== 0 && !consts.has(node.name.text)) consts.set(node.name.text, node.initializer.text);
+      else taint(node.name);
+    } else if (ts.isParameter(node) || ts.isImportSpecifier(node) || ts.isImportClause(node) || ts.isNamespaceImport(node)) taint(node.name ?? node);
+    else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name !== undefined) taint(node.name);
+    else if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) taint(node.left);
+    else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) taint(node.operand);
+    else if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) taint(node.initializer);
+    if (ts.isStringLiteralLike(node) && CP_MODULES.has(node.text) && !okSpecifier.has(node)) refuse(`a child_process specifier (${node.text})`);
+    if (ts.isStringLiteralLike(node) && LOADER_MODULES.has(node.text)) refuse(`the ${node.text} module`);
+    ts.forEachChild(node, collect);
+  };
+  collect(sf);
+  // A const name declared twice, or also bound, assigned or passed as a parameter anywhere, is not a resolvable constant.
+  const literalOf = (e: ts.Expression): string => {
+    const v = ts.isStringLiteralLike(e) ? e.text : ts.isIdentifier(e) && !tainted.has(e.text) ? consts.get(e.text) : undefined;
+    return v ?? refuse(`an argument (${e.getText(sf).slice(0, 40)})`);
+  };
+
+  const call = (node: ts.CallExpression, fn: string): void => {
+    if (fn === "exec" || fn === "execSync") refuse(`${fn}() shell command string`);
+    const [p, args] = node.arguments;
+    if (fn === "fork") {
+      spawned.add(p === undefined ? refuse("fork() argument") : literalOf(p));
+      return;
+    }
+    if (p === undefined) refuse(`${fn}() program`);
+    else if (!ts.isStringLiteralLike(p) && p.getText(sf) !== "process.execPath" && p.getText(sf) !== "process.argv0") refuse(`${fn}() program`);
+    else if (ts.isStringLiteralLike(p) && !NODE_COMMANDS.has(p.text)) return; // another literal program (git): allowed, not followed
+    if (args === undefined || !ts.isArrayLiteralExpression(args)) refuse(`${fn}() argument list`);
+    else {
+      const lits = args.elements.map(literalOf);
+      const script = lits.find((l) => !l.startsWith("-"));
+      if (script !== undefined) spawned.add(script);
+    }
+  };
+  const cpish = (e: ts.Expression): boolean => requireOf(e) !== undefined || (ts.isIdentifier(e) && (cpNs.has(e.text) || /^(child_?process|cp)$/i.test(e.text)));
+  const isDeclName = (id: ts.Identifier): boolean => {
+    const p = id.parent;
+    return (
+      ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isFunctionDeclaration(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) && p.name === id) ||
+      ((ts.isBindingElement(p) || ts.isImportSpecifier(p)) && (p.name === id || p.propertyName === id)) ||
+      (ts.isPropertyAssignment(p) && p.name === id)
+    );
+  };
+
+  // Pass 2: every call and every reference to the module or one of its functions.
+  const check = (node: ts.Node): void => {
+    // Dynamic code: eval, Function and its siblings, the name constructor, and the process loader escapes.
+    if (ts.isIdentifier(node) && DYNAMIC_NAMES.has(node.text)) refuse(`a reference to ${node.text}`);
+    // Structural: an element access needs a numeric key (write a string key as .name); a tagged template needs a plain identifier tag; Reflect.get, apply and construct are refused outright.
+    if (ts.isElementAccessExpression(node) && !numericKey(node.argumentExpression)) refuse("a computed element access (the key is not a number by construction)");
+    if (ts.isTaggedTemplateExpression(node) && !ts.isIdentifier(node.tag)) refuse("a tagged template whose tag is not a plain identifier");
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Reflect" && REFLECT_ESCAPES.has(node.name.text)) refuse(`Reflect.${node.name.text}`);
+    if (ts.isStringLiteralLike(node) && node.text === "constructor") refuse("the string constructor (any quote style, anywhere)");
+    if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text)) refuse(`.${node.name.text}`);
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && GLOBAL_OBJECTS.has(node.expression.text) && GLOBAL_OBJECTS.has(node.name.text)) refuse(`${node.expression.text}.${node.name.text} (a global object reached through another)`);
+    if (ts.isIdentifier(node) && GLOBAL_OBJECTS.has(node.text) && !isDeclName(node)) {
+      const p = node.parent;
+      const plainObject = ts.isPropertyAccessExpression(p) && p.expression === node;
+      const propertyName = ts.isPropertyAccessExpression(p) && p.name === node;
+      if (!plainObject && !propertyName) refuse(`a use of ${node.text} other than a plain member access`);
+    }
+    if (ts.isCallExpression(node)) {
+      const c = node.expression;
+      if (ts.isIdentifier(c)) {
+        const fn = cpLocal.get(c.text) ?? (CP_FNS.has(c.text) ? c.text : undefined);
+        if (fn !== undefined) call(node, fn);
+      } else if (ts.isPropertyAccessExpression(c) && CP_FNS.has(c.name.text) && (c.name.text !== "exec" || cpish(c.expression))) call(node, c.name.text);
+    } else if (ts.isIdentifier(node) && !isDeclName(node)) {
+      const p = node.parent;
+      const callee = ts.isCallExpression(p) && p.expression === node;
+      if (ts.isPropertyAccessExpression(p) && p.name === node) {
+        const called = ts.isCallExpression(p.parent) && p.parent.expression === p;
+        if (CP_FNS.has(node.text) && !called && (node.text !== "exec" || cpish(p.expression))) refuse(`a reference to ${node.text}`);
+      } else if (cpNs.has(node.text)) {
+        if (!(ts.isPropertyAccessExpression(p) && p.expression === node && CP_FNS.has(p.name.text) && ts.isCallExpression(p.parent) && p.parent.expression === p)) refuse(`a use of the child_process module (${node.text})`);
+      } else if ((cpLocal.has(node.text) || CP_FNS.has(node.text)) && !callee) refuse(`a reference to ${node.text}`);
+    }
+    ts.forEachChild(node, check);
+  };
+  check(sf);
+  return { spawned: [...spawned].sort(), imports: [...imports].sort() };
+}
+
+export const spawnedScripts = (text: string, fileName: string): string[] => scanSource(text, fileName).spawned;
+
+/** Derive the repo scripts the snapshot's hook commands execute (the one derivation instrument for #455). `read` is injectable. */
+export function pluginHookScan(root: string, snapshot: PluginHookSnapshot, read: Reader = readReal): PluginHookScan {
+  const scripts = new Set<string>();
+  const outside = new Set<string>();
+  const absent = new Set<string>();
+  const unenumerable: string[] = [];
+  const unenumerableBy: Array<{ plugin: string; command: string }> = [];
+  const queue: Array<{ rel: string; plugin: string }> = [];
+  /** Returns false when the token cannot be resolved cleanly (unresolved, or an in-repo path naming no file): the caller then fails closed. */
+  const take = (plugin: string, token: string): boolean => {
+    const c = classifyToken(token);
+    if (c.kind === "unresolved") return false;
+    if (c.kind === "outside") {
+      outside.add(`${plugin}: ${token}`);
+      return true;
+    }
+    if (read(resolve(root, c.read)) === undefined) {
+      absent.add(`${plugin}: ${token}`);
+      return false;
+    }
+    if (!scripts.has(c.rel)) {
+      scripts.add(c.rel);
+      queue.push({ rel: c.read, plugin });
+    }
+    return true;
+  };
+  const markUnenumerable = (plugin: string, command: string): void => {
+    unenumerable.push(command);
+    unenumerableBy.push({ plugin, command });
+  };
+  /** Scan one source text and take what it spawns and imports. A refusal or an unresolvable target is reported through `mark`. */
+  const follow = (plugin: string, text: string, fileName: string, baseDir: string, mark: (detail: string) => void): void => {
+    try {
+      const s = scanSource(text, fileName);
+      for (const t of s.spawned) if (!take(plugin, t)) mark(`spawns ${t}`);
+      for (const i of s.imports) {
+        const rel = toRel(root, resolve(baseDir, i));
+        if (!take(plugin, rel)) mark(`imports ${rel}`);
+      }
+    } catch (e) {
+      mark((e as Error).message);
+    }
+  };
+  for (const p of snapshot.plugins) {
+    for (const f of p.files) {
+      for (const cmd of f.commands) {
+        // Fail closed: only the allowlisted shapes are enumerable; anything else is unenumerable and F1 fails until the human judges it.
+        const cls = classifyHookCommand(cmd);
+        const whole = (): void => markUnenumerable(p.id, cmd);
+        if (cls === undefined) whole();
+        else if (cls.kind === "script") {
+          if (!take(p.id, cls.token)) whole();
+        } else follow(p.id, cls.body, "inline-e-body.js", root, whole);
+      }
+    }
+  }
+  // Follow to a fixpoint: every script, node -e body and imported module is scanned by the same scanner.
+  while (queue.length > 0) {
+    const { rel, plugin } = queue.shift()!;
+    if (!JS_ROOT.test(rel)) continue;
+    const abs = resolve(root, rel);
+    const text = read(abs);
+    if (text !== undefined) follow(plugin, text, abs, dirname(abs), (d) => markUnenumerable(plugin, `${rel}: ${d}`));
+  }
+  return {
+    scripts: [...scripts].sort(),
+    outside: [...outside].sort(),
+    absent: [...absent].sort(),
+    unenumerable,
+    unenumerableBy,
+    unresolved: snapshot.plugins.filter((p) => p.unresolved === true).map((p) => p.id),
+  };
+}
+
+export const pluginHookScripts = (root: string, snapshot: PluginHookSnapshot, read: Reader = readReal): string[] => pluginHookScan(root, snapshot, read).scripts;
+
+/** Internal consistency: each file's stored commands still hash to the stored commandsSha256. */
+export function snapshotInternalProblems(snapshot: PluginHookSnapshot): string[] {
+  const out: string[] = [];
+  if (snapshot.version !== 1 || !Array.isArray(snapshot.plugins)) return ["unsupported snapshot shape"];
+  for (const p of snapshot.plugins) {
+    for (const f of p.files) {
+      if (sha256Hex(JSON.stringify(f.commands)) !== f.commandsSha256) out.push(`${p.id} ${f.path}: commands do not match commandsSha256`);
+    }
+  }
+  return out;
+}
+
+export interface LiveDrift {
+  status: "ok" | "drift" | "unverified";
+  detail: string;
+}
+
+/** Committed snapshot against one freshly built from the live plugin data (`undefined` = no live data: unverified, never a pass). */
+export function snapshotLiveDrift(committed: PluginHookSnapshot, live: PluginHookSnapshot | undefined): LiveDrift {
+  if (live === undefined) return { status: "unverified", detail: "no live plugin data on this machine; drift of the snapshot from the real plugin is not checked here" };
+  const a = new Map(committed.plugins.map((p) => [p.id, JSON.stringify(p)]));
+  const b = new Map(live.plugins.map((p) => [p.id, JSON.stringify(p)]));
+  const bad = [
+    ...[...b.keys()].filter((id) => !a.has(id)).map((id) => `${id} is enabled live but missing from the snapshot`),
+    ...[...a.keys()].filter((id) => !b.has(id)).map((id) => `${id} is in the snapshot but not enabled live`),
+    ...[...a.keys()].filter((id) => b.has(id) && a.get(id) !== b.get(id)).map((id) => `${id} hooks changed since the snapshot`),
+  ];
+  return bad.length === 0 ? { status: "ok", detail: "snapshot matches the live plugin data" } : { status: "drift", detail: `${bad.join("; ")}; run: node src/qa/protected-path-list.ts --write` };
+}
+
+const asObj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+/** Every command-type hook command in a hooks.json body ({hooks: {Event: [{hooks: [{type, command}]}]}}). */
+function hookCommands(body: unknown): string[] {
+  const out: string[] = [];
+  for (const entries of Object.values(asObj(asObj(body).hooks))) {
+    if (!Array.isArray(entries)) continue;
+    for (const e of entries) {
+      const inner = asObj(e).hooks;
+      if (!Array.isArray(inner)) continue;
+      for (const h of inner) {
+        const o = asObj(h);
+        if (typeof o.command === "string" && (o.type === undefined || o.type === "command")) out.push(o.command);
+      }
+    }
+  }
+  return out;
+}
+
+/** Build the snapshot from the LIVE data: enabled plugins (user, project and local settings; enabled in any scope is enough, the safe
+ * superset), their install records, and their hooks files (hooks/hooks.json, hooks.json and whatever plugin.json's hooks field names).
+ * Returns undefined when there is no live plugin data at all (installed_plugins.json absent). Never stores an absolute path. */
+export function buildPluginSnapshot(env: { home: string; root: string; read?: Reader }): PluginHookSnapshot | undefined {
+  const read = env.read ?? readReal;
+  const installedText = read(join(env.home, ".claude", "plugins", "installed_plugins.json"));
+  if (installedText === undefined) return undefined;
+  const enabled = new Set<string>();
+  for (const f of [join(env.home, ".claude", "settings.json"), join(env.root, ".claude", "settings.json"), join(env.root, ".claude", "settings.local.json")]) {
+    const text = read(f);
+    if (text === undefined) continue;
+    for (const [id, on] of Object.entries(asObj(asObj(JSON.parse(text)).enabledPlugins))) if (on === true) enabled.add(id);
+  }
+  const installed = asObj(asObj(JSON.parse(installedText)).plugins);
+  const plugins: SnapshotPlugin[] = [];
+  for (const id of [...enabled].sort()) {
+    const entries = Array.isArray(installed[id]) ? (installed[id] as unknown[]).map(asObj) : [];
+    const rec = entries.find((e) => e.scope === "user") ?? entries[0];
+    if (rec === undefined || typeof rec.installPath !== "string") {
+      plugins.push({ id, version: "", gitCommitSha: "", unresolved: true, files: [] });
+      continue;
+    }
+    const base = rec.installPath;
+    const candidates = new Set<string>(["hooks/hooks.json", "hooks.json"]);
+    const inline: Array<{ path: string; body: unknown }> = [];
+    for (const m of ["plugin.json", ".claude-plugin/plugin.json"]) {
+      const mt = read(join(base, m));
+      if (mt === undefined) continue;
+      const h = asObj(JSON.parse(mt)).hooks;
+      for (const x of (Array.isArray(h) ? h : [h]) as unknown[]) {
+        if (typeof x === "string") candidates.add(posix.normalize(x.split("\\").join("/")).replace(/^\.\//, ""));
+        else if (typeof x === "object" && x !== null) inline.push({ path: `${m}#hooks`, body: { hooks: x } });
+      }
+    }
+    const files: SnapshotFile[] = [];
+    for (const rel of candidates) {
+      const raw = read(join(base, rel));
+      if (raw === undefined) continue;
+      const commands = hookCommands(JSON.parse(raw));
+      files.push({ path: rel, sha256: sha256Hex(raw), commandsSha256: sha256Hex(JSON.stringify(commands)), commands });
+    }
+    for (const i of inline) {
+      const commands = hookCommands(i.body);
+      files.push({ path: i.path, sha256: sha256Hex(JSON.stringify(i.body)), commandsSha256: sha256Hex(JSON.stringify(commands)), commands });
+    }
+    files.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
+    plugins.push({ id, version: typeof rec.version === "string" ? rec.version : "", gitCommitSha: typeof rec.gitCommitSha === "string" ? rec.gitCommitSha : "", files });
+  }
+  return { version: 1, plugins };
+}
+
+export const renderSnapshot = (s: PluginHookSnapshot): string => `${JSON.stringify(s, null, 2)}\n`;
+
+export function readSnapshot(root: string, read: Reader = readReal): PluginHookSnapshot {
+  const text = read(resolve(root, SNAPSHOT_REL));
+  if (text === undefined) throw new Error(`plugin hook snapshot missing: ${SNAPSHOT_REL}; run: node src/qa/protected-path-list.ts --write`);
+  const parsed = JSON.parse(text) as PluginHookSnapshot;
+  if (parsed.version !== 1 || !Array.isArray(parsed.plugins)) throw new Error(`plugin hook snapshot has an unsupported shape: ${SNAPSHOT_REL}`);
+  return parsed;
+}
+
 const READ_FNS = new Set(["readFileSync", "readFile", "readdirSync", "readdir", "createReadStream", "openSync", "readSync"]);
 const DATA_EXT = /\.(json|txt|md|ya?ml|toml|csv|ini)$/i;
 
@@ -192,9 +692,9 @@ export function readByPathCandidates(root: string, files: readonly string[], rea
 
 /** Repo-relative posix paths of the hook and its relative-import closure, sorted. `read` and `fallback` are
  * injectable so a mutant can add an import (F3-mutant-add-import); `fallback` supplies a file `read` lacks. */
-export function importGraphFiles(root: string, read: Reader = readReal, fallback: Reader = () => undefined): string[] {
+export function importGraphFiles(root: string, read: Reader = readReal, fallback: Reader = () => undefined, extraRoots: readonly string[] = []): string[] {
   const seen = new Set<string>();
-  const roots = [HOOK_REL, ...wiredHookScripts(root).filter((r) => JS_ROOT.test(r))];
+  const roots = [HOOK_REL, ...wiredHookScripts(root).filter((r) => JS_ROOT.test(r)), ...extraRoots.filter((r) => JS_ROOT.test(r))];
   const queue = [...new Set(roots)].map((r) => resolve(root, r));
   while (queue.length > 0) {
     const abs = queue.shift()!;
@@ -253,8 +753,16 @@ function namedPaths(root: string): string[] {
     "~/.claude/skills/",
     "~/.claude/agents/",
     "~/.claude/plugins/", // plugin skills and commands load from here
-    // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from. The two Claude
-    // Desktop bundle roots are not yet protected and discovery executes from them; Issue #466 will protect both roots and hash-and-flag instead of executing (runbook residual).
+    // #452 round 2 (app-security finding 1, refs #456): the install directories the version-pin certifier executes binaries from.
+    // #466: the two Claude Desktop bundle roots are protected too, and discovery executes only from a location on this list
+    // (src/qa/unprotected-location.ts reads this list, no second one): the classic root, and the MSIX package's redirected AppData.
+    // The MSIX publisher ID is machine-independent (Claude_<publisher>), so both are plain ~/ directory entries with no per-machine
+    // segment; <version>/<hash> sit inside each root. A redirected %APPDATA% or an unpinned Claude_* package is NOT under these
+    // entries, so a binary there is flagged and not executed. "~/.claude/dev-mods/": where Claude writes a session's mods (human ruling 2026-10-06).
+    "~/AppData/Roaming/Claude/claude-code/",
+    "~/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code/",
+    "~/.claude/dev-mods/",
+    "src/qa/unprotected-location.ts", // #466: decides which binary the certifier may execute
     "~/.local/bin/",
     "~/.local/share/claude/",
     "~/.vscode/extensions/",
@@ -323,7 +831,122 @@ function namedPaths(root: string): string[] {
     "src/qa/k5-pretooluse-entry-uses-launcher.ts",
     "src/qa/k-readiness.ts",
     "src/qa/cc-extraction-covers-judged.ts", // #452 certifier (refs #456)
+    // #475 (S7): the applier is the one writer of the two judgment files and is executed code; its test and the directory its deltas come from are the approved record.
+    "src/qa/judgment-apply.ts",
+    "src/qa/judgment-apply.test.ts",
+    "docs/qa/judgment-deltas/",
+    // #463 a2 (human-approved judgment, docs/qa/judgment-deltas/): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
+    "~/.claude/computer-use.lock",
+    ".claude/computer-use.lock",
+    "~/.claude/server.lock",
+    ".claude/server.lock",
+    // #463 a2 (human-approved judgment, docs/qa/judgment-deltas/): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
+    "~/.claude/mcp-skill-archives/",
+    ".claude/mcp-skill-archives/",
+    "~/.claude/agent-memory-project/",
+    ".claude/agent-memory-project/",
+    "~/.claude/local-settings/",
+    ".claude/local-settings/",
+    "~/.claude/project-settings/",
+    ".claude/project-settings/",
+    "~/.claude/storage-v2/",
+    ".claude/storage-v2/",
+    "~/.claude/systemd/",
+    ".claude/systemd/",
+    "~/.claude/.claude.json",
+    ".claude/.claude.json",
+    "~/.claude/.claude.json.backup",
+    ".claude/.claude.json.backup",
+    "~/.claude/.session_ingress_token",
+    ".claude/.session_ingress_token",
+    "~/.claude/antproto.json",
+    ".claude/antproto.json",
+    "~/.claude/bridge-spawn",
+    ".claude/bridge-spawn",
+    "~/.claude/server-sessions.json",
+    ".claude/server-sessions.json",
+    // #463 a2 (human-approved 2026-10-06 judgment, docs/qa/judgment-deltas/s308-463-467.json): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
+    "~/.claude/.credentials.json",
+    ".claude/.credentials.json",
+    "~/.claude/active_config",
+    ".claude/active_config",
+    "~/.claude/agent-registry.json",
+    ".claude/agent-registry.json",
+    "~/.claude/assistant-daemon-state.json",
+    ".claude/assistant-daemon-state.json",
+    "~/.claude/checkpoints/",
+    ".claude/checkpoints/",
+    "~/.claude/configs/",
+    ".claude/configs/",
+    "~/.claude/hillclimb/",
+    ".claude/hillclimb/",
+    "~/.claude/mailbox/",
+    ".claude/mailbox/",
+    "~/.claude/managed-settings/",
+    ".claude/managed-settings/",
+    "~/.claude/remote/",
+    ".claude/remote/",
+    "~/.claude/settings/",
+    ".claude/settings/",
+    "~/.claude/statsig/",
+    ".claude/statsig/",
+    "~/.claude/todos/",
+    ".claude/todos/",
+    // #463 a2 (human-approved 2026-10-06 judgment, docs/qa/judgment-deltas/s308-463-467.json): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
+    "~/.claude/.config.json",
+    ".claude/.config.json",
+    "~/.claude/.git/",
+    ".claude/.git/",
+    "~/.claude/AGENTS.md",
+    ".claude/AGENTS.md",
+    ".claude/CLAUDE.md",
+    "~/.claude/RESUME.md",
+    ".claude/RESUME.md",
+    "~/.claude/agent-memory/",
+    ".claude/agent-memory/",
+    "~/.claude/agent-memory-local/",
+    ".claude/agent-memory-local/",
+    "~/.claude/ccr/",
+    ".claude/ccr/",
+    "~/.claude/chrome/",
+    ".claude/chrome/",
+    ".claude/cowork_plugins/",
+    ".claude/daemon/",
+    ".claude/daemon.json",
+    ".claude/dev-mods/",
+    "~/.claude/hfi-auth.json",
+    ".claude/hfi-auth.json",
+    "~/.claude/ide/",
+    ".claude/ide/",
+    ".claude/jobs/",
+    "~/.claude/keybindings.json",
+    ".claude/keybindings.json",
+    ".claude/local/",
+    "~/.claude/memory/",
+    ".claude/memory/",
+    ".claude/plugins/",
+    ".claude/projects/",
+    "~/.claude/remote-control/",
+    ".claude/remote-control/",
+    ".claude/remote-settings.json",
+    ".claude/rules/",
+    ".claude/seed-admin/",
+    ".claude/session-env/",
+    "~/.claude/sessions/",
+    ".claude/sessions/",
+    "~/.claude/settings.local.json",
+    ".claude/shell-snapshots/",
+    "~/.claude/state/",
+    ".claude/state/",
+    "~/.claude/tasks/",
+    ".claude/tasks/",
+    "~/.claude/teams/",
+    ".claude/teams/",
     "docs/plans/s308-K-proposed-entry-2026-10-05.json",
+    // #455 (S7): the plugin-hook snapshot the derivation reads, the F1 instrument that certifies it, and the judgments file a session must not self-write.
+    SNAPSHOT_REL,
+    "src/qa/f1-settings-named-scripts-judged.ts",
+    JUDGMENTS_REL,
   ].map((p) => canonicalizePathTarget(p) + (p.endsWith("/") ? "/" : ""));
 }
 
@@ -401,15 +1024,25 @@ export interface ProtectedPaths {
   generated: string[];
   named: string[];
   all: string[];
+  /** What the plugin-hook derivation found (#455): scripts protected, commands reported or unenumerable. */
+  pluginHooks: PluginHookScan;
 }
 
-export function protectedPaths(root: string): ProtectedPaths {
-  const graph = importGraphFiles(root);
+export function protectedPaths(root: string, opts: { snapshot?: PluginHookSnapshot } = {}): ProtectedPaths {
+  const snapshot = opts.snapshot ?? readSnapshot(root);
+  const problems = snapshotInternalProblems(snapshot);
+  if (problems.length > 0) throw new Error(`plugin hook snapshot is inconsistent: ${problems.join("; ")}; run: node src/qa/protected-path-list.ts --write`);
+  const pluginHooks = pluginHookScan(root, snapshot);
+  const graph = importGraphFiles(root, readReal, () => undefined, pluginHooks.scripts);
+  // Data files are derived from the GATE's closure only: a plugin script (session-brief and its children) reads docs/decisions.md and writes
+  // docs/.maat-state.json as ordinary inputs and outputs, and protecting those would block the normal workflow. Protect the plugin scripts' code, not their data.
+  const gateGraph = importGraphFiles(root);
   const wiredNonJs = wiredHookScripts(root).filter((r) => !JS_ROOT.test(r));
-  const generated = [...new Set([...graph, ...wiredNonJs, ...readByPathCandidates(root, graph)])].sort();
+  const pluginNonJs = pluginHooks.scripts.filter((r) => !JS_ROOT.test(r));
+  const generated = [...new Set([...graph, ...wiredNonJs, ...pluginNonJs, ...readByPathCandidates(root, gateGraph)])].sort();
   const named = namedPaths(root);
   for (const m of [...MUST_EXIST, named[0]!]) if (!existsSync(join(root, m))) throw new Error(`named protected path does not exist: ${m}`);
-  return { generated, named, all: [...new Set([...generated, ...named])].sort() };
+  return { generated, named, all: [...new Set([...generated, ...named])].sort(), pluginHooks };
 }
 
 export function buildDenyRules(paths: readonly string[]): Rule[] {
@@ -526,7 +1159,17 @@ export function main(argv: readonly string[]): number {
     return runWorktreeTargets(argv, REPO_ROOT, (l) => console.log(l), (l) => console.error(l));
   }
   const write = argv.includes("--write");
-  const { all } = protectedPaths(REPO_ROOT);
+  const committed = existsSync(join(REPO_ROOT, SNAPSHOT_REL)) ? readFileSync(join(REPO_ROOT, SNAPSHOT_REL), "utf8") : undefined;
+  const live = buildPluginSnapshot({ home: homedir(), root: REPO_ROOT });
+  if (write && live === undefined) {
+    console.error("protected-path-list: --write needs the live plugin data (~/.claude/plugins/installed_plugins.json), which is absent; the snapshot is produced only from it");
+    return 1;
+  }
+  const snapshot = write ? live! : readSnapshot(REPO_ROOT);
+  const { all, pluginHooks } = protectedPaths(REPO_ROOT, { snapshot });
+  for (const o of pluginHooks.outside) console.log(`protected-path-list: plugin hook script outside the repo (reported, not protected): ${o}`);
+  for (const o of pluginHooks.absent) console.log(`protected-path-list: plugin hook script not in the repo (reported, not protected): ${o}`);
+  for (const o of pluginHooks.unenumerable) console.log(`protected-path-list: plugin hook command names no script (unenumerable; needs a human judgment): ${o.slice(0, 80)}`);
   const skipped = wiredHookScan(REPO_ROOT).skipped;
   if (skipped.length > 0) console.log(`protected-path-list: skipped ${String(skipped.length)} non-project hook command(s) in the local settings file: ${skipped.join(" | ")}`);
   const shippedPath = join(REPO_ROOT, SHIPPED_REL);
@@ -534,6 +1177,7 @@ export function main(argv: readonly string[]): number {
   const wantShipped = renderShippedDefaults(readFileSync(shippedPath, "utf8"), all);
   const wantProposal = buildSettingsProposal(all);
   if (write) {
+    writeFileSync(join(REPO_ROOT, SNAPSHOT_REL), renderSnapshot(snapshot), "utf8");
     writeFileSync(shippedPath, wantShipped, "utf8");
     writeFileSync(proposalPath, wantProposal, "utf8");
     console.log(`protected-path-list: wrote ${SHIPPED_REL} and ${PROPOSAL_REL} (${String(all.length)} paths)`);
@@ -541,13 +1185,20 @@ export function main(argv: readonly string[]): number {
   }
   const norm = (s: string): string => s.replaceAll("\r\n", "\n");
   const drift: string[] = [];
+  const liveDrift = snapshotLiveDrift(snapshot, live);
+  if (liveDrift.status === "drift") {
+    console.error(`protected-path-list: DRIFT, ${liveDrift.detail}`);
+    return 1;
+  }
+  if (liveDrift.status === "unverified") console.log(`protected-path-list: plugin snapshot UNVERIFIED, ${liveDrift.detail}`);
+  if (committed !== undefined && norm(committed) !== renderSnapshot(snapshot)) drift.push(SNAPSHOT_REL);
   if (norm(readFileSync(shippedPath, "utf8")) !== wantShipped) drift.push(SHIPPED_REL);
   if (!existsSync(proposalPath) || norm(readFileSync(proposalPath, "utf8")) !== wantProposal) drift.push(PROPOSAL_REL);
   if (drift.length > 0) {
     console.error(`protected-path-list: DRIFT in ${drift.join(", ")}; run: node src/qa/protected-path-list.ts --write`);
     return 1;
   }
-  console.log(`protected-path-list: PASS, ${String(all.length)} protected paths, committed rules and proposal match the generator`);
+  console.log(`protected-path-list: PASS, ${String(all.length)} protected paths (${String(pluginHooks.scripts.length)} from plugin hooks), committed rules and proposal match the generator`);
   return 0;
 }
 
