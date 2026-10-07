@@ -836,6 +836,11 @@ function namedPaths(root: string): string[] {
     "src/qa/judgment-apply.test.ts",
     "docs/qa/judgment-deltas/",
     // #463 a2 (human-approved judgment, docs/qa/judgment-deltas/): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
+    "~/.claude/computer-use.lock",
+    ".claude/computer-use.lock",
+    "~/.claude/server.lock",
+    ".claude/server.lock",
+    // #463 a2 (human-approved judgment, docs/qa/judgment-deltas/): every protected census name, at both levels. Derived from the judgment's anywhere section, not typed.
     "~/.claude/mcp-skill-archives/",
     ".claude/mcp-skill-archives/",
     "~/.claude/agent-memory-project/",
