@@ -311,12 +311,12 @@ test("CC-census/anywhere-entries-not-required-in-extraction: a judged anywhere e
   assert.equal(r.status, "PASS", r.reasons.join("; "));
 });
 
-test("CC-census/literal-and-prose: a whole-string .claude/<name> literal is a census name; a sentence that mentions a path is not", () => {
+test("CC-census/literal-forms: a .claude/<name> literal is a census name, and only its first path segment is (round 2: a sentence that mentions a path now adds its name too, which is extra and safe)", () => {
   const { user, project } = full();
   const text = 'a=".claude/literal-one";b="~/.claude/literal-two";c="set it in .claude/prose-name for the project";d=".claude/not-a-name/deeper";';
   const census = extractWriteDeny(Buffer.from(fakeBinary(user, project, text), "latin1")).census ?? [];
   assert.ok(census.includes("literal-one") && census.includes("literal-two"));
-  assert.ok(!census.includes("prose-name"));
+  assert.ok(census.includes("not-a-name") && !census.includes("deeper"));
 });
 
 // ---- #475: the applier and its delta dir are on the protected list ----------------------------------------------------------

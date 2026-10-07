@@ -176,38 +176,97 @@ const SCAN_CHUNK = 16 * 1024 * 1024;
 const SCAN_OVERLAP = 1024;
 /** How far after `<id>=<getter>()` a use of the variable `<id>` is still read as a use of the config dir. */
 const BIND_WINDOW = 600;
+/** How far after a function or arrow head a mention of `".claude"` or CONFIG_DIR makes it a config-dir getter. */
+const DEF_WINDOW = 260;
+/** How far back from a `.claude/<name>` a quote character must be for the match to count as inside a string literal. */
+const QUOTE_LOOKBACK = 120;
 const NAME = "[A-Za-z0-9_.-]+";
 const escapeId = (id: string): string => id.replaceAll("$", "\\$");
-/** #463/#477 census, fail closed (extra names are fine, a missed name is not). Four shapes over the WHOLE binary, in chunks (a 200 MB latin1 string is never built):
- *   1. `".claude","<name>"`: the base before it can be anything (identifier, call, member, home directory), so no base is parsed;
- *   2. a whole-string literal `".claude/<name>"` or `"~/.claude/<name>"` (a sentence that merely mentions a path is not a whole literal);
- *   3. `<getter>(),"<name>"` where the getter id is one the anchored window used for the user config dir;
+const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c);
+
+function* binaryChunks(bin: Buffer): Generator<string> {
+  for (let start = 0; start < bin.length; start += SCAN_CHUNK) yield bin.subarray(start, Math.min(bin.length, start + SCAN_CHUNK + SCAN_OVERLAP)).toString("latin1");
+}
+
+/** The text of a function body or an arrow expression starting at `from`, cut at its own end (bounded by DEF_WINDOW): a function body ends at its matching `}`, an arrow expression at the first closing bracket, `;` or `,` at depth 0. Strings are not parsed (brackets inside one only shorten or lengthen the body slightly, which only adds or drops a candidate getter at the margin). */
+function definitionBody(text: string, from: number, kind: "function" | "arrow"): string {
+  let depth = kind === "function" ? 1 : 0;
+  const limit = Math.min(text.length, from + DEF_WINDOW);
+  for (let i = from; i < limit; i++) {
+    const c = text[i]!;
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") {
+      depth--;
+      if (depth < (kind === "function" ? 1 : 0) && (kind === "arrow" || c === "}")) return text.slice(from, i);
+    } else if (kind === "arrow" && depth === 0 && (c === ";" || c === ",")) return text.slice(from, i);
+  }
+  return text.slice(from, limit);
+}
+
+/** Config-dir getters found by their DEFINITION, not by the window's ids: a `function ID(){...}` or `ID=<wrapper>(()=>...` / `ID=()=>...` whose body, within DEF_WINDOW characters, mentions `".claude"` or a CONFIG_DIR variable. The window's own ids are included. Extra ids only add names. */
+function configDirGetters(bin: Buffer, windowGetters: readonly string[]): Set<string> {
+  const ids = new Set(windowGetters);
+  const mark = /"\.claude"|CONFIG_DIR/;
+  for (const text of binaryChunks(bin)) {
+    for (const m of text.matchAll(/function ([\w$]+)\(\)\{/g)) {
+      const from = m.index + m[0].length;
+      if (mark.test(definitionBody(text, from, "function"))) ids.add(m[1]!);
+    }
+    for (const m of text.matchAll(/\(\)=>/g)) {
+      let p = m.index;
+      if (text[p - 1] === "(") {
+        p--;
+        while (p > 0 && isWordChar(text[p - 1])) p--; // optional wrapper call: cs(() => ...)
+      }
+      if (text[p - 1] !== "=") continue;
+      const end = p - 1;
+      let q = end;
+      while (q > 0 && end - q < 64 && isWordChar(text[q - 1])) q--; // the id is read backwards (a forward identifier regex is quadratic on a long run of word characters)
+      const id = text.slice(q, end);
+      if (id === "" || /^[0-9]/.test(id)) continue;
+      if (mark.test(definitionBody(text, m.index + 4, "arrow"))) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/** #463/#477 census, fail closed (extra names are fine, a missed name is not). Whole binary, in chunks (a 200 MB latin1 string is never built). Names come from:
+ *   1. every `.claude/<name>` inside a quoted literal (single, double or backtick), with ANY prefix, glob or rule wrapper (`**` + `/.claude/mailbox/`, `Read(~/.claude/history*)`): the first path segment, glob characters and trailing dots dropped;
+ *   2. `".claude","<name>"` with any base before it (identifier, call, member, home directory);
+ *   3. `<getter>(),"<name>"` where the getter is ANY config-dir getter by definition (see configDirGetters), not only the window's;
  *   4. `<var>=<getter>()` followed, within BIND_WINDOW characters, by `(<var>,"<name>"` or `,<var>,"<name>"` (the config dir held in a variable).
- * Names are one namespace: a name from any shape is judged once for both `~/.claude/<name>` and `<project>/.claude/<name>`. Disclosed limits: a window getter id has unrelated definitions elsewhere (extra names, safe); a variable bound further than BIND_WINDOW, or reached through an alias of an alias, is not seen; a name assembled at run time is not a literal and is not seen. */
-function scanWholeBinary(bin: Buffer, getters: string[]): string[] {
+ * Names are one namespace: a name from any shape is judged once for both `~/.claude/<name>` and `<project>/.claude/<name>`. Disclosed limits: a variable bound further than BIND_WINDOW, or reached through an alias of an alias, is not seen; a name assembled at run time is not a literal and is not seen; prose that mentions a path adds names (extra, safe). */
+function scanWholeBinary(bin: Buffer, windowGetters: string[]): string[] {
   const names = new Set<string>();
+  const add = (raw: string): void => {
+    const n = raw.replace(/\.+$/, "");
+    if (n !== "") names.add(n);
+  };
+  const getters = configDirGetters(bin, windowGetters);
   const pairRe = new RegExp(`"\\.claude","(${NAME})"`, "g");
-  const literalRe = new RegExp(`"(?:~/|\\./)?\\.claude/(${NAME})/?"`, "g");
-  const g = getters.map(escapeId).join("|");
-  const callRe = getters.length === 0 ? undefined : new RegExp(`(?:${g})\\(\\),"(${NAME})"[,)]`, "g");
+  const pathRe = new RegExp(`\\.claude/(${NAME})`, "g");
+  const g = [...getters].map(escapeId).join("|");
+  const callRe = getters.size === 0 ? undefined : new RegExp(`(?:${g})\\(\\),"(${NAME})"[,)]`, "g");
   const useRes = new Map<string, RegExp>();
-  const bindRe = getters.length === 0 ? undefined : new RegExp(`=(?:${g})\\(\\)`, "g");
-  for (let start = 0; start < bin.length; start += SCAN_CHUNK) {
-    const text = bin.subarray(start, Math.min(bin.length, start + SCAN_CHUNK + SCAN_OVERLAP)).toString("latin1");
-    for (const m of text.matchAll(pairRe)) names.add(m[1]!);
-    for (const m of text.matchAll(literalRe)) names.add(m[1]!);
-    if (callRe !== undefined) for (const m of text.matchAll(callRe)) names.add(m[1]!);
+  const bindRe = getters.size === 0 ? undefined : new RegExp(`=(?:${g})\\(\\)`, "g");
+  for (const text of binaryChunks(bin)) {
+    for (const m of text.matchAll(pairRe)) add(m[1]!);
+    for (const m of text.matchAll(pathRe)) {
+      const before = text.slice(Math.max(0, m.index - QUOTE_LOOKBACK), m.index);
+      const nl = before.lastIndexOf("\n");
+      if (/["'`]/.test(nl < 0 ? before : before.slice(nl + 1))) add(m[1]!);
+    }
+    if (callRe !== undefined) for (const m of text.matchAll(callRe)) add(m[1]!);
     if (bindRe !== undefined) {
       for (const b of text.matchAll(bindRe)) {
-        // the variable name is read BACKWARDS from the "=" (a forward identifier regex is quadratic on a long run of word characters)
         let from = b.index;
-        while (from > 0 && b.index - from < 64 && /[\w$]/.test(text[from - 1]!)) from--;
+        while (from > 0 && b.index - from < 64 && isWordChar(text[from - 1])) from--;
         const id = text.slice(from, b.index);
         if (id === "" || /^[0-9]/.test(id)) continue;
         const after = text.slice(b.index, b.index + BIND_WINDOW);
         let re = useRes.get(id);
         if (re === undefined) useRes.set(id, (re = new RegExp(`[(,]${escapeId(id)},"(${NAME})"[,)]`, "g")));
-        for (const u of after.matchAll(re)) names.add(u[1]!);
+        for (const u of after.matchAll(re)) add(u[1]!);
       }
     }
   }
