@@ -276,7 +276,10 @@ const NODE_COMMANDS = new Set(["node", "node.exe"]);
 // #484: ways to run code the scanner cannot read. Any use throws, in every scanned file and body.
 const DYNAMIC_NAMES = new Set(["eval", "Function"]);
 const LOADER_MODULES = new Set(["vm", "node:vm", "worker_threads", "node:worker_threads"]);
-const PROCESS_ESCAPES = new Set(["binding", "_linkedBinding", "dlopen"]);
+const PROCESS_ESCAPES = new Set(["binding", "_linkedBinding", "dlopen", "mainModule"]);
+// Structural rule: these names may appear ONLY as the object of a plain (non-computed) member access, so an alias, a destructuring, an
+// argument, a computed access, a spread, a return or a with-scope can never smuggle one of them past the name checks above.
+const GLOBAL_OBJECTS = new Set(["process", "globalThis", "global", "self", "window"]);
 
 export interface SourceScan {
   /** Repo scripts spawned with node, as written (relative to the hook's working directory, the repo root). */
@@ -393,7 +396,14 @@ export function scanSource(text: string, fileName: string): SourceScan {
     if (ts.isIdentifier(node) && DYNAMIC_NAMES.has(node.text)) refuse(`a reference to ${node.text}`);
     if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && (DYNAMIC_NAMES.has(node.argumentExpression.text) || PROCESS_ESCAPES.has(node.argumentExpression.text) || node.argumentExpression.text === "constructor")) refuse(`a computed access to ${node.argumentExpression.text}`);
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "constructor") refuse("a .constructor call");
-    if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text) && node.expression.getText(sf) === "process") refuse(`process.${node.name.text}`);
+    if (ts.isPropertyAccessExpression(node) && PROCESS_ESCAPES.has(node.name.text)) refuse(`.${node.name.text}`);
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && GLOBAL_OBJECTS.has(node.expression.text) && GLOBAL_OBJECTS.has(node.name.text)) refuse(`${node.expression.text}.${node.name.text} (a global object reached through another)`);
+    if (ts.isIdentifier(node) && GLOBAL_OBJECTS.has(node.text) && !isDeclName(node)) {
+      const p = node.parent;
+      const plainObject = ts.isPropertyAccessExpression(p) && p.expression === node;
+      const propertyName = ts.isPropertyAccessExpression(p) && p.name === node;
+      if (!plainObject && !propertyName) refuse(`a use of ${node.text} other than a plain member access`);
+    }
     if (ts.isCallExpression(node)) {
       const c = node.expression;
       if (ts.isIdentifier(c)) {
